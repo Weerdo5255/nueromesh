@@ -15,7 +15,8 @@ import numpy as np
 
 from .activity import ActivityLog, ActivityTracker
 from .agents import (Architect, Curator, Evaluator, Explorer, Investigator, Orchestrator, Researcher, Sentinel,
-                     Trainer)
+                     TaskRunner, Trainer)
+from .background import BackgroundTasks
 from .backend import select_backend
 from .bus import Bus
 from .config import Directives, load_toml
@@ -81,6 +82,7 @@ class System:
         self.bus.listen(self.affect.on_event)
         self.mind = Mind(self)      # opinions, private notes, inquiries, proposals (P9, P10)
         self.bus.listen(self.mind.on_event)
+        self.tasks = BackgroundTasks(self)  # background tasks people set (learn / improve / run)
 
         self.orders: asyncio.Queue = asyncio.Queue()
         self.inflight = 0
@@ -94,8 +96,9 @@ class System:
         self._tasks: list[asyncio.Task] = []
         self.researcher = Researcher(self)
         self.investigator = Investigator(self)
-        self.agents = [Orchestrator(self), Architect(self), Trainer(self), Evaluator(self),
-                       Curator(self), Explorer(self), self.researcher, self.investigator, Sentinel(self)]
+        self.orchestrator = Orchestrator(self)
+        self.agents = [self.orchestrator, Architect(self), Trainer(self), Evaluator(self), Curator(self),
+                       Explorer(self), self.researcher, self.investigator, TaskRunner(self), Sentinel(self)]
 
     # ------------------------------------------------------------- lifecycle
     async def start(self) -> "System":
@@ -544,6 +547,7 @@ class System:
                           "tool": (self.knowledge_tool().name if self.knowledge_tool() else None)},
             "temperament": self.affect.status(),
             "mind": self.mind.status(),
+            "tasks": self.tasks.status(),
             "scorecard": self.scorecard(),
             "agents": {a.name: dict(a.stats) for a in self.agents},
         }

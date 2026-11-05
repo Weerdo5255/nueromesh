@@ -208,7 +208,8 @@ class Mind:
     def _trim(self) -> None:
         if len(self.notes) <= self.pol.max_notes:
             return
-        disposable = sorted((n for n in self.notes.values() if n.kind in ("finding", "observation", "followup")),
+        disposable = sorted((n for n in self.notes.values()
+                             if n.kind in ("finding", "observation", "followup", "update")),
                             key=lambda n: n.updated_at)
         drop = [n.id for n in disposable[: len(self.notes) - self.pol.max_notes]]
         self.sys.store.delete_notes(drop)
@@ -523,11 +524,16 @@ class Mind:
             return True, out
         if q.kind == "interests":
             topics = [t.strip() for t in re.split(r",|;|\band\b", a) if t.strip()][:8]
+            made = []
             for t in topics:
                 self.note("fact", "user", f"interested in {t}", private=False, source=f"you told me ({q.id})")
-                self.add_goal(t, f"you are interested in {t}", "interest")
+                try:  # your answer sets a standing learn task for each topic
+                    made.append(s.tasks.add(f"learn {t}", by=by).id)
+                except ValueError:
+                    self.add_goal(t, f"you are interested in {t}", "interest")
             self._close(q, "answered", a, by)
-            return True, [f"  thanks - I'll read up on {', '.join(topics)} on my own"]
+            tasks = f" ({', '.join(made)}; /tasks)" if made else ""
+            return True, [f"  thanks - I'll keep reading up on {', '.join(topics)} in the background{tasks}"]
         if q.kind in ("labels", "proposal"):  # deciding the proposal closes this question
             if low in NO:
                 ok, msg = self.decline(q.proposal_id, by, f"declined in reply to {q.id}")

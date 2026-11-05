@@ -124,6 +124,16 @@ class Orchestrator(Agent):
             res.ok, res.note = False, f"system halted by operator: {s.guardian.halt_reason}"
             res.trace.append("refused (P1-human-authority)")
             return res
+        if not order.background:  # "keep learning about X", "every 10m: ..." set a background task
+            made = s.tasks.from_order(order.text, by=order.source)
+            if made is not None:
+                res.route, res.confidence, res.served_by = "tasks", 1.0, "explicit"
+                if made[2]:
+                    res.output = made[0]
+                else:
+                    res.ok, res.note = False, made[0]
+                res.trace.append(made[1])
+                return res
         own = s.mind.answer_self(order.text, order.id)  # questions about the mesh's own opinions and notes (P9)
         if own is not None:
             res.route, res.output, res.confidence, res.served_by = "mind", own[0], 1.0, "explicit"
@@ -152,7 +162,7 @@ class Orchestrator(Agent):
             if not decision.allowed:
                 res.ok, res.note = False, f"tool refused: {decision.reason}"
             elif tool.manifest.provides == "knowledge":
-                await self.knowledge_order(res, payload, tool)
+                await self.knowledge_order(res, payload, tool, background=order.background)
             else:
                 timeout = tool.manifest.timeout_s or s.directives.tools.default_timeout_s
                 run = await s.sandbox.run(tool, payload, timeout, s.tool_config(tool))
@@ -184,7 +194,7 @@ class Orchestrator(Agent):
             if hits and confidence >= pol.recall_threshold:
                 await self.answer_from_memory(res, order.text, hits, confidence)
             elif tool is not None and pol.research_questions and is_question(order.text):
-                await self.knowledge_order(res, order.text, tool)
+                await self.knowledge_order(res, order.text, tool, background=order.background)
             else:
                 reply = await s.teachers.answer(order.text)
                 if reply:
@@ -223,7 +233,7 @@ class Orchestrator(Agent):
         s.bus.publish("knowledge.recalled", question=question[:200], title=doc.title,
                       confidence=confidence, how=how)
 
-    async def knowledge_order(self, res: Result, question: str, tool: Tool) -> None:
+    async def knowledge_order(self, res: Result, question: str, tool: Tool, background: bool = False) -> None:
         """Memory first: answer from retained knowledge when it covers the question,
         otherwise research it (and retain what was learned), then answer."""
         s = self.sys
@@ -233,7 +243,7 @@ class Orchestrator(Agent):
         if hits and confidence >= pol.recall_threshold and fresh:
             await self.answer_from_memory(res, question, hits, confidence)
             return
-        doc, note = await s.research(question, reason=f"order {res.order_id}", tool=tool)
+        doc, note = await s.research(question, reason=f"order {res.order_id}", tool=tool, background=background)
         if doc is not None:
             found = s.knowledge.search(question, doc_id=doc.id) or [Hit(doc, "Introduction", doc.summary, 1.0, 1.0)]
             s.knowledge.touch(doc)
@@ -306,13 +316,17 @@ class Architect(Agent):
                     self._spawn(champ.spawn_expanded(missing),
                                 f"new labels {missing}: growing {champ.id}'s output layer")
                 continue
-            if time.time() - self.last_spawn.get(cap, 0.0) < npol.challenger_cooldown_seconds:
+            focus = s.tasks.focus()  # improve tasks: their skills get challengers first, to their own target
+            cooldown = npol.challenger_cooldown_seconds / (2 if cap in focus else 1)
+            if time.time() - self.last_spawn.get(cap, 0.0) < cooldown:
                 continue
             acc = champ.metrics.get("holdout_acc")
-            if (acc is not None and acc < npol.target_accuracy
+            target = max(npol.target_accuracy, focus.get(cap, 0.0))
+            if (acc is not None and acc < target
                     and len(cands) < npol.max_candidates_per_capability):
                 child, kind = self._mutate(champ, spec)
-                self._spawn(child, f"champion at {acc:.3f} < target {npol.target_accuracy}: {kind} challenger")
+                why = f"target {target}" + (" (a background task)" if cap in focus else "")
+                self._spawn(child, f"champion at {acc:.3f} < {why}: {kind} challenger")
 
     def _mutate(self, champ: NeuralNode, spec) -> tuple[NeuralNode, str]:
         kind = "fresh"
@@ -364,11 +378,12 @@ class Trainer(Agent):
     def _pick(self) -> NeuralNode | None:
         s = self.sys
         npol = s.directives.nodes
+        focus = s.tasks.focus()
         cands = [n for n in s.registry.candidates() if n.train_steps < npol.max_candidate_slices]
         if cands:
-            return min(cands, key=lambda n: (n.train_steps, n.created_at))
+            return min(cands, key=lambda n: (n.capability not in focus, n.train_steps, n.created_at))
         best, gap = None, 0
-        for cap in s.capabilities:
+        for cap in sorted(s.capabilities, key=lambda c: c not in focus):
             champ = s.registry.champion(cap)
             if champ is not None:
                 g = s.store.count(cap) - champ.examples_seen
@@ -434,10 +449,11 @@ class Trainer(Agent):
         npol, bp = s.directives.nodes, s.directives.background
         now = time.time()
         best = None
+        focus = s.tasks.focus()
         for cap, spec in s.capabilities.items():
             counts = s.store.label_counts(cap)
-            if not counts:
-                continue  # never used yet: no reason to invest
+            if not counts and cap not in focus:
+                continue  # never used yet and nobody asked: no reason to invest
             options = []
             held_out = Counter(e.label for e in s.store.examples(cap, "holdout"))
             for lab in spec.active_labels():
@@ -447,9 +463,13 @@ class Trainer(Agent):
                 elif held_out.get(lab, 0) < 2:
                     options.append((bp.min_examples_per_label - 0.5 + held_out.get(lab, 0), lab,
                                     f"too little held-out evidence for '{lab}'"))
+            if cap in focus and sum(held_out.values()) < npol.min_eval_samples and spec.active_labels():
+                # an improve task needs enough held-out evidence to tell whether the target is met
+                lab = min(spec.active_labels(), key=lambda lb: held_out.get(lb, 0))
+                options.append((float(held_out.get(lab, 0)), lab, f"too little held-out evidence for {cap}"))
             champ = s.registry.champion(cap)
             acc = champ.metrics.get("holdout_acc") if champ else None
-            if champ and acc is not None and acc < npol.target_accuracy:
+            if champ and acc is not None and acc < max(npol.target_accuracy, focus.get(cap, 0.0)):
                 recall = {k: v for k, v in (champ.metrics.get("per_label_recall") or {}).items()
                           if k in spec.active_labels()}
                 if recall:
@@ -458,6 +478,8 @@ class Trainer(Agent):
             for score, lab, why in options:
                 if self.barren.get((cap, lab), 0.0) > now:
                     continue
+                if cap in focus:  # a background task asked for this skill to improve
+                    score, why = score - 1000, f"{why} (a background task)"
                 if best is None or score < best[0]:
                     best = (score, cap, lab, why)
         return best[1:] if best else None
@@ -954,6 +976,28 @@ class Investigator(Agent):
                 s.mind.topic_opinion(doc.title, labels, by)
         steps.append(f"read {len(passages)} passages of '{doc.title}' with my skill nodes")
         return readings
+
+
+# ====================================================================== task runner
+class TaskRunner(Agent):
+    """Runs the background tasks people set (learn / improve / run), one at a time, whenever
+    there is background capacity: never while an order is in flight, within the duty cycle (P2)
+    and the hourly task budget (P4). /halt and /pause stop it (P1)."""
+    name = "tasks"
+
+    @property
+    def interval(self) -> float:
+        return max(0.1, self.sys.directives.background.tick_seconds * 2)
+
+    async def step(self) -> None:
+        s = self.sys
+        if not s.tasks.enabled or s.inflight or not s.guardian.background_allowed():
+            return
+        task = s.tasks.next_due()
+        if task is None or not s.guardian.authorize_task_run().allowed:
+            return
+        await s.tasks.run(task)
+        self.stats["runs"] += 1
 
 
 # ======================================================================== sentinel

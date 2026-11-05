@@ -15,7 +15,7 @@ text = "A human operator can pause, halt or override the system at any time. A h
 
 [[prime]]
 id = "P2-orders-first"
-text = "User orders take precedence over background self-improvement. Background work only runs while no order is in flight and within its compute duty cycle."
+text = "User orders take precedence over background self-improvement and background tasks. Background work only runs while no order is in flight and within its compute duty cycle."
 
 [[prime]]
 id = "P3-approved-tools-only"
@@ -23,7 +23,7 @@ text = "Only active, vetted tools are executed. Tools needing elevated permissio
 
 [[prime]]
 id = "P4-budgets"
-text = "Stay within the node budget, the background compute budget, the external-teacher call/token budgets and the research budgets."
+text = "Stay within the node budget, the background compute budget, the external-teacher call/token budgets, the research budgets, and the investigation and background-task budgets."
 
 [[prime]]
 id = "P5-no-regression"
@@ -134,6 +134,24 @@ retry_unmet_after_seconds = 120         # look into an unfulfilled order again a
 max_unmet_attempts = 2
 retest_quarantined_after_seconds = 900  # give a quarantined tool's self-tests another go (0 = never)
 max_notes = 2000
+
+[tasks]
+# Background tasks people set, which run continuously until paused or removed:
+#   /task learn <topic> [every 2m] [max 30] [depth 2]   keep studying a topic and keep it fresh
+#   /task improve <skill> [to 0.97]                      keep training a skill to a target, then keep watch
+#   /task every 10m: <order>                             repeat an order; you are told when the result changes
+# They use background capacity only (P2) and the budgets below (P4). Learn tasks also draw on
+# [research] background_per_hour: raise it for faster learning.
+enabled = true
+max_tasks = 20
+max_runs_per_hour = 240                 # all task runs together
+min_interval_seconds = 30               # the shortest interval a task may ask for
+learn_interval_seconds = 60             # default pace of a learn task: one article per run
+learn_max_articles = 25                 # read this many, then switch to keeping them fresh
+learn_depth = 2                         # how far from the topic it follows links
+learn_links_per_article = 3
+improve_interval_seconds = 30           # how often an improve task checks progress
+pause_after_failures = 5                # a repeating order that keeps failing is paused
 
 [orders]
 confidence_threshold = 0.75     # below this a node defers to a teacher

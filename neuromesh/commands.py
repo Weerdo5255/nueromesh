@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass, field
+
+from .background import every
 
 from .report import render_lineage, render_status
 
@@ -19,6 +22,10 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /questions                      questions waiting for a human teacher   /answer <qid> <label>
   /feedback <order-id> <label>    correct an answer: a label, a route like tool:calculator, or the
                                   emotional engines with affect=<tone> / disposition=<action>
+  /task learn <topic> [every 2m] [max 30]     keep studying a topic in the background
+  /task improve <skill> [to 0.97]             keep training a skill until it reaches the target
+  /task every 10m: <order>                    repeat an order; you are told when its result changes
+  /tasks    /task show|pause|resume|remove <task-id>     (also: "keep learning about X" as an order)
   /inquiries                      questions the mesh is asking you      /reply <inq-id> <answer>
   /proposals                      capabilities the mesh would like      /adopt <prop-id> [labels]  /decline <prop-id>
   /opinions   /notes              the opinions and notes it shares (private ones are only counted)
@@ -204,6 +211,39 @@ async def execute(system, line: str) -> Output:
                 out = [f"  learned '{doc.title}' ({doc.passages} passages) {doc.url}", f"  {doc.summary}"]
                 if doc.links:
                     out.append(f"  linked articles queued for background reading: {', '.join(doc.links[:system.directives.research.follow_links])}")
+        elif cmd in ("tasks", "goals") or (cmd in ("task", "goal") and not rest):
+            out = system.tasks.lines() or ["  no background tasks; e.g. /task learn the Krebs cycle, "
+                                           "/task improve sentiment to 0.97, /task every 10m: <order>"]
+            usage = system.guardian.task_usage()
+            out.append(f"  task runs this hour: {usage['last_hour']}/{usage['limit']}")
+        elif cmd in ("task", "goal"):
+            verb, _, arg = rest.partition(" ")
+            verb = verb.lower()
+            by = os.environ.get("USER", "user")
+            if verb in ("pause", "resume", "remove", "stop", "delete"):
+                status = {"pause": "paused", "resume": "active"}.get(verb, "removed")
+                out = ["  " + system.tasks.set_status(arg.strip(), status, by)[1]]
+            elif verb == "show":
+                t = system.tasks.get(arg.strip())
+                if t is None:
+                    out = [f"  no background task {arg.strip()}"]
+                else:
+                    out = [f"  {t.id} [{t.status}] {t.describe()}, every {every(t.interval)}, set by {t.created_by}",
+                           f"  {t.runs} runs; {t.note}"]
+                    if t.kind == "learn":
+                        p = t.progress
+                        out.append(f"  read ({len(p.get('read', []))}/{t.max_articles}): {', '.join(p.get('read', [])) or '-'}")
+                        if p.get("frontier"):
+                            out.append(f"  next: {', '.join(p['frontier'][:8])}")
+                    elif t.kind == "improve":
+                        out.append(f"  accuracy {t.progress.get('accuracy', '-')} (best {t.progress.get('best', '-')}), "
+                                   f"{t.progress.get('examples', 0)} examples; target {'met' if t.met else 'not met yet'}")
+                    for ts, ok, summary in t.history[-8:]:
+                        out.append(f"  {time.strftime('%H:%M:%S', time.localtime(ts))} {'ok ' if ok else 'err'} {summary[:120]}")
+            else:
+                t = system.tasks.add(rest, by=by)
+                out = [f"  {t.id} set: {t.describe()}, every {every(t.interval)} (in the background; "
+                       f"/task remove {t.id} stops it)"]
         elif cmd in ("opinions", "notes", "mind"):
             out = mind_lines(system, cmd)
         elif cmd == "inquiries":

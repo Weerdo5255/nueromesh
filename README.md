@@ -12,7 +12,9 @@ that read the tone of a message and decide, from the mesh's temperament, whether
 soften, caveat, hold or withhold the answer. They can never change it: the mesh does not lie.
 It also has a mind of its own: opinions formed from experience, private notes it keeps to
 itself, questions it asks you, capabilities it proposes for you to adopt, and investigations
-it starts on its own with its tools and nodes.
+it starts on its own with its tools and nodes. You can give it background tasks that it keeps
+working on continuously: study a topic, train a skill to a target, or repeat an order and tell
+you when the result changes.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
@@ -203,6 +205,35 @@ neuromesh> /notes                        (a little later)
   ... and 1 private note I'm not sharing
 ```
 
+### Background tasks
+Tasks you set run continuously in the background until you pause or remove them, and survive
+restarts.
+
+```
+neuromesh> /task learn the Krebs cycle every 2m max 30     keep studying a topic
+neuromesh> /task improve sentiment to 0.97                  keep training a skill to a target
+neuromesh> /task every 10m: how urgent is this: the VPN is down     repeat an order
+neuromesh> keep learning about jazz                         (as an order: sets a learn task)
+neuromesh> /tasks        /task show task-1      /task pause task-2     /task resume task-2    /task remove task-3
+```
+
+| kind | what it keeps doing |
+|---|---|
+| `learn <topic>` | reads one article per run: the topic, then articles it links to (`depth`, `max`). Reads the topic article with every skill node, which forms an opinion of it. When it has read `max` articles it says so and switches to keeping them fresh: it re-reads anything forgotten or older than `refresh_days`. |
+| `improve <skill> [to X]` | while active, that skill comes first: the Trainer gives it lessons (even with no orders yet, so a newly adopted skill can be bootstrapped) and training slices, and the Architect breeds its challengers twice as often, aiming for X rather than the global target. It tells you when the serving node reaches X on held-out data, keeps watch, and tells you if it slips. |
+| `every <interval>: <order>` | runs the order through the normal pipeline, without counting it as a user order. It tells you the first result and every change (`notify change`, the default; also `always` or `never`). After `pause_after_failures` failures in a row it pauses itself. |
+
+- **Where results go.** Changes and milestones go to the activity log (`[task]`) and to the notes
+  users can read (`/notes`). `/task show <id>` has the recent results, what a learn task has
+  read and what is next, or an improve task's accuracy. The live view has a `tasks:` line.
+- **Limits.** Tasks run one at a time on background capacity only: never while an order is in
+  flight and within the duty cycle (P2). They have an hourly run budget (`max_runs_per_hour`) and
+  a shortest allowed interval (`min_interval_seconds`, 30s) (P4). Learn tasks also draw on the
+  background research budget (`[research] background_per_hour`); raise it to learn faster. A
+  task only uses approved tools; one that needs a tool waiting for approval asks you (P3).
+  `/halt` and `/pause` stop all of them (P1).
+- When you answer the mind's "what should I read up on?" question, each topic becomes a learn task.
+
 ### The agents
 All run concurrently (asyncio) and coordinate through a message bus, the registry and the store.
 
@@ -216,6 +247,7 @@ All run concurrently (asyncio) and coordinate through a message bus, the registr
 | Explorer | discovers tools, routes them through approval, self-tests them, activates them, health-checks them, handles tool supersession |
 | Researcher | reads up in the background (own hourly budget) on articles linked from what users asked about, and refreshes retained knowledge that has aged |
 | Investigator | the mesh's own initiative: re-forms opinions, drafts proposals, and investigates goals with its tools and nodes (own hourly budget); follows up on orders it couldn't fulfil |
+| TaskRunner | runs the background tasks you set (learn / improve / run), one at a time, on background capacity and its own hourly budget |
 | Sentinel | watches the kill switch, re-checks local teacher servers (Ollama), lets the mood settle and saves it, publishes heartbeats with the directive scorecard |
 
 Background agents yield whenever an order is in flight and stay within a compute duty cycle.
@@ -227,9 +259,9 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | id | enforced as |
 |---|---|
 | P1 human authority | `/halt`, `POST /halt` or a `state/STOP` file stops all autonomous activity and order handling immediately |
-| P2 orders first | background work waits while orders are in flight and is capped by `max_duty_cycle` |
+| P2 orders first | background work, background tasks included, waits while orders are in flight and is capped by `max_duty_cycle` |
 | P3 approved tools only | tools needing permissions wait for a human; forbidden permissions are always refused; changed tool code is re-vetted |
-| P4 budgets | node budget, background compute budget, per-teacher LLM call/token budgets per hour |
+| P4 budgets | node budget, background compute budget, per-teacher LLM call/token budgets, research, investigation and background-task budgets per hour |
 | P5 no regression | a challenger is promoted, or a champion updated, only if it is not worse on held-out data; superseded nodes stay rollback-able for a grace period |
 | P6 auditability | every lifecycle change, tool decision, approval and denial goes to the audit log |
 | P7 honesty | every answer carries confidence and provenance; unfulfilled orders say so |
@@ -290,9 +322,10 @@ neuromesh>                                                            │       
   orders in flight, then the work that just finished.
 - **Answers** (in the network panel): the affect and disposition nodes every answer passes,
   and the honesty guard's tally of answers checked, changed, held and withheld.
-- **Teachers, knowledge, goals, mood and mind**: which teachers are up, retained knowledge, the
-  directive scorecard, the temperament with the last change it made, and the mind: its newest
-  question for you, open proposals, opinions and private notes (counted), investigations.
+- **Teachers, knowledge, goals, mood, mind and tasks**: which teachers are up, retained knowledge,
+  the directive scorecard, the temperament with the last change it made, the mind (its newest
+  question for you, open proposals, opinions and private notes counted, investigations), and
+  your background tasks with their progress.
 - **Activity log** (right): everything that happens, one line each: orders, lessons,
   training, evaluations, node births, promotions, retirements and disposals, tool vetting,
   approvals and Guardian denials. Also written to `state/activity.log`.
@@ -323,6 +356,7 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /temperament    /why ord-3f2a91c0    /release ord-3f2a91c0    /calm
 /inquiries    /reply inq-2 the Eiffel Tower, jazz    /proposals    /adopt prop-1 english,french    /decline prop-2
 /opinions    /notes    /investigate the Krebs cycle    /mind  (operator: everything, audited)
+/task learn jazz    /task improve urgency to 0.95    /task every 10m: what is 2+2    /tasks    /task pause task-1
 what do you think of the calculator tool?    are you hiding anything?    what do you know about me?
 /feedback ord-3f2a91c0 disposition=pass    /feedback ord-3f2a91c0 affect=frustrated
 ```
@@ -344,8 +378,10 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | POST | `/reply` | `{"inquiry_id": "inq-1", "answer": "..."}` |
 | POST | `/adopt`, `/decline` | `{"proposal_id": "prop-1", "labels": [...]}` (labels for skills, optional) |
 | POST | `/investigate` | `{"goal": "..."}`: look into something now |
+| POST | `/tasks` | `{"spec": "learn the Krebs cycle every 5m"}`: set a background task |
+| POST | `/task` | `{"id": "task-1", "action": "pause" \| "resume" \| "remove"}` |
 | POST | `/halt`, `/resume`, `/pause`, `/rollback` | |
-| GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions`, `/knowledge?q=...`, `/temperament`, `/why?order=...`, `/inquiries`, `/proposals`, `/opinions`, `/notes` | |
+| GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions`, `/knowledge?q=...`, `/temperament`, `/why?order=...`, `/inquiries`, `/proposals`, `/opinions`, `/notes`, `/tasks` | |
 | GET | `/mind` | operator: every note, private ones included (audited) |
 
 ```
@@ -563,7 +599,7 @@ neuromesh/
   live.py                live console (curses): network, work in progress, activity log, prompt
   activity.py            work-in-flight tracker and the activity log
   commands.py            orders and /commands shared by the live and plain consoles
-  agents.py              the nine agents
+  agents.py              the ten agents
   nodes.py               NeuralNode + derivations (expand / widen / deepen / retune / fresh)
   backend.py             compute backends: numpy (CPU), PyTorch (CUDA / ROCm / MPS), CuPy
   bench.py               CPU vs GPU benchmark
@@ -574,12 +610,13 @@ neuromesh/
   knowledge.py           retained knowledge: articles + passages (SQLite FTS5), recall confidence
   temperament.py         emotional engines: temperament, policy teacher, output templates, honesty guard (P8)
   mind.py                opinions, private notes, inquiries, capability proposals, investigation goals (P9, P10)
-  store.py               SQLite: experience, lineage, tools, orders, temperament, mind, audit
+  background.py          background tasks: learn a topic, improve a skill, repeat an order
+  store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   88 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   94 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,
-                         questions, proposals, investigations), full system,
+                         questions, proposals, investigations), background tasks, full system,
                          live console (incl. a pseudo-terminal run), compute
                          backends (4 GPU parity tests run where PyTorch or CuPy is installed)
 ```

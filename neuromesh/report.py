@@ -77,6 +77,13 @@ def describe_event(ev: Event) -> str | None:
         return f"[mind]     follow-up on {d['order']}: {d['text']}"
     if t == "mind.retest":
         return f"[mind]     giving the quarantined tool '{d['tool']}' another go at its self-tests"
+    if t == "task.added":
+        return f"[task]     {d['id']} set by {d['by']}: {d['what']} (every {d['every']})"
+    if t == "task.update":
+        return f"[task]     {d['text']}"
+    if t in ("task.paused", "task.active", "task.removed"):
+        verb = {"task.active": "resumed"}.get(t, t.split(".")[1])
+        return f"[task]     {d['id']} ({d['what']}) {verb} by {d['by']}"
     if t == "teacher.status":
         verb = "ready" if d["state"] == "ready" else f"unavailable ({d['state']})"
         return f"[teacher]  {d['teacher']} {verb}: {d['detail']}"
@@ -133,6 +140,11 @@ def render_status(st: dict) -> str:
         lines.append(f"mind: {md['opinions']} opinions, {sum(md['note_counts'].values())} notes ({md['private']} private); "
                      f"{len(md['inquiries'])} questions for you, {len(md['proposals'])} open proposals; "
                      f"investigations {inv['last_hour']}/{inv['limit']} this hour")
+    tk = st.get("tasks")
+    if tk and tk["tasks"]:
+        lines.append(f"background tasks ({tk['usage']['last_hour']}/{tk['usage']['limit']} runs this hour):")
+        for t in tk["tasks"]:
+            lines.append(f"  {t['id']} [{t['status']}] {t['kind']} {t['target'][:50]} - {t['note'][:80]}")
     tm = st.get("temperament")
     if tm and tm["enabled"]:
         decided = ", ".join(f"{k} {v}" for k, v in sorted(tm["decisions"].items(), key=lambda kv: -kv[1]))

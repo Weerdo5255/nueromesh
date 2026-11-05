@@ -213,7 +213,7 @@ def work_lines(system, g: dict, limit: int = 6) -> list[Line]:
     s = system
     frame = g["spin"][int(time.time() * 8) % len(g["spin"])]
     style = {"lesson": "lesson", "training": "work", "evaluation": "work", "self-test": "tool",
-             "order": "order", "research": "lesson", "investigation": "lesson"}
+             "order": "order", "research": "lesson", "investigation": "lesson", "task": "tool"}
     active = s.activity.current()
     lines: list[Line] = []
     for a in active[-limit:]:
@@ -267,7 +267,30 @@ def teacher_goal_lines(system, g: dict) -> list[Line]:
             (knowledge, "good" if tool else "dim"),
             ("goals:    " + f" {g['dot']} ".join(goals), "info"),
             temperament_line(s, g),
-            mind_line(s, g)]
+            mind_line(s, g),
+            tasks_line(s, g)]
+
+
+def tasks_line(system, g: dict) -> Line:
+    bt = system.tasks
+    if not bt.enabled:
+        return ("tasks:    background tasks off", "dim")
+    active = [t for t in bt.tasks.values() if t.status == "active"]
+    paused = len(bt.tasks) - len(active)
+    if not bt.tasks:
+        return ("tasks:    none - /task learn <topic> · /task improve <skill> · /task every 10m: <order>", "dim")
+    parts = []
+    for t in sorted(active, key=lambda t: t.id):
+        if t.kind == "learn":
+            more = f"{len(t.progress.get('read', []))}/{t.max_articles} read"
+        elif t.kind == "improve":
+            more = f"{t.progress.get('accuracy', '-')}/{t.threshold:.2f}" + (f" {g['ok']}" if t.met else "")
+        else:
+            more = t.history[-1][2][:24] if t.history else "not run yet"
+        parts.append(f"{t.id} {t.kind} {t.target[:28]} ({more})")
+    if paused:
+        parts.append(f"{paused} paused")
+    return ("tasks:    " + f" {g['dot']} ".join(parts), "info")
 
 
 def mind_line(system, g: dict) -> Line:

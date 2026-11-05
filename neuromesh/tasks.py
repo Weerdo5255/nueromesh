@@ -69,6 +69,7 @@ class Order:
     text: str
     source: str = "user"
     id: str = field(default_factory=lambda: f"ord-{uuid.uuid4().hex[:8]}")
+    background: bool = False   # run by a background task: uses background budgets, not a user order
     created_at: float = field(default_factory=time.time)
     future: Any = None
 

@@ -234,6 +234,22 @@ class MindPolicy:
 
 
 @dataclass
+class TaskPolicy:
+    """Background tasks people set: learn a topic, improve a skill, run an order on an interval.
+    They only use background capacity (P2) and have their own budget (P4)."""
+    enabled: bool = True
+    max_tasks: int = 20
+    max_runs_per_hour: int = 240           # all task runs together
+    min_interval_seconds: float = 30.0     # the shortest interval a task may ask for
+    learn_interval_seconds: float = 60.0   # default pace of a learn task (one article per run)
+    learn_max_articles: int = 25           # how much a learn task reads before it switches to reviewing
+    learn_depth: int = 2                   # how far from the topic it follows links
+    learn_links_per_article: int = 3
+    improve_interval_seconds: float = 30.0
+    pause_after_failures: int = 5          # a run task that keeps failing is paused
+
+
+@dataclass
 class ComputePolicy:
     device: str = "cpu"     # "cpu" | "auto" | "cuda" | "cuda:N" | "mps"
     library: str = "auto"   # "auto" | "numpy" | "torch" | "cupy"
@@ -254,6 +270,7 @@ class Directives:
     tools: ToolPolicy = field(default_factory=ToolPolicy)
     temperament: TemperamentPolicy = field(default_factory=TemperamentPolicy)
     mind: MindPolicy = field(default_factory=MindPolicy)
+    tasks: TaskPolicy = field(default_factory=TaskPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -272,6 +289,7 @@ class Directives:
             tools=build(ToolPolicy, d.get("tools")),
             temperament=build(TemperamentPolicy, d.get("temperament")),
             mind=build(MindPolicy, d.get("mind")),
+            tasks=build(TaskPolicy, d.get("tasks")),
         )
 
     @classmethod

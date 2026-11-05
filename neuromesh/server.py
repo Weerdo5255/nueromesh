@@ -44,6 +44,8 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
         if path == "/mind":  # the operator's full view (P1, P6); audited
             return 200, {**system.mind.status(),
                          "notes": [asdict(n) for n in system.mind.inspect(query.get("by", "api-operator"))]}
+        if path == "/tasks":
+            return 200, system.tasks.status()
         if path == "/inquiries":
             return 200, [asdict(q) for q in system.mind.open_inquiries()]
         if path == "/proposals":
@@ -74,6 +76,18 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return (200 if ok else 400), {"ok": ok, "message": msg, "output": output if ok else None}
         if path == "/calm":
             return 200, system.affect.calm(by=body.get("by", "api-operator"))
+        if path == "/tasks":  # set a background task: {"spec": "learn the Krebs cycle every 5m"}
+            try:
+                t = system.tasks.add(body["spec"], by=body.get("by", "api-user"))
+            except ValueError as exc:
+                return 400, {"ok": False, "message": str(exc)}
+            return 200, asdict(t)
+        if path == "/task":  # {"id": "task-1", "action": "pause" | "resume" | "remove"}
+            status = {"pause": "paused", "resume": "active", "remove": "removed"}.get(body.get("action", ""))
+            if status is None:
+                return 400, {"ok": False, "message": "action is pause, resume or remove"}
+            ok, msg = system.tasks.set_status(body["id"], status, by=body.get("by", "api-user"))
+            return (200 if ok else 400), {"ok": ok, "message": msg}
         if path == "/reply":
             ok, lines = await system.mind.reply(body["inquiry_id"], body["answer"], by=body.get("by", "api-user"))
             return (200 if ok else 400), {"ok": ok, "message": "\n".join(x.strip() for x in lines)}
