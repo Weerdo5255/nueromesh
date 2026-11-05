@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from dataclasses import asdict
 from urllib.parse import parse_qs, urlparse
 
 from .report import render_lineage
@@ -31,6 +32,22 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, list(system.teachers.human.questions)
         if path == "/temperament":
             return 200, system.affect.status()
+        if path in ("/opinions", "/notes"):  # what users may see; private notes are only counted
+            m = system.mind
+            if path == "/opinions":
+                notes = [n for n in m.opinions() if m.shareable(n)]
+                withheld = len(m.opinions()) - len(notes)
+            else:
+                notes = [n for n in m.public_notes(50) if n.kind != "opinion"]
+                withheld = len(m.private_notes())
+            return 200, {"notes": [asdict(n) for n in notes], "withheld": withheld}
+        if path == "/mind":  # the operator's full view (P1, P6); audited
+            return 200, {**system.mind.status(),
+                         "notes": [asdict(n) for n in system.mind.inspect(query.get("by", "api-operator"))]}
+        if path == "/inquiries":
+            return 200, [asdict(q) for q in system.mind.open_inquiries()]
+        if path == "/proposals":
+            return 200, [asdict(p) for p in system.mind.proposals.values()]
         if path == "/why":
             return 200, {"order": query.get("order", ""), "lines": system.affect.explain(query.get("order", ""))}
         if path == "/knowledge":
@@ -57,6 +74,18 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return (200 if ok else 400), {"ok": ok, "message": msg, "output": output if ok else None}
         if path == "/calm":
             return 200, system.affect.calm(by=body.get("by", "api-operator"))
+        if path == "/reply":
+            ok, lines = await system.mind.reply(body["inquiry_id"], body["answer"], by=body.get("by", "api-user"))
+            return (200 if ok else 400), {"ok": ok, "message": "\n".join(x.strip() for x in lines)}
+        if path in ("/adopt", "/decline"):
+            by = body.get("by", "api-operator")
+            ok, msg = (system.mind.adopt(body["proposal_id"], by, body.get("labels")) if path == "/adopt"
+                       else system.mind.decline(body["proposal_id"], by, body.get("note", "")))
+            return (200 if ok else 400), {"ok": ok, "message": msg}
+        if path == "/investigate":
+            from .mind import Goal
+            rec = await system.investigator.investigate(Goal(body["goal"], body.get("reason", "api request"), "operator"))
+            return 200, rec
         if path == "/feedback":
             ok, msg = system.feedback(body["order_id"], body["label"])
             return (200 if ok else 400), {"ok": ok, "message": msg}

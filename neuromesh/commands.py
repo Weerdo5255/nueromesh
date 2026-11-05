@@ -19,6 +19,11 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /questions                      questions waiting for a human teacher   /answer <qid> <label>
   /feedback <order-id> <label>    correct an answer: a label, a route like tool:calculator, or the
                                   emotional engines with affect=<tone> / disposition=<action>
+  /inquiries                      questions the mesh is asking you      /reply <inq-id> <answer>
+  /proposals                      capabilities the mesh would like      /adopt <prop-id> [labels]  /decline <prop-id>
+  /opinions   /notes              the opinions and notes it shares (private ones are only counted)
+  /investigate <goal>             have the mesh look into something now with its own tools and nodes
+  /mind                           operator: everything it keeps, private notes included (audited)
   /temperament                    the mesh's mood, its emotional engines and what they decided
   /why <order-id>                 why an answer was passed, changed, held or withheld
   /release <order-id>             show an answer the temperament held back     /calm   reset the mood
@@ -97,6 +102,44 @@ def temperament_lines(system) -> list[str]:
     return lines
 
 
+def _note_line(n, private_shown: bool = False) -> str:
+    from .mind import display
+    lock = "[private] " if n.private and private_shown else ""
+    stance = f"{n.stance} ({n.strength:.0%}) - " if n.kind == "opinion" else ""
+    return f"  {lock}{n.kind:<11} {display(n.subject)[:28]:<28} {stance}{' '.join(n.text.split())[:110]}"
+
+
+def mind_lines(system, view: str) -> list[str]:
+    """view: opinions | notes (what users may see) or mind (the operator's full view)."""
+    m = system.mind
+    if not m.enabled:
+        return ["  the mind is off ([mind] enabled = false in the directives)"]
+    if view == "mind":
+        notes = m.inspect(os.environ.get("USER", "operator"))
+        st = m.status()
+        lines = [f"everything the mesh keeps ({len(notes)} notes, {st['private']} private; this look is audited):"]
+        lines += [_note_line(n, True) for n in notes] or ["  nothing yet"]
+        if st["goals"]:
+            lines.append("investigation goals queued: " + "; ".join(st["goals"][:6]))
+        lines.append(f"investigations: {st['investigations']['last_hour']}/{st['investigations']['limit']} this hour, "
+                     f"{st['investigations']['total']} this run; {st['unmet']} unfulfilled orders being followed up")
+        return lines
+    if view == "opinions":
+        ops = m.opinions()
+        shared = [n for n in ops if m.shareable(n)]
+        withheld = len(ops) - len(shared)
+        lines = [_note_line(n) for n in shared] or ["  no opinions to share yet"]
+        if withheld:
+            lines.append(f"  ... and {withheld} opinion{'s' if withheld != 1 else ''} I'm keeping to myself")
+        return lines
+    notes = [n for n in m.public_notes(25) if n.kind != "opinion"]
+    private = len(m.private_notes())
+    lines = [_note_line(n) for n in notes] or ["  no notes to share yet"]
+    if private:
+        lines.append(f"  ... and {private} private note{'s' if private != 1 else ''} I'm not sharing")
+    return lines
+
+
 def knowledge_lines(system, question: str = "") -> list[str]:
     k = system.knowledge
     st = k.stats()
@@ -128,7 +171,10 @@ async def execute(system, line: str) -> Output:
     if not line.startswith("/"):
         res = await system.submit(line)
         first, *more = f"[{res.order_id}] {res.summary()}".splitlines() or [""]
-        return Output([first] + [f"   {m}" for m in more] + [f"   . {step}" for step in res.trace], is_order=True)
+        ask = ([f"   ? [{res.inquiry['id']}] {res.inquiry['question']}  (/reply {res.inquiry['id']} <answer>)"]
+               if res.inquiry else [])
+        return Output([first] + [f"   {m}" for m in more] + ask + [f"   . {step}" for step in res.trace],
+                      is_order=True)
     cmd, _, rest = line[1:].partition(" ")
     rest = rest.strip()
     g = system.guardian
@@ -158,6 +204,35 @@ async def execute(system, line: str) -> Output:
                 out = [f"  learned '{doc.title}' ({doc.passages} passages) {doc.url}", f"  {doc.summary}"]
                 if doc.links:
                     out.append(f"  linked articles queued for background reading: {', '.join(doc.links[:system.directives.research.follow_links])}")
+        elif cmd in ("opinions", "notes", "mind"):
+            out = mind_lines(system, cmd)
+        elif cmd == "inquiries":
+            qs = system.mind.open_inquiries()
+            out = [f"  {q.id} [{q.kind}] {q.question}" for q in qs] or ["  no questions for you right now"]
+        elif cmd == "reply":
+            iid, _, answer = rest.partition(" ")
+            ok, out = await system.mind.reply(iid, answer, by=os.environ.get("USER", "user"))
+        elif cmd == "proposals":
+            ps = sorted(system.mind.proposals.values(), key=lambda p: (p.status != "open", -p.created_at))[:12]
+            out = [f"  {p.id} [{p.status}] {p.kind} '{p.name}'" + (f" for {p.target}" if p.target else "")
+                   + (f" labels={','.join(p.labels)}" if p.labels else "") + f" - {p.reason} (drafted by {p.by})"
+                   for p in ps] or ["  no proposals yet"]
+        elif cmd == "adopt":
+            pid, _, labels = rest.partition(" ")
+            labs = [x for x in labels.replace(",", " ").split() if x] or None
+            out = ["  " + system.mind.adopt(pid, os.environ.get("USER", "human"), labs)[1]]
+        elif cmd == "decline":
+            pid, _, note = rest.partition(" ")
+            out = ["  " + system.mind.decline(pid, os.environ.get("USER", "human"), note)[1]]
+        elif cmd == "investigate":
+            if not rest:
+                return Output(["  usage: /investigate <goal>"])
+            from .mind import Goal
+            rec = await system.investigator.investigate(Goal(rest, "operator request", "operator"))
+            out = [f"  investigated '{rest}':"] + [f"   . {st}" for st in rec["steps"]]
+            out.append(f"  found: {rec['finding'] or 'nothing useful yet'}")
+            if rec["answer"]:
+                out += [f"  answer: {ln}" for ln in str(rec["answer"]).splitlines()]
         elif cmd == "temperament":
             out = temperament_lines(system)
         elif cmd == "why":

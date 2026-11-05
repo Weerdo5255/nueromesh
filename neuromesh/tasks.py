@@ -98,6 +98,7 @@ class Result:
     knowledge: str = ""      # "recalled" (answered from retained knowledge) | "researched" | ""
     disposition: str = ""    # what the temperament did to the answer ("" = nothing; see temperament.py)
     original: Any = None     # the unchanged answer when the temperament changed or held it (operator-only)
+    inquiry: dict | None = None  # a question the mesh asks the user about this order ({"id", "question"})
 
     def to_dict(self) -> dict:
         return asdict(self)

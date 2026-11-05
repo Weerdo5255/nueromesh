@@ -14,13 +14,15 @@ from pathlib import Path
 import numpy as np
 
 from .activity import ActivityLog, ActivityTracker
-from .agents import Architect, Curator, Evaluator, Explorer, Orchestrator, Researcher, Sentinel, Trainer
+from .agents import (Architect, Curator, Evaluator, Explorer, Investigator, Orchestrator, Researcher, Sentinel,
+                     Trainer)
 from .backend import select_backend
 from .bus import Bus
 from .config import Directives, load_toml
 from .encoding import HashingEncoder
 from .guardian import Guardian
 from .knowledge import Hit, KnowledgeStore, extract_answer
+from .mind import Mind
 from .registry import NodeRegistry
 from .store import Store
 from .tasks import DIRECT, DISPATCH, CapabilitySpec, Inference, Order, Result
@@ -77,6 +79,8 @@ class System:
         self.registry.load(self.directives.nodes.input_dim)
         self.affect = Affect(self)  # the temperament and the emotional engines (P8 honesty guard)
         self.bus.listen(self.affect.on_event)
+        self.mind = Mind(self)      # opinions, private notes, inquiries, proposals (P9, P10)
+        self.bus.listen(self.mind.on_event)
 
         self.orders: asyncio.Queue = asyncio.Queue()
         self.inflight = 0
@@ -89,8 +93,9 @@ class System:
         self._bg_tasks: set[asyncio.Task] = set()
         self._tasks: list[asyncio.Task] = []
         self.researcher = Researcher(self)
+        self.investigator = Investigator(self)
         self.agents = [Orchestrator(self), Architect(self), Trainer(self), Evaluator(self),
-                       Curator(self), Explorer(self), self.researcher, Sentinel(self)]
+                       Curator(self), Explorer(self), self.researcher, self.investigator, Sentinel(self)]
 
     # ------------------------------------------------------------- lifecycle
     async def start(self) -> "System":
@@ -165,10 +170,11 @@ class System:
         return np.stack([self.encode(t) for t in texts])
 
     # --------------------------------------------------------------- cascade
-    async def infer(self, cap: str, text: str, *, allow_teacher: bool = True) -> Inference:
+    async def infer(self, cap: str, text: str, *, allow_teacher: bool = True, learn: bool = True) -> Inference:
         """Confidence-gated cascade: the capability's champion node answers when it is
         validated and confident; otherwise a teacher answers and the answer becomes
-        training data, so the node gradually takes over."""
+        training data, so the node gradually takes over. learn=False (the mesh's own
+        investigations) uses the same cascade without turning answers into training data."""
         spec = self.capabilities[cap]
         exclude = frozenset(spec.inactive_labels)
         node = self.registry.champion(cap)
@@ -181,17 +187,20 @@ class System:
             acc = node.metrics.get("holdout_acc")
             if (acc is not None and acc >= self.directives.nodes.serve_min_accuracy
                     and conf >= self.directives.orders.confidence_threshold):
-                if allow_teacher and self.rng.random() < self.directives.orders.audit_sample_rate:
+                if allow_teacher and learn and self.rng.random() < self.directives.orders.audit_sample_rate:
                     self._spot_check(cap, text, label, node)
                 return Inference(label, conf, f"node:{node.id}", node.id, "node")
         if allow_teacher:
             lesson = await self.teachers.label(spec, text)
-            if lesson and lesson.label and lesson.label not in exclude and self.learn(cap, text, lesson.label, lesson.source):
+            usable = lesson and lesson.label and lesson.label not in exclude and (
+                lesson.label in spec.labels if not learn else self.learn(cap, text, lesson.label, lesson.source))
+            if usable:
                 if node is not None and guess is not None:
                     node.metrics["live_total"] = node.metrics.get("live_total", 0) + 1
                     node.metrics["live_agree"] = node.metrics.get("live_agree", 0) + int(guess[0] == lesson.label)
                 return Inference(lesson.label, lesson.confidence, f"teacher:{lesson.source}", None, "teacher")
-            self.teachers.human.ask(cap, text, "no teacher could label this")
+            if learn:
+                self.teachers.human.ask(cap, text, "no teacher could label this")
         if guess is not None:
             return Inference(guess[0], guess[1], f"node:{node.id} (low confidence)", node.id, "node-lowconf")
         return Inference(None, 0.0, "none", None, "none")
@@ -284,6 +293,7 @@ class System:
             cap, text = step["capability"], step["input"]
             spec = self.capabilities[cap]
             if correct not in spec.labels and not spec.open_labels:
+                self.mind.note_rejected_label(cap, correct, order_id)  # may become a proposal (P10)
                 return False, (f"'{correct}' is not a {cap} label {spec.active_labels()}. If the order went "
                                f"to the wrong place, correct the route instead (e.g. skill:<name> or tool:<name>)")
         self.teach(cap, text, correct, reason="correction")
@@ -400,7 +410,12 @@ class System:
         """manifest [config], overridden by directives [tools.config.<name>]."""
         return {**tool.manifest.config, **self.directives.tools.config.get(tool.name, {})}
 
-    def record_tool_run(self, tool: Tool, run: ToolRun) -> None:
+    def record_tool_run(self, tool: Tool, run: ToolRun, exploratory: bool = False) -> None:
+        """exploratory: the mesh tried the tool on its own initiative. A failure then says more
+        about the attempt than the tool, so it never counts towards quarantine or the run tally."""
+        if exploratory and not run.ok:
+            tool.last_error = run.error[:300]
+            return
         tool.runs += 1
         if not run.ok and run.transient:  # e.g. offline: not evidence that the tool is broken
             tool.last_error = run.error[:300]
@@ -528,6 +543,7 @@ class System:
                           "queued": len(self.researcher.queue),
                           "tool": (self.knowledge_tool().name if self.knowledge_tool() else None)},
             "temperament": self.affect.status(),
+            "mind": self.mind.status(),
             "scorecard": self.scorecard(),
             "agents": {a.name: dict(a.stats) for a in self.agents},
         }

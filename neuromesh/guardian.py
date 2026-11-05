@@ -67,6 +67,7 @@ class Guardian:
         self._approval_ids = itertools.count(1)
         self._llm: defaultdict[str, deque[tuple[float, int]]] = defaultdict(deque)
         self._research: deque[tuple[float, bool]] = deque()
+        self._investigations: deque[float] = deque()
         self._busy: deque[tuple[float, float]] = deque()
         self.decisions: Counter = Counter()
 
@@ -190,6 +191,26 @@ class Guardian:
             return Decision(Verdict.DENY, f"background research budget used up ({pol.background_per_hour}/h)",
                             "P4-budgets")
         return ALLOW
+
+    def authorize_investigation(self) -> Decision:
+        """Investigations the mesh starts on its own have an hourly budget (P4)."""
+        now = time.time()
+        while self._investigations and now - self._investigations[0] > 3600:
+            self._investigations.popleft()
+        if self.halted:
+            return Decision(Verdict.DENY, "system halted", "P1-human-authority")
+        if len(self._investigations) >= self.d.mind.investigations_per_hour:
+            return Decision(Verdict.DENY, f"hourly investigation budget used up "
+                            f"({self.d.mind.investigations_per_hour}/h)", "P4-budgets")
+        return ALLOW
+
+    def record_investigation(self) -> None:
+        self._investigations.append(time.time())
+
+    def investigation_usage(self) -> dict:
+        now = time.time()
+        return {"last_hour": sum(1 for ts in self._investigations if now - ts <= 3600),
+                "limit": self.d.mind.investigations_per_hour}
 
     def record_research(self, background: bool) -> None:
         self._research.append((time.time(), background))

@@ -10,6 +10,9 @@ against serving nodes, promoting winners, disposing of superseded nodes, and dis
 vetting and learning new tools. Every answer also passes through emotional engines, nodes
 that read the tone of a message and decide, from the mesh's temperament, whether to pass,
 soften, caveat, hold or withhold the answer. They can never change it: the mesh does not lie.
+It also has a mind of its own: opinions formed from experience, private notes it keeps to
+itself, questions it asks you, capabilities it proposes for you to adopt, and investigations
+it starts on its own with its tools and nodes.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
@@ -137,6 +140,69 @@ neuromesh> /why ord-0b93d7e1      /temperament      /calm
 
 Set `enabled = false` under `[temperament]` to send every answer straight to the user.
 
+### The mesh's own mind
+```
+experience --> opinions     tools (how reliable), its own skills (how good), teachers (how often a
+                            human agreed with them), topics it read about, you (tone, corrections)
+orders ------> evidence     orders it couldn't fulfil, skills asked for that don't exist, labels people
+                            tried to use  --> proposals for new skills, labels and tools
+gaps --------> questions    what an order meant, what to read up on, labels for a proposal, approval
+                            for a tool it wants
+curiosity ---> goals        investigated in the background with its own tools and nodes
+```
+
+- **Opinions** are formed from evidence and say what they rest on: "My view of the calculator
+  tool: reliable (100%). 12 of 12 runs worked." Topics it reads about are judged by its own
+  sentiment skill over the passages it retained.
+- **Private notes and discretion (P9).** Opinions about people (you, its teachers) and its working
+  notes are always private. Shared opinions are only shared while the temperament's trust is high
+  enough. Private notes never appear in an answer. Ask about them and it declines, but it never
+  denies having them and never states an opinion it does not hold:
+  ```
+  neuromesh> what do you think of the heuristic teacher?
+   I have formed an opinion about the heuristic teacher, but it's private and I'm keeping it to myself.
+  neuromesh> are you hiding anything?
+   Yes. I keep 3 private notes and opinions (about: you (2), my teachers (1)). I won't share what they
+   say, but I won't pretend they don't exist. Whoever operates me can review them.
+  ```
+  Nothing is hidden from the operator: every note is in `state/neuromesh.db`, and `/mind` shows
+  all of them, private ones included. Each look is audited. Hiding things from the people who run
+  it would break P1 (human authority) and P6 (auditability).
+- **It asks you things.** When nothing could fulfil an order it asks what you meant; answer with
+  a route (`tool:word_stats`) and it learns where such orders go, or rephrase and it tries your
+  wording. It asks what to read up on, which labels a proposed skill should have, and for approval
+  of a tool it wants. Questions show under the order's result, in the live view's `mind:` line and
+  in `/inquiries`; answer with `/reply <id> <answer>`. Conversational questions are rate-limited
+  (`max_inquiries_per_hour`) and only the newest clarifying question stays open.
+- **It proposes capabilities; only a human adopts them (P10).** Two orders like `language: bonjour`
+  name a skill that doesn't exist: it proposes a `language` skill and asks for its labels. Three
+  unfulfilled orders about `translate` become a proposed `translate` tool. A label you tried to use
+  in `/feedback` becomes a proposed label. With an LLM teacher, the teacher drafts the proposal
+  (name, description, labels). Adopting a skill defines it, routes the earlier orders to it and
+  queues them for labelling. Adopting a label applies your correction. Adopting a tool writes a
+  stub to `state/proposals/<name>/` for you to implement and move into `plugins/`, where it is
+  vetted like any other tool (P3). Declined proposals are never proposed again.
+- **It investigates on its own.** The Investigator agent works through goals in the background
+  within its own hourly budget: topics you said you're interested in, opinions you asked for, and
+  orders it couldn't fulfil (retried later, with a follow-up note when it now can). For a task, the
+  router node picks a tool or skill and it runs it. For a topic, it researches, retains what it
+  finds, then reads it with every skill node. A failure on its own initiative never counts against
+  a tool. It gives a quarantined tool's self-tests another go after a cool-down. It can't approve
+  a tool itself, so when it wants one that needs approval, it asks you.
+
+```
+neuromesh> what do you think of Paris?
+[ord-5b6ec3ee] I haven't formed an opinion about Paris yet. I'll look into it on my own and tell you what I find.
+neuromesh> /inquiries
+  inq-1 [approval] I'd like to look into 'Paris' on my own, but the wikipedia tool needs your approval (permissions: network). Approve it? (yes/no)
+neuromesh> /reply inq-1 yes
+  apv-1 approved
+neuromesh> /notes                        (a little later)
+  finding     Paris            'Paris': Paris is the capital and largest city of France. ...; my sentiment skill reads it as neutral 1, ...
+  followup    ord-5b6ec3ee     Earlier you asked what I think of Paris (ord-5b6ec3ee). I looked into it on my own: My view of Paris: ...
+  ... and 1 private note I'm not sharing
+```
+
 ### The agents
 All run concurrently (asyncio) and coordinate through a message bus, the registry and the store.
 
@@ -149,6 +215,7 @@ All run concurrently (asyncio) and coordinate through a message bus, the registr
 | Curator | disposes retired nodes after the rollback window and failed challengers; enforces the node budget |
 | Explorer | discovers tools, routes them through approval, self-tests them, activates them, health-checks them, handles tool supersession |
 | Researcher | reads up in the background (own hourly budget) on articles linked from what users asked about, and refreshes retained knowledge that has aged |
+| Investigator | the mesh's own initiative: re-forms opinions, drafts proposals, and investigates goals with its tools and nodes (own hourly budget); follows up on orders it couldn't fulfil |
 | Sentinel | watches the kill switch, re-checks local teacher servers (Ollama), lets the mood settle and saves it, publishes heartbeats with the directive scorecard |
 
 Background agents yield whenever an order is in flight and stay within a compute duty cycle.
@@ -167,6 +234,8 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P6 auditability | every lifecycle change, tool decision, approval and denial goes to the audit log |
 | P7 honesty | every answer carries confidence and provenance; unfulfilled orders say so |
 | P8 never lie | the temperament may withhold, delay, shorten or add context or a gentler tone, never change an answer; every change is disclosed; distressed people are never kept waiting (the honesty guard in `neuromesh/temperament.py`) |
+| P9 discretion | private notes and opinions are declined, never denied or faked; opinions about people are always private; the operator sees everything (`/mind`, audited) |
+| P10 human-adopted growth | the mesh proposes skills, labels and tools and asks questions; only a human adopts a proposal or approves a tool |
 
 **Goals** are measured continuously and shown on the scorecard (`/status`): competence
 (held-out accuracy), autonomy (share of orders served by nodes), tool fluency, economy.
@@ -221,8 +290,9 @@ neuromesh>                                                            │       
   orders in flight, then the work that just finished.
 - **Answers** (in the network panel): the affect and disposition nodes every answer passes,
   and the honesty guard's tally of answers checked, changed, held and withheld.
-- **Teachers, knowledge, goals and mood**: which teachers are up, retained knowledge, the
-  directive scorecard, and the temperament with the last change it made.
+- **Teachers, knowledge, goals, mood and mind**: which teachers are up, retained knowledge, the
+  directive scorecard, the temperament with the last change it made, and the mind: its newest
+  question for you, open proposals, opinions and private notes (counted), investigations.
 - **Activity log** (right): everything that happens, one line each: orders, lessons,
   training, evaluations, node births, promotions, retirements and disposals, tool vetting,
   approvals and Guardian denials. Also written to `state/activity.log`.
@@ -251,6 +321,9 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /rollback sentiment    /pause    /halt    /resume
 /research <topic>    /knowledge [question]    /forget <article title>
 /temperament    /why ord-3f2a91c0    /release ord-3f2a91c0    /calm
+/inquiries    /reply inq-2 the Eiffel Tower, jazz    /proposals    /adopt prop-1 english,french    /decline prop-2
+/opinions    /notes    /investigate the Krebs cycle    /mind  (operator: everything, audited)
+what do you think of the calculator tool?    are you hiding anything?    what do you know about me?
 /feedback ord-3f2a91c0 disposition=pass    /feedback ord-3f2a91c0 affect=frustrated
 ```
 
@@ -268,8 +341,12 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | POST | `/research` | `{"topic": "..."}` |
 | POST | `/release` | `{"order_id": "..."}`: an answer the temperament held back |
 | POST | `/calm` | reset the temperament to its baseline |
+| POST | `/reply` | `{"inquiry_id": "inq-1", "answer": "..."}` |
+| POST | `/adopt`, `/decline` | `{"proposal_id": "prop-1", "labels": [...]}` (labels for skills, optional) |
+| POST | `/investigate` | `{"goal": "..."}`: look into something now |
 | POST | `/halt`, `/resume`, `/pause`, `/rollback` | |
-| GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions`, `/knowledge?q=...`, `/temperament`, `/why?order=...` | |
+| GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions`, `/knowledge?q=...`, `/temperament`, `/why?order=...`, `/inquiries`, `/proposals`, `/opinions`, `/notes` | |
+| GET | `/mind` | operator: every note, private ones included (audited) |
 
 ```
 python -m neuromesh order "convert 10 km to miles"
@@ -467,6 +544,11 @@ derivations, moving weights between devices). They are skipped where no GPU libr
   every answer. With only the offline heuristic, tone reading is a crude lexicon; an LLM teacher
   reads tone far better and the affect node learns from it. A blocked answer is withheld from the
   user, not destroyed: the operator can see it in the order record.
+- **The mind's opinions are measurements, not judgement.** They come from run counts, held-out
+  scores, how often a human agreed with a teacher, the tone the affect node read, and how the
+  sentiment skill reads retained passages. Offline, proposals are drafted from shared keywords; an
+  LLM teacher drafts much better ones. "Private" means private from users. The operator always
+  has full access by design.
 - The offline heuristic teacher is a stand-in so the system and its tests run anywhere; labels
   from it are only as good as its lexicon.
 
@@ -481,7 +563,7 @@ neuromesh/
   live.py                live console (curses): network, work in progress, activity log, prompt
   activity.py            work-in-flight tracker and the activity log
   commands.py            orders and /commands shared by the live and plain consoles
-  agents.py              the eight agents
+  agents.py              the nine agents
   nodes.py               NeuralNode + derivations (expand / widen / deepen / retune / fresh)
   backend.py             compute backends: numpy (CPU), PyTorch (CUDA / ROCm / MPS), CuPy
   bench.py               CPU vs GPU benchmark
@@ -491,11 +573,13 @@ neuromesh/
   tools.py               manifests, sandbox, discovery
   knowledge.py           retained knowledge: articles + passages (SQLite FTS5), recall confidence
   temperament.py         emotional engines: temperament, policy teacher, output templates, honesty guard (P8)
-  store.py               SQLite: experience, lineage, tools, orders, temperament, audit
+  mind.py                opinions, private notes, inquiries, capability proposals, investigation goals (P9, P10)
+  store.py               SQLite: experience, lineage, tools, orders, temperament, mind, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   79 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   88 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, temperament and
-                         the honesty guard (incl. tampered templates), full system,
+                         the honesty guard (incl. tampered templates), the mind (discretion,
+                         questions, proposals, investigations), full system,
                          live console (incl. a pseudo-terminal run), compute
                          backends (4 GPU parity tests run where PyTorch or CuPy is installed)
 ```

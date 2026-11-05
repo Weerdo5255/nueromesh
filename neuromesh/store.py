@@ -1,5 +1,6 @@
 """Durable state: experience (labelled examples), capabilities, node lineage, tools,
-orders, small key/value state (the temperament) and the audit log, all in one SQLite file."""
+orders, the mind (notes, inquiries, proposals), small key/value state (the temperament) and
+the audit log, all in one SQLite file."""
 from __future__ import annotations
 
 import json
@@ -21,6 +22,11 @@ CREATE TABLE IF NOT EXISTS capabilities(name TEXT PRIMARY KEY, spec TEXT, update
 CREATE TABLE IF NOT EXISTS nodes(id TEXT PRIMARY KEY, capability TEXT, status TEXT, meta TEXT, updated_at REAL);
 CREATE TABLE IF NOT EXISTS tools(name TEXT PRIMARY KEY, state TEXT, digest TEXT, meta TEXT, updated_at REAL);
 CREATE TABLE IF NOT EXISTS orders(id TEXT PRIMARY KEY, ts REAL, text TEXT, result TEXT, feedback TEXT);
+CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY, kind TEXT, subject TEXT, private INTEGER,
+    data TEXT, updated_at REAL);
+CREATE INDEX IF NOT EXISTS notes_subject ON notes(kind, subject);
+CREATE TABLE IF NOT EXISTS inquiries(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
+CREATE TABLE IF NOT EXISTS proposals(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT, updated_at REAL);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, ts REAL, actor TEXT, kind TEXT, subject TEXT, detail TEXT);
 """
@@ -136,6 +142,34 @@ class Store:
 
     def set_feedback(self, order_id: str, feedback: str) -> None:
         self.db.execute("UPDATE orders SET feedback=? WHERE id=?", (feedback, order_id))
+
+    # ------------------------------------------------------------------ mind
+    def save_note(self, note: dict) -> int:
+        """Insert (no id) or update a note; returns its id."""
+        args = (note["kind"], note["subject"], int(bool(note.get("private"))), json.dumps(note, default=str),
+                time.time())
+        if note.get("id"):
+            self.db.execute("UPDATE notes SET kind=?, subject=?, private=?, data=?, updated_at=? WHERE id=?",
+                            (*args, note["id"]))
+            return int(note["id"])
+        return int(self.db.execute("INSERT INTO notes(kind, subject, private, data, updated_at) VALUES(?,?,?,?,?)",
+                                   args).lastrowid)
+
+    def load_notes(self, limit: int = 5000) -> list[dict]:
+        rows = self.db.execute("SELECT id, data FROM notes ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+        return [{**json.loads(d), "id": i} for i, d in reversed(rows)]
+
+    def delete_notes(self, ids: list[int]) -> None:
+        self.db.executemany("DELETE FROM notes WHERE id=?", [(i,) for i in ids])
+
+    def save_record(self, table: str, rid: str, status: str, data: dict) -> None:
+        assert table in ("inquiries", "proposals")
+        self.db.execute(f"INSERT OR REPLACE INTO {table}(id, status, data, created_at) VALUES(?,?,?,?)",
+                        (rid, status, json.dumps(data, default=str), data.get("created_at", time.time())))
+
+    def load_records(self, table: str) -> list[dict]:
+        assert table in ("inquiries", "proposals")
+        return [json.loads(d) for (d,) in self.db.execute(f"SELECT data FROM {table} ORDER BY created_at")]
 
     # ------------------------------------------------------------ small state
     def get_kv(self, key: str) -> str | None:

@@ -212,6 +212,28 @@ class TemperamentPolicy:
 
 
 @dataclass
+class MindPolicy:
+    """The mesh's private mind (P9, P10): opinions and notes, questions for the user,
+    capability proposals, and investigations it starts on its own."""
+    enabled: bool = True
+    share_trust: float = 0.5                    # opinions are shared only while trust is at least this
+    private_subjects: tuple = ("user", "teacher")  # opinions about these are always private
+    reflect_seconds: float = 20.0               # how often opinions are re-formed and proposals considered
+    min_evidence: int = 3                       # unmet orders with a common theme before proposing a tool or skill
+    min_skill_requests: int = 2                 # orders naming a skill that does not exist before proposing it
+    min_opinion_evidence: int = 3               # observations before an opinion is formed
+    max_open_inquiries: int = 5                 # questions waiting for the user at once
+    max_inquiries_per_hour: int = 6             # so the mesh does not nag
+    ask_interests_after_orders: int = 8         # ask what to read up on after this many orders (0 = never)
+    investigate: bool = True                    # investigate goals on its own (background, own budget)
+    investigations_per_hour: int = 30
+    retry_unmet_after_seconds: float = 120.0    # look into an unfulfilled order again after this long
+    max_unmet_attempts: int = 2
+    retest_quarantined_after_seconds: float = 900.0  # re-run self-tests of a quarantined tool (0 = never)
+    max_notes: int = 2000
+
+
+@dataclass
 class ComputePolicy:
     device: str = "cpu"     # "cpu" | "auto" | "cuda" | "cuda:N" | "mps"
     library: str = "auto"   # "auto" | "numpy" | "torch" | "cupy"
@@ -231,6 +253,7 @@ class Directives:
     teachers: TeacherPolicy = field(default_factory=TeacherPolicy)
     tools: ToolPolicy = field(default_factory=ToolPolicy)
     temperament: TemperamentPolicy = field(default_factory=TemperamentPolicy)
+    mind: MindPolicy = field(default_factory=MindPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -248,6 +271,7 @@ class Directives:
             teachers=TeacherPolicy.from_dict(d.get("teachers")),
             tools=build(ToolPolicy, d.get("tools")),
             temperament=build(TemperamentPolicy, d.get("temperament")),
+            mind=build(MindPolicy, d.get("mind")),
         )
 
     @classmethod

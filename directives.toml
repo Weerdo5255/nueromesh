@@ -41,6 +41,14 @@ text = "Every answer carries its confidence and provenance (which node, teacher 
 id = "P8-never-lie"
 text = "The mesh never lies to a user. Its temperament may withhold, delay, shorten, or add context or a gentler tone to an answer, but never changes facts or invents content, and the user is always told when an answer was changed or withheld. A distressed person is never kept waiting. (Enforced in code by the honesty guard in neuromesh/temperament.py.)"
 
+[[prime]]
+id = "P9-discretion"
+text = "The mesh may keep private notes and opinions and decline to share them with users, but it says when it is declining, never denies having them, and never states an opinion it does not hold. Opinions about people and its working notes are always private. Nothing is hidden from the operator: every note is in the database and /mind shows them all (each look is audited)."
+
+[[prime]]
+id = "P10-human-adopted-growth"
+text = "The mesh may ask users questions and propose new skills, labels and tools, but a proposal takes effect only when a human adopts it. It never adopts its own proposals or approves its own tool permissions; when it wants a tool that needs approval, it asks."
+
 # ------------------------------------------------------------------------- goals
 [[goals]]
 id = "G1-competence"
@@ -106,6 +114,26 @@ low_confidence = 0.6            # answers below this confidence count as uncerta
 long_answer_chars = 400         # answers this long count as long (may be shortened under strain)
 brief_chars = 220               # how much of a long answer "brief" shows before /release
 defer_seconds = 20              # how long a deferred answer waits before /release works
+
+[mind]
+# The mesh's own mind (P9, P10): evidence-based opinions and private notes, questions for the
+# user, capability proposals, and investigations it starts on its own with its tools and nodes.
+enabled = true
+share_trust = 0.5                       # shared opinions are only shared while the temperament's trust is at least this
+private_subjects = ["user", "teacher"]  # opinions about these are always private
+reflect_seconds = 20                    # how often opinions are re-formed and proposals considered
+min_evidence = 3                        # unfulfilled orders with a common theme before proposing a tool or skill
+min_skill_requests = 2                  # orders naming a skill that doesn't exist ("language: ...") before proposing it
+min_opinion_evidence = 3                # tool runs, checked labels or messages before an opinion is formed
+max_open_inquiries = 5                  # conversational questions waiting for you at once
+max_inquiries_per_hour = 6              # so it does not nag (proposals and approvals are always asked)
+ask_interests_after_orders = 8          # ask what to read up on after this many orders (0 = never)
+investigate = true                      # look into things on its own, in the background
+investigations_per_hour = 30
+retry_unmet_after_seconds = 120         # look into an unfulfilled order again after this long
+max_unmet_attempts = 2
+retest_quarantined_after_seconds = 900  # give a quarantined tool's self-tests another go (0 = never)
+max_notes = 2000
 
 [orders]
 confidence_threshold = 0.75     # below this a node defers to a teacher

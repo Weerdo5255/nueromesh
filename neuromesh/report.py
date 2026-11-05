@@ -58,6 +58,25 @@ def describe_event(ev: Event) -> str | None:
         return f"[temper]   {d['order']} {d['action']}: {d['reason']} (message {d['tone']}, mood {d['mood']})"
     if t == "output.released":
         return f"[release]  {d['order']} released to {d['by']} (was {d['action']})"
+    if t == "mind.opinion":
+        if d["private"]:
+            return "[mind]     formed a private opinion" + (" (updated)" if d["changed"] else "")
+        return f"[mind]     {'now finds' if d['changed'] else 'formed an opinion:'} {d['subject']} {d['stance']}"
+    if t == "mind.inquiry":
+        return f"[ask]      {d['id']}: {d['question']}  (/reply {d['id']} ...)"
+    if t == "inquiry.answered":
+        return f"[ask]      {d['id']} {d['status']} by {d['by']}"
+    if t == "mind.proposal":
+        what = f"label '{d['name']}' for {d['target']}" if d["kind"] == "label" else f"{d['kind']} '{d['name']}'"
+        return f"[propose]  {d['id']}: a new {what} - {d['reason']}"
+    if t in ("proposal.adopted", "proposal.declined"):
+        return f"[propose]  {d['id']} ({d['kind']} '{d['name']}') {t.split('.')[1]} by {d['by']}"
+    if t == "mind.finding":
+        return f"[mind]     looked into '{d['goal'][:60]}' ({d['kind']}): {d['finding']}"
+    if t == "mind.followup":
+        return f"[mind]     follow-up on {d['order']}: {d['text']}"
+    if t == "mind.retest":
+        return f"[mind]     giving the quarantined tool '{d['tool']}' another go at its self-tests"
     if t == "teacher.status":
         verb = "ready" if d["state"] == "ready" else f"unavailable ({d['state']})"
         return f"[teacher]  {d['teacher']} {verb}: {d['detail']}"
@@ -108,6 +127,12 @@ def render_status(st: dict) -> str:
         lines.append(f"knowledge: {k['documents']} articles / {k['passages']} passages retained; "
                      f"{k['recalled']} recalled, {k['researched']} researched this run; research "
                      f"{r['last_hour']}/{r['limit']} this hour; tool: {k['tool'] or 'none active'}")
+    md = st.get("mind")
+    if md and md["enabled"]:
+        inv = md["investigations"]
+        lines.append(f"mind: {md['opinions']} opinions, {sum(md['note_counts'].values())} notes ({md['private']} private); "
+                     f"{len(md['inquiries'])} questions for you, {len(md['proposals'])} open proposals; "
+                     f"investigations {inv['last_hour']}/{inv['limit']} this hour")
     tm = st.get("temperament")
     if tm and tm["enabled"]:
         decided = ", ".join(f"{k} {v}" for k, v in sorted(tm["decisions"].items(), key=lambda kv: -kv[1]))

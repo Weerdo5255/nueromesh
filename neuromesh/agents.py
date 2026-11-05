@@ -101,6 +101,10 @@ class Orchestrator(Agent):
                     await self.sys.affect.process(order, result)
                 except Exception:
                     self.log.exception("temperament could not process %s; the answer passes unchanged", order.id)
+                try:  # the mind notes gaps and may ask the user what they meant
+                    self.sys.mind.observe(order, result)
+                except Exception:
+                    self.log.exception("the mind could not observe %s", order.id)
         except Exception as exc:
             self.log.exception("order %s failed", order.id)
             result = Result(order.id, order.text, None, None, 0.0, ok=False, note=f"internal error: {exc}")
@@ -119,6 +123,11 @@ class Orchestrator(Agent):
         if s.guardian.halted:
             res.ok, res.note = False, f"system halted by operator: {s.guardian.halt_reason}"
             res.trace.append("refused (P1-human-authority)")
+            return res
+        own = s.mind.answer_self(order.text, order.id)  # questions about the mesh's own opinions and notes (P9)
+        if own is not None:
+            res.route, res.output, res.confidence, res.served_by = "mind", own[0], 1.0, "explicit"
+            res.trace.append(f"answered by the mind: {own[1]}")
             return res
         route, payload = parse_order(order.text, s.capabilities)
         kinds: list[str] = []
@@ -768,6 +777,183 @@ class Researcher(Agent):
         if doc is not None and depth < pol.max_depth:
             for link in doc.links[: pol.follow_links]:
                 self.enqueue(link, f"linked from '{doc.title}'", depth + 1)
+
+
+# ==================================================================== investigator
+class Investigator(Agent):
+    """The mesh's own initiative.
+
+    Reflection: re-forms its opinions and turns evidence into proposals (the mind).
+    Investigation: works through goals with whatever it has. The router node picks a tool or
+    skill; approved tools are run (exploratory: a failure never counts against a tool); research
+    tools look things up and the mesh retains them; then every skill node reads what was found,
+    which is how the mesh forms opinions of what it reads about. Goals come from the user's
+    interests, opinions it was asked for, orders it could not fulfil (retried later, with a
+    follow-up when it now can) and /investigate. Background only, within its own hourly budget
+    (P4). It can ask a human to approve a tool it wants; it never approves one itself (P3)."""
+    name = "investigator"
+
+    def __init__(self, system):
+        super().__init__(system)
+        self.last_reflect = 0.0
+        self.quarantine_seen: dict[str, float] = {}
+        self.history: deque[dict] = deque(maxlen=50)
+
+    @property
+    def interval(self) -> float:
+        return max(0.25, self.sys.directives.background.tick_seconds * 4)
+
+    async def step(self) -> None:
+        s = self.sys
+        mind, pol = s.mind, s.directives.mind
+        if not mind.enabled or s.guardian.halted:
+            return
+        if time.time() - self.last_reflect >= pol.reflect_seconds:
+            self.last_reflect = time.time()
+            await mind.reflect()
+        if not pol.investigate or s.inflight or not s.guardian.background_allowed():
+            return
+        self._retest_quarantined()
+        if mind.waiting and s.knowledge_tool() is not None:
+            for g in mind.waiting:
+                mind.goals.append(g)
+            mind.waiting.clear()
+        for u in mind.due_unmet():
+            u.attempts += 1
+            u.next_try = mind.clock() + pol.retry_unmet_after_seconds * (u.attempts + 1)
+            mind.add_goal(u.text, f"an order I couldn't fulfil ({u.order_id})", "unmet", u.order_id)
+        if not mind.goals or not s.guardian.authorize_investigation().allowed:
+            return
+        await self.investigate(mind.goals.popleft())
+
+    def _retest_quarantined(self) -> None:
+        """Give a quarantined tool another go at its self-tests after a cool-down (it stays
+        quarantined unless they pass)."""
+        s = self.sys
+        cool = s.directives.mind.retest_quarantined_after_seconds
+        if cool <= 0:
+            return
+        now = time.time()
+        for tool in s.tools.tools.values():
+            if tool.state != QUARANTINED:
+                self.quarantine_seen.pop(tool.name, None)
+                continue
+            if not tool.manifest.examples:
+                continue
+            since = self.quarantine_seen.setdefault(tool.name, now)
+            if now - since >= cool and s.retest_tool(tool.name)[0]:
+                self.quarantine_seen.pop(tool.name, None)
+                s.guardian.audit("investigator", "tool.retest", tool.name,
+                                 reason=f"quarantined for {cool:.0f}s; running its self-tests again")
+                s.bus.publish("mind.retest", tool=tool.name, after=cool)
+
+    async def investigate(self, goal) -> dict:
+        s = self.sys
+        mind = s.mind
+        rpol = s.directives.research
+        text = goal.text
+        short = " ".join(text.split())[:80]
+        steps: list[str] = []
+        found: list[str] = []
+        answer: str | None = None
+        docs = []
+        s.guardian.record_investigation()
+        with s.activity.track("investigation", "investigator", f"{goal.kind}: {short}"):
+            hits, conf = s.knowledge.recall(text, rpol.recall_threshold)
+            if hits and conf >= rpol.recall_threshold:
+                docs.append(hits[0].doc)
+                steps.append(f"recalled '{hits[0].doc.title}' from memory ({conf:.2f})")
+            if goal.kind in ("opinion", "interest", "curiosity"):
+                route = DIRECT  # a topic to read up on, not a task for a tool or skill
+            else:  # a task: let the router node pick the tool or skill, as for an order
+                inf = await s.infer(DISPATCH, text, learn=False)
+                route = inf.label or DIRECT
+                steps.append(f"router -> {route} via {inf.provenance} ({inf.confidence:.2f})")
+            if route.startswith("tool:"):
+                tool = s.tools.tools.get(route[5:])
+                if tool is not None and tool.manifest.provides == "knowledge":
+                    pass  # researched below
+                elif tool is not None and s.guardian.authorize_tool_run(tool).allowed:
+                    run = await s.sandbox.run(tool, text, tool.manifest.timeout_s or s.directives.tools.default_timeout_s,
+                                              s.tool_config(tool))
+                    s.record_tool_run(tool, run, exploratory=True)
+                    steps.append(f"ran {tool.name}: " + ("ok" if run.ok else f"failed ({run.error[:80]})"))
+                    if run.ok:
+                        answer = str(run.output)
+                        found.append(f"the {tool.name} tool gives {answer[:200]}")
+                else:
+                    steps.append(f"{route} is not usable now")
+            elif route.startswith("skill:") and route[6:] in s.capabilities:
+                cap = route[6:]
+                read = await s.infer(cap, skill_payload(text), learn=False)
+                steps.append(f"{cap} -> {read.label} via {read.provenance}")
+                if read.label:
+                    answer = read.label
+                    found.append(f"my {cap} skill reads it as {read.label}")
+            if answer is None and not docs:
+                tool = s.knowledge_tool()
+                if tool is not None:
+                    doc, note = await s.research(text, reason=f"investigation: {goal.reason}", background=True,
+                                                 tool=tool)
+                    steps.append(f"researched with {tool.name}: " + (f"'{doc.title}'" if doc else note))
+                    if doc is not None:
+                        docs.append(doc)
+                else:
+                    pending = next((t for t in s.tools.tools.values()
+                                    if t.manifest.provides == "knowledge" and t.state == PENDING and t.approval_id), None)
+                    if pending is not None:
+                        q = mind.ask("approval", f"I'd like to look into '{short}' on my own, but the {pending.name} "
+                                     f"tool needs your approval (permissions: {', '.join(pending.manifest.permissions)}). "
+                                     f"Approve it? (yes/no)", "to research on my own", approval_id=pending.approval_id)
+                        steps.append(f"asked the user to approve {pending.name} ({q.id})" if q else
+                                     f"{pending.name} is waiting for approval")
+                        if goal.kind != "unmet" and all(g.text != goal.text for g in mind.waiting):
+                            mind.waiting.append(goal)  # picked up again once the tool is approved
+                    else:
+                        steps.append("no research tool available")
+            for doc in docs[:1]:
+                passages = s.knowledge.search(text, doc_id=doc.id) or [Hit(doc, "Introduction", doc.summary, 1.0, 1.0)]
+                s.knowledge.touch(doc)
+                if answer is None:
+                    answer, how = await s.answer_from_knowledge(text, passages)
+                    steps.append(f"answer {how}")
+                found.append(f"'{doc.title}': {' '.join(doc.summary.split())[:200]}")
+                found.extend(await self._read_with_nodes(doc, steps))
+        if goal.kind == "opinion" and mind.find_opinion(text) is not None:
+            answer = (mind.answer_self(f"what do you think of {text}") or (None,))[0]
+        elif goal.kind == "opinion":
+            answer = None
+        finding = "; ".join(found)
+        mind.record_investigation(goal, steps, finding, answer)
+        record = {"goal": text, "kind": goal.kind, "reason": goal.reason, "steps": steps, "finding": finding,
+                  "answer": answer}
+        self.history.append(record)
+        self.stats["investigations"] += 1
+        return record
+
+    async def _read_with_nodes(self, doc, steps: list[str]) -> list[str]:
+        """Read what was found with every skill node; the sentiment reading becomes an opinion."""
+        s = self.sys
+        hits = s.knowledge.search(doc.title, k=5, doc_id=doc.id)
+        passages = [" ".join(h.text.split())[:600] for h in hits] or [doc.summary[:600]]
+        readings = []
+        for cap, spec in s.capabilities.items():
+            if cap == DISPATCH or spec.internal or len(spec.active_labels()) < 2:
+                continue
+            labels = []
+            for p in passages:
+                inf = await s.infer(cap, p, learn=False)
+                if inf.label:
+                    labels.append((inf.label, inf.provenance.split(" ")[0]))
+            if not labels:
+                continue
+            counts = Counter(lab for lab, _ in labels)
+            readings.append(f"my {cap} skill reads it as " + ", ".join(f"{k} {v}" for k, v in counts.most_common()))
+            if cap == "sentiment":
+                by = Counter(p for _, p in labels).most_common(1)[0][0]
+                s.mind.topic_opinion(doc.title, labels, by)
+        steps.append(f"read {len(passages)} passages of '{doc.title}' with my skill nodes")
+        return readings
 
 
 # ======================================================================== sentinel

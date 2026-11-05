@@ -5,7 +5,7 @@
     |   with challengers and retired nodes under each champion          | (every event, |
     | WORK IN PROGRESS: lessons from teachers, training, evaluations... |  newest last, |
     | ANSWERS: affect node -> disposition node -> honesty guard -> user |  scrollable)  |
-    | TEACHERS / KNOWLEDGE / GOALS / MOOD                               |               |
+    | TEACHERS / KNOWLEDGE / GOALS / MOOD / MIND (questions for you)    |               |
     | last result                                                       |               |
     | neuromesh> prompt                                                 |               |
     +-------------------------------------------------------------------+---------------+
@@ -213,7 +213,7 @@ def work_lines(system, g: dict, limit: int = 6) -> list[Line]:
     s = system
     frame = g["spin"][int(time.time() * 8) % len(g["spin"])]
     style = {"lesson": "lesson", "training": "work", "evaluation": "work", "self-test": "tool",
-             "order": "order", "research": "lesson"}
+             "order": "order", "research": "lesson", "investigation": "lesson"}
     active = s.activity.current()
     lines: list[Line] = []
     for a in active[-limit:]:
@@ -266,7 +266,26 @@ def teacher_goal_lines(system, g: dict) -> list[Line]:
     return [("teachers: " + f" {g['dot']} ".join(parts), "teacher"),
             (knowledge, "good" if tool else "dim"),
             ("goals:    " + f" {g['dot']} ".join(goals), "info"),
-            temperament_line(s, g)]
+            temperament_line(s, g),
+            mind_line(s, g)]
+
+
+def mind_line(system, g: dict) -> Line:
+    m = system.mind
+    if not m.enabled:
+        return ("mind:     off", "dim")
+    st = m.status()
+    asks = m.open_inquiries()
+    inv = st["investigations"]
+    parts = []
+    if asks:  # the newest question first: it is what the user should see
+        q = max(asks, key=lambda q: q.created_at)
+        parts.append(f"asks [{q.id}] {q.question}" + (f" (+{len(asks) - 1} more: /inquiries)" if len(asks) > 1 else ""))
+    if st["proposals"]:
+        parts.append(f"{len(st['proposals'])} proposal{'s' if len(st['proposals']) != 1 else ''} (/proposals)")
+    parts.append(f"{st['opinions']} opinions, {st['private']} private notes")
+    parts.append(f"investigations {inv['last_hour']}/{inv['limit']}/h" + (f", {len(st['goals'])} queued" if st["goals"] else ""))
+    return ("mind:     " + f" {g['dot']} ".join(parts), "warn" if asks else "info")
 
 
 def wrap_log(entries, width: int, g: dict) -> list[list[tuple[str, str]]]:
@@ -575,7 +594,11 @@ class LiveView:
         if self.view == "output":
             self._rule(top, 0, left_w, "output  (Tab: back to the network)")
             rows = bottom - top - 1
-            lines = self.output
+            lines = []
+            for line in self.output:  # wrap long lines, keeping their indent
+                indent = " " * (len(line) - len(line.lstrip()) + 2)
+                lines += textwrap.wrap(line, max(20, left_w - 2), subsequent_indent=indent,
+                                       break_long_words=True, drop_whitespace=True) or [""]
             shown = lines[:rows] if len(lines) <= rows else lines[: rows - 1] + [f"... {len(lines) - rows + 1} more lines"]
             for i, line in enumerate(shown):
                 self._put(top + 1 + i, 1, line, "info", left_w - 2)

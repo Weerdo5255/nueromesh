@@ -123,7 +123,7 @@ def format_event(ev: Event) -> LogEntry | None:
              "approval": "warn", "label": "info", "skill": "info", "lesson": "lesson",
              "teacher": "teacher", "halt": "bad", "resume": "good", "learn": "good", "recall": "lesson",
              "forget": "warn", "research": "warn", "mood": "teacher", "temper": "lesson",
-             "release": "good"}.get(tag, "info")
+             "release": "good", "mind": "teacher", "ask": "warn", "propose": "good"}.get(tag, "info")
     if t == "output.shaped" and d.get("action") in ("confirm", "defer", "block"):
         level = "warn"
     if tag == "tool" and ("REJECTED" in text or "quarantined" in text):

@@ -376,6 +376,36 @@ class LLMTeacher(Teacher):
                   "tool could handle this order. Answer concisely and say if you are unsure.")
         return await self._ask(system, text)
 
+    async def propose(self, examples: list[str], known: list[str], hint: str = "") -> dict | None:
+        """Draft one new capability from requests the mesh could not fulfil."""
+        schema = {"type": "object", "required": ["kind", "name", "description"],
+                  "properties": {"kind": {"type": "string", "enum": ["skill", "tool"]},
+                                 "name": {"type": "string"}, "description": {"type": "string"},
+                                 "labels": {"type": "array", "items": {"type": "string"}},
+                                 "triggers": {"type": "array", "items": {"type": "string"}}}}
+        system = ("You help a small multi-agent system decide which capability it is missing. "
+                  "Reply with a single JSON object and nothing else.")
+        user = ("These requests could not be fulfilled:\n" + "\n".join(f"- {e[:200]}" for e in examples)
+                + f"\n\nIt already has: {', '.join(known)}.\n" + (f"The requests name {hint}.\n" if hint else "")
+                + "Propose ONE new capability. If the requests ask to sort text into a fixed set of categories, "
+                'propose a skill: {"kind": "skill", "name": "<snake_case>", "description": "...", '
+                '"labels": ["<snake_case>", ...], "triggers": ["<word>", ...]}. If they need an action or outside '
+                'data, propose a tool: {"kind": "tool", "name": "<snake_case>", "description": "...", '
+                '"triggers": ["<word>", ...]}.')
+        data = _extract_json(await self._ask(system, user, schema) or "")
+        if not data:
+            return None
+        kind = str(data.get("kind", "")).lower()
+        name = _clean_label(str(data.get("name", "")))
+        if kind not in ("skill", "tool") or not re.fullmatch(r"[a-z][a-z0-9_]{1,30}", name or ""):
+            return None
+        labels = [x for x in (_clean_label(str(v)) for v in data.get("labels") or []) if x][:12]
+        if kind == "skill" and len(set(labels)) < 2:
+            labels = []
+        triggers = [str(t).strip().lower()[:40] for t in data.get("triggers") or [] if str(t).strip()][:8]
+        return {"kind": kind, "name": name, "description": str(data.get("description", ""))[:300],
+                "labels": list(dict.fromkeys(labels)), "triggers": triggers}
+
     NOT_FOUND = "NOT IN PASSAGES"
 
     async def compose(self, question: str, hits) -> str | None:
@@ -542,6 +572,17 @@ class TeacherPool:
                 reply = await teacher.compose(question, hits)
             if reply:
                 return reply, teacher.name
+        return None
+
+    async def propose(self, examples: list[str], known: list[str], hint: str = "") -> tuple[dict, str] | None:
+        """Have the first available LLM teacher draft a capability proposal (None offline)."""
+        for teacher in self.ranked():
+            if not isinstance(teacher, LLMTeacher):
+                continue
+            with self._track(teacher, f"drafting a capability proposal from {len(examples)} orders"):
+                draft = await teacher.propose(examples, known, hint)
+            if draft:
+                return draft, teacher.name
         return None
 
     async def answer(self, text: str) -> tuple[str, str] | None:
