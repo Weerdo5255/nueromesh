@@ -383,7 +383,8 @@ class System:
         tool.state, tool.note = ACTIVE, reason
         tool.activated_at = time.time()
         tool.consecutive_failures = 0
-        seeded = sum(1 for ex in m.examples if self.learn(DISPATCH, ex["input"], m.route, "tool-manifest"))
+        seeded = sum(1 for ex in m.examples if ex.get("route", True)  # route = false: a self-test only
+                     and self.learn(DISPATCH, ex["input"], m.route, "tool-manifest"))
         if m.supersedes and m.supersedes in self.tools.tools and m.supersedes != m.name:
             old = self.tools.tools[m.supersedes]
             moved = self.store.relabel(DISPATCH, old.manifest.route, m.route)
@@ -420,7 +421,7 @@ class System:
             tool.last_error = run.error[:300]
             return
         tool.runs += 1
-        if not run.ok and run.transient:  # e.g. offline: not evidence that the tool is broken
+        if not run.ok and (run.transient or run.not_found):  # offline, or no such article: not a broken tool
             tool.last_error = run.error[:300]
             self.tools.persist(tool)
             return
@@ -440,45 +441,64 @@ class System:
         self.tools.persist(tool)
 
     # -------------------------------------------------------------- research
-    def knowledge_tool(self) -> Tool | None:
-        """The active tool that provides knowledge (wikipedia), if research is enabled."""
+    def knowledge_tools(self) -> list[Tool]:
+        """Active research tools in the order the directives prefer ([research] prefer)."""
         if not self.directives.research.enabled:
-            return None
-        return next((t for t in self.tools.active() if t.manifest.provides == "knowledge"), None)
+            return []
+        prefer = {name: i for i, name in enumerate(self.directives.research.prefer)}
+        active = [t for t in self.tools.active() if t.manifest.provides == "knowledge"]
+        return sorted(active, key=lambda t: (prefer.get(t.name, len(prefer)), t.name))
+
+    def knowledge_tool(self) -> Tool | None:
+        """The preferred active research tool (kiwix before wikipedia), if research is enabled."""
+        tools = self.knowledge_tools()
+        return tools[0] if tools else None
+
+    def unlimited(self, tool: Tool | None) -> bool:
+        """A research tool the directives exempt from the research budgets (your own server)."""
+        return tool is not None and tool.name in self.directives.research.unlimited
 
     async def research(self, topic: str, *, reason: str, background: bool = False,
                        tool: Tool | None = None):
-        """Look something up with the research tool and retain what comes back.
-        Returns (Document, "learned") or (None, why not)."""
-        tool = tool or self.knowledge_tool()
-        if tool is None:
-            return None, "no active research tool (approve the wikipedia tool: /approvals)"
-        decision = self.guardian.authorize_research(background)
-        if not decision.allowed:
-            return None, decision.reason
+        """Look something up and retain what comes back. Research tools are tried in the preferred
+        order (kiwix, then wikipedia): the first that has the article wins, and a miss or an
+        unreachable server falls through to the next. Returns (Document, "learned") or (None, why not)."""
+        chain = self.knowledge_tools()
+        if tool is not None and tool not in chain:
+            chain = [tool]
+        if not chain:
+            return None, "no active research tool (approve kiwix or wikipedia: /approvals)"
         actor = "researcher" if background else "orchestrator"
-        with self.activity.track("research", actor, f"{tool.name}: {' '.join(topic.split())[:80]}"):
-            run = await self.sandbox.run(tool, topic, tool.manifest.timeout_s or self.directives.tools.default_timeout_s,
-                                         self.tool_config(tool))
-        self.guardian.record_research(background)
-        self.record_tool_run(tool, run)
-        if not run.ok:
-            self.bus.publish("knowledge.failed", tool=tool.name, topic=topic[:200], error=run.error,
-                             background=background)
-            return None, run.error
-        k = run.extra.get("knowledge")
-        if not isinstance(k, dict) or not k.get("title"):
-            return None, f"{tool.name} returned no knowledge"
-        doc = self.knowledge.add(k, reason)
-        self.guardian.audit(actor, "knowledge.learned", doc.title, source=doc.source, url=doc.url,
-                            passages=doc.passages, reason=reason)
-        self.bus.publish("knowledge.learned", title=doc.title, url=doc.url, source=doc.source,
-                         passages=doc.passages, reason=reason, background=background, topic=topic[:200])
-        pol = self.directives.research
-        if not background and pol.max_depth >= 1:
-            for link in doc.links[: pol.follow_links]:
-                self.researcher.enqueue(link, f"linked from '{doc.title}'", 1)
-        return doc, "learned"
+        notes = []
+        for t in chain:
+            unlimited = self.unlimited(t)
+            decision = self.guardian.authorize_research(background, unlimited=unlimited)
+            if not decision.allowed:
+                notes.append(f"{t.name}: {decision.reason}")
+                continue
+            with self.activity.track("research", actor, f"{t.name}: {' '.join(topic.split())[:80]}"):
+                run = await self.sandbox.run(t, topic, t.manifest.timeout_s or self.directives.tools.default_timeout_s,
+                                             self.tool_config(t))
+            self.guardian.record_research(background, unlimited=unlimited)
+            self.record_tool_run(t, run)
+            k = run.extra.get("knowledge") if run.ok else None
+            if not isinstance(k, dict) or not k.get("title"):
+                error = run.error if not run.ok else f"{t.name} returned no knowledge"
+                self.bus.publish("knowledge.failed", tool=t.name, topic=topic[:200], error=error, background=background,
+                                 fallback=t is not chain[-1])
+                notes.append(f"{t.name}: {error}")
+                continue
+            doc = self.knowledge.add(k, reason)
+            self.guardian.audit(actor, "knowledge.learned", doc.title, source=doc.source, url=doc.url,
+                                passages=doc.passages, reason=reason)
+            self.bus.publish("knowledge.learned", title=doc.title, url=doc.url, source=doc.source,
+                             passages=doc.passages, reason=reason, background=background, topic=topic[:200])
+            pol = self.directives.research
+            if not background and pol.max_depth >= 1:
+                for link in doc.links[: pol.follow_links]:
+                    self.researcher.enqueue(link, f"linked from '{doc.title}'", 1)
+            return doc, "learned"
+        return None, "; ".join(notes)
 
     async def answer_from_knowledge(self, question: str, hits: list[Hit]) -> tuple[str, str]:
         """An answer from retained passages: written by an LLM teacher when one is available
@@ -544,7 +564,7 @@ class System:
             "teachers": self.teachers.describe(), "llm_usage": self.guardian.llm_usage(),
             "knowledge": {**vars(self.knowledge.stats()), "research": self.guardian.research_usage(),
                           "queued": len(self.researcher.queue),
-                          "tool": (self.knowledge_tool().name if self.knowledge_tool() else None)},
+                          "tool": " > ".join(t.name for t in self.knowledge_tools()) or None},
             "temperament": self.affect.status(),
             "mind": self.mind.status(),
             "tasks": self.tasks.status(),

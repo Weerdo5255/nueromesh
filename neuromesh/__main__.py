@@ -60,10 +60,11 @@ async def _live(args) -> None:
 
 def _teacher_overrides(args, root: Path) -> dict | None:
     """--ollama MODEL / --ollama-url URL: enable the local Ollama teacher and make sure it is
-    in the teaching order (right after the human)."""
+    in the teaching order (right after the human). --kiwix URL: where the local Kiwix server is."""
     model, url = getattr(args, "ollama", None), getattr(args, "ollama_url", None)
+    kiwix = getattr(args, "kiwix", None)
     if not model and not url:
-        return None
+        return {"tools": {"config": {"kiwix": {"url": kiwix}}}} if kiwix else None
     from .config import Directives
     ollama = {"provider": "ollama", "enabled": True}
     if model:
@@ -73,7 +74,10 @@ def _teacher_overrides(args, root: Path) -> dict | None:
     order = list(Directives.load(root / "directives.toml").teachers.order)
     if "ollama" not in order:
         order.insert(order.index("human") + 1 if "human" in order else 0, "ollama")
-    return {"teachers": {"order": order, "ollama": ollama}}
+    out: dict = {"teachers": {"order": order, "ollama": ollama}}
+    if kiwix:
+        out["tools"] = {"config": {"kiwix": {"url": kiwix}}}
+    return out
 
 
 async def _console(args) -> None:
@@ -227,6 +231,8 @@ def main(argv: list[str] | None = None) -> None:
                        help="teach with a local Ollama model, e.g. llama3.1:8b ('auto' = first installed)")
         p.add_argument("--ollama-url", metavar="URL", default=None,
                        help="Ollama server (default: $OLLAMA_HOST or http://localhost:11434)")
+        p.add_argument("--kiwix", metavar="URL", default=None,
+                       help="local Kiwix server (kiwix-serve) to research with, e.g. http://localhost:8080")
     for p in (p_run, p_serve, p_demo, p_bench):
         p.add_argument("--device", default=None,
                        help="cpu | auto | cuda | cuda:N | mps (default: [compute] device in directives.toml, "

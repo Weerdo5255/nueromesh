@@ -250,7 +250,7 @@ class Orchestrator(Agent):
             answer, how = await s.answer_from_knowledge(question, found)
             res.output, res.knowledge = answer, "researched"
             n = doc.passages
-            res.trace.append(f"researched with {tool.name}: '{doc.title}' ({n} passage{'s' if n != 1 else ''} "
+            res.trace.append(f"researched with {doc.source}: '{doc.title}' ({n} passage{'s' if n != 1 else ''} "
                              f"retained; {how})")
         elif hits:
             answer, how = await s.answer_from_knowledge(question, hits)
@@ -652,8 +652,8 @@ class Explorer(Agent):
             await self._self_test(tool)
         interval = s.directives.background.health_check_seconds
         for tool in s.tools.active():
-            if "network" in tool.manifest.permissions:
-                continue  # no background traffic to outside services just to check health
+            if "network" in tool.manifest.permissions and not s.unlimited(tool):
+                continue  # no background traffic to outside services just to check health (your own server is fine)
             if time.time() - tool.last_health > interval and s.inflight == 0 and s.guardian.background_allowed():
                 await self._health_check(tool)
 
@@ -790,7 +790,7 @@ class Researcher(Agent):
                 if key not in self._queued:
                     self._queued.add(key)
                     self.queue.append((doc.title, f"refresh (retained {doc.age / 86400:.0f} days ago)", pol.max_depth))
-        if not self.queue or not s.guardian.authorize_research(background=True).allowed:
+        if not self.queue or not s.guardian.authorize_research(background=True, unlimited=s.unlimited(tool)).allowed:
             return
         topic, reason, depth = self.queue.popleft()
         self._queued.discard(topic.strip().lower())
@@ -917,7 +917,7 @@ class Investigator(Agent):
                 if tool is not None:
                     doc, note = await s.research(text, reason=f"investigation: {goal.reason}", background=True,
                                                  tool=tool)
-                    steps.append(f"researched with {tool.name}: " + (f"'{doc.title}'" if doc else note))
+                    steps.append(f"researched with {doc.source}: '{doc.title}'" if doc else f"could not research: {note}")
                     if doc is not None:
                         docs.append(doc)
                 else:

@@ -159,5 +159,7 @@ if __name__ == "__main__":
         main()
     except Transient as exc:
         print(json.dumps({"error": str(exc), "transient": True}))
+    except LookupError as exc:  # no such article: the tool works, the answer just isn't there
+        print(json.dumps({"error": str(exc), "not_found": True}))
     except Exception as exc:
         print(json.dumps({"error": str(exc)}))

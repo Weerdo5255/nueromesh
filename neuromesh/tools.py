@@ -100,6 +100,7 @@ class ToolRun:
     ms: float = 0.0
     extra: dict = field(default_factory=dict)   # everything else the tool returned (e.g. "knowledge")
     transient: bool = False                     # e.g. network down: does not count towards quarantine
+    not_found: bool = False                     # the tool works but has no answer (e.g. no such article)
 
 
 _LAUNCHER = """
@@ -155,7 +156,8 @@ class Sandbox:
         except json.JSONDecodeError:
             return ToolRun(False, error="tool printed invalid JSON", ms=ms)
         if "error" in data:
-            return ToolRun(False, error=str(data["error"]), ms=ms, transient=bool(data.get("transient")))
+            return ToolRun(False, error=str(data["error"]), ms=ms, transient=bool(data.get("transient")),
+                           not_found=bool(data.get("not_found")))
         extra = {k: v for k, v in data.items() if k != "output"}
         return ToolRun(True, output=data.get("output"), ms=ms, extra=extra)
 

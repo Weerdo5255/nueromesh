@@ -156,7 +156,7 @@ async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7,
     work = Path(tempfile.mkdtemp(prefix="neuromesh-demo-"))
     for name in ("directives.toml", "capabilities.toml"):
         shutil.copy(PROJECT / name, work / name)
-    shutil.copytree(PROJECT / "plugins", work / "plugins", ignore=shutil.ignore_patterns("wikipedia"))  # offline
+    shutil.copytree(PROJECT / "plugins", work / "plugins", ignore=shutil.ignore_patterns("wikipedia", "kiwix"))  # offline
     overrides = dict(DEMO_OVERRIDES)
     if ollama or ollama_url:  # a local model teaches; the heuristic teacher covers any gaps
         local = {"provider": "ollama", "enabled": True, "model": ollama or "auto"}

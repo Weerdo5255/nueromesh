@@ -50,7 +50,8 @@ def describe_event(ev: Event) -> str | None:
     if t == "knowledge.forgotten":
         return f"[forget]   '{d['title']}' - {d['reason']}"
     if t == "knowledge.failed":
-        return f"[research] {d['tool']} could not look up '{d['topic'][:60]}': {d['error']}"
+        more = "; trying the next research tool" if d.get("fallback") else ""
+        return f"[research] {d['tool']} could not look up '{d['topic'][:60]}': {d['error']}{more}"
     if t == "temperament.shift":
         return (f"[mood]     {d['previous']} -> {d['mood']} after {d['cause']} (valence {d['valence']:+.2f}, "
                 f"trust {d['trust']:.2f}, patience {d['patience']:.2f})")

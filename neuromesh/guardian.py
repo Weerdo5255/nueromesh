@@ -67,6 +67,7 @@ class Guardian:
         self._approval_ids = itertools.count(1)
         self._llm: defaultdict[str, deque[tuple[float, int]]] = defaultdict(deque)
         self._research: deque[tuple[float, bool]] = deque()
+        self._research_unlimited: deque[float] = deque()   # lookups on exempt servers: counted, never limited
         self._investigations: deque[float] = deque()
         self._task_runs: deque[float] = deque()
         self._busy: deque[tuple[float, float]] = deque()
@@ -172,9 +173,10 @@ class Guardian:
             return self._deny("llm_call", teacher, "hourly token budget exhausted", "P4-budgets")
         return ALLOW
 
-    def authorize_research(self, background: bool) -> Decision:
+    def authorize_research(self, background: bool, unlimited: bool = False) -> Decision:
         """Research calls (e.g. Wikipedia) have an hourly budget, with a smaller share for
-        background curiosity so orders always have room."""
+        background curiosity so orders always have room. Tools the directives list in
+        [research] unlimited (your own Kiwix server) are exempt."""
         pol = self.d.research
         now = time.time()
         while self._research and now - self._research[0][0] > 3600:
@@ -183,6 +185,8 @@ class Guardian:
             return Decision(Verdict.DENY, "system halted", "P1-human-authority")
         if not pol.enabled:
             return Decision(Verdict.DENY, "research is disabled in the directives", "P3-approved-tools-only")
+        if unlimited:
+            return ALLOW
         if len(self._research) >= pol.max_fetches_per_hour:
             reason = f"hourly research budget used up ({pol.max_fetches_per_hour}/h)"
             if background:
@@ -233,7 +237,12 @@ class Guardian:
         return {"last_hour": sum(1 for ts in self._task_runs if now - ts <= 3600),
                 "limit": self.d.tasks.max_runs_per_hour}
 
-    def record_research(self, background: bool) -> None:
+    def record_research(self, background: bool, unlimited: bool = False) -> None:
+        if unlimited:
+            self._research_unlimited.append(time.time())
+            while self._research_unlimited and time.time() - self._research_unlimited[0] > 3600:
+                self._research_unlimited.popleft()
+            return
         self._research.append((time.time(), background))
 
     def research_usage(self) -> dict:
@@ -241,7 +250,8 @@ class Guardian:
         recent = [bg for ts, bg in self._research if now - ts <= 3600]
         pol = self.d.research
         return {"last_hour": len(recent), "background_last_hour": sum(recent),
-                "limit": pol.max_fetches_per_hour, "background_limit": pol.background_per_hour}
+                "limit": pol.max_fetches_per_hour, "background_limit": pol.background_per_hour,
+                "unlimited_last_hour": sum(1 for ts in self._research_unlimited if now - ts <= 3600)}
 
     def record_llm_usage(self, teacher: str, tokens: int) -> None:
         self._llm[teacher].append((time.time(), int(tokens)))

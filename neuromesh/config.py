@@ -194,6 +194,8 @@ class ResearchPolicy:
     refresh_days: float = 30.0          # re-read retained articles older than this when idle
     max_documents: int = 2000           # retention cap; the least recently used are forgotten first
     research_questions: bool = True     # research unroutable questions ("who/what/...") on Wikipedia
+    prefer: tuple = ("kiwix", "wikipedia")  # research tools in order: the first that has the article wins
+    unlimited: tuple = ("kiwix",)       # research tools exempt from the budgets above (your own server)
 
 
 @dataclass
@@ -245,6 +247,7 @@ class TaskPolicy:
     learn_max_articles: int = 25           # how much a learn task reads before it switches to reviewing
     learn_depth: int = 2                   # how far from the topic it follows links
     learn_links_per_article: int = 3
+    learn_burst_unlimited: int = 10        # articles per run when the research tool is your own server (kiwix)
     improve_interval_seconds: float = 30.0
     pause_after_failures: int = 5          # a run task that keeps failing is paused
 

@@ -152,10 +152,12 @@ def knowledge_lines(system, question: str = "") -> list[str]:
     st = k.stats()
     usage = system.guardian.research_usage()
     tool = system.knowledge_tool()
+    chain = " > ".join(t.name for t in system.knowledge_tools())
+    local = f", {usage['unlimited_last_hour']} on your own server (unlimited)" if usage["unlimited_last_hour"] else ""
     lines = [f"knowledge: {st.documents} articles, {st.passages} passages retained; {st.recalled} answers "
              f"recalled, {st.researched} articles researched this run; research {usage['last_hour']}/"
-             f"{usage['limit']} this hour ({usage['background_last_hour']}/{usage['background_limit']} background); "
-             f"tool: {tool.name if tool else 'none active (approve wikipedia)'}"]
+             f"{usage['limit']} this hour ({usage['background_last_hour']}/{usage['background_limit']} background{local}); "
+             f"research tools: {chain or 'none active (approve kiwix or wikipedia)'}"]
     if question:
         threshold = system.directives.research.recall_threshold
         hits = k.search(question)
@@ -166,7 +168,7 @@ def knowledge_lines(system, question: str = "") -> list[str]:
             lines.append(f"  {h.confidence:.2f} {h.doc.title} / {h.section}: {' '.join(h.text.split())[:90]}  ({verdict})")
         return lines
     for d in k.documents(15):
-        lines.append(f"  {d.title:<34} {d.passages:>3} passages  used {d.hits:>3}x  {d.reason[:40]}")
+        lines.append(f"  {d.title:<34} {d.source:<9} {d.passages:>3} passages  used {d.hits:>3}x  {d.reason[:40]}")
     return lines
 
 

@@ -257,12 +257,15 @@ def teacher_goal_lines(system, g: dict) -> list[Line]:
         goals.append(f"{goal['id'].split('-')[0]}:{shown} {op}{goal['target']:g} {g['ok'] if goal['met'] else g['no']}")
     k = s.knowledge.stats()
     r = s.guardian.research_usage()
-    tool = s.knowledge_tool()
+    tools = s.knowledge_tools()
+    tool = tools[0] if tools else None
     queued = len(s.researcher.queue)
-    knowledge = (f"knowledge: {k.documents} articles ({k.passages} passages) {g['dot']} {r['last_hour']}/{r['limit']} "
-                 f"lookups/h {g['dot']} recalled {k.recalled} {g['dot']} researched {k.researched}"
+    local = f" + {r['unlimited_last_hour']} local" if r.get("unlimited_last_hour") else ""
+    knowledge = (f"knowledge: {k.documents} articles ({k.passages} passages) {g['dot']} {r['last_hour']}/{r['limit']}"
+                 f"{local} lookups/h {g['dot']} recalled {k.recalled} {g['dot']} researched {k.researched}"
                  + (f" {g['dot']} {queued} queued" if queued else "")
-                 + ("" if tool else f" {g['dot']} no research tool active"))
+                 + (f" {g['dot']} via {' > '.join(t.name for t in tools)}" if tools else
+                    f" {g['dot']} no research tool active"))
     return [("teachers: " + f" {g['dot']} ".join(parts), "teacher"),
             (knowledge, "good" if tool else "dim"),
             ("goals:    " + f" {g['dot']} ".join(goals), "info"),

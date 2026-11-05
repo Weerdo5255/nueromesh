@@ -297,31 +297,16 @@ class BackgroundTasks:
             else:
                 task.note = "waiting for a research tool"
             return
-        if not s.guardian.authorize_research(background=True).allowed:
+        unlimited = s.unlimited(tool)  # your own server (kiwix): read several articles per run
+        if not s.guardian.authorize_research(background=True, unlimited=unlimited).allowed:
             task.note = "waiting for research budget"
             return
         frontier, read, depth = p.setdefault("frontier", []), p.setdefault("read", []), p.setdefault("depth", {})
         if frontier and len(read) < task.max_articles:
-            title = frontier.pop(0)
-            doc, why = await s.research(title, reason=f"{task.id}: learning about {task.target}", background=True,
-                                        tool=tool)
-            if doc is None:
-                p.setdefault("failed", []).append(title)
-                del p["failed"][:-20]
-                task.note = f"could not read '{title}': {why}"[:200]
-                return
-            if doc.title not in read:
-                read.append(doc.title)
-            d = depth.get(title, 0)
-            if d < task.depth:
-                for link in doc.links[: self.pol.learn_links_per_article]:
-                    if link not in read and link not in frontier and len(read) + len(frontier) < task.max_articles:
-                        frontier.append(link)
-                        depth[link] = d + 1
-            if len(read) == 1:  # the topic itself: read it with every skill node (forms an opinion)
-                steps: list[str] = []
-                await s.investigator._read_with_nodes(doc, steps)
-            task.note = f"read '{doc.title}' ({len(read)}/{task.max_articles})"
+            for _ in range(self.pol.learn_burst_unlimited if unlimited else 1):
+                if not frontier or len(read) >= task.max_articles:
+                    break
+                await self._read_one(task, tool, frontier, read, depth)
             if not task.met and (not frontier or len(read) >= task.max_articles):
                 task.met = True
                 self._tell(task, f"{task.id} finished a first pass over '{task.target}': {len(read)} article"
@@ -343,6 +328,29 @@ class BackgroundTasks:
             task.note = f"refreshed '{oldest.title}'" if doc else f"could not refresh '{oldest.title}'"
         else:
             task.note = f"reviewing {len(read)} articles; all fresh"
+
+    async def _read_one(self, task: BackgroundTask, tool, frontier: list, read: list, depth: dict) -> None:
+        s = self.sys
+        p = task.progress
+        title = frontier.pop(0)
+        doc, why = await s.research(title, reason=f"{task.id}: learning about {task.target}", background=True, tool=tool)
+        if doc is None:
+            p.setdefault("failed", []).append(title)
+            del p["failed"][:-20]
+            task.note = f"could not read '{title}': {why}"[:200]
+            return
+        if doc.title not in read:
+            read.append(doc.title)
+        d = depth.get(title, 0)
+        if d < task.depth:
+            for link in doc.links[: self.pol.learn_links_per_article]:
+                if link not in read and link not in frontier and len(read) + len(frontier) < task.max_articles:
+                    frontier.append(link)
+                    depth[link] = d + 1
+        if len(read) == 1:  # the topic itself: read it with every skill node (forms an opinion)
+            steps: list[str] = []
+            await s.investigator._read_with_nodes(doc, steps)
+        task.note = f"read '{doc.title}' from {doc.source} ({len(read)}/{task.max_articles})"
 
     def _improve(self, task: BackgroundTask) -> None:
         s = self.sys

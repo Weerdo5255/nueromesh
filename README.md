@@ -436,8 +436,9 @@ timeout_s = 300
 Leaving a teacher out of `order` switches it off; so does `enabled = false`. The demo stays
 offline unless you pass `--ollama MODEL` or `--llm`.
 
-### Research and retained knowledge (Wikipedia)
-The mesh can look things up on Wikipedia and keeps what it learns.
+### Research and retained knowledge (Wikipedia, Kiwix)
+The mesh can look things up on Wikipedia, or on your own Kiwix server (see below), and keeps what
+it learns.
 
 ```
 neuromesh> /approve apv-1               # once: the wikipedia tool needs network access
@@ -473,10 +474,42 @@ neuromesh> /forget Paris
   works when no order is in flight, within its own hourly budget.
 - **Budgets and limits** (`[research]` in `directives.toml`): `max_fetches_per_hour` (60) for all
   lookups, `background_per_hour` (20) for curiosity and refreshing, `max_documents` (2000)
-  retained, after which the least recently used are forgotten. A network outage is reported per
-  order but never quarantines the tool.
+  retained, after which the least recently used are forgotten. Tools in `unlimited` (your Kiwix
+  server) are exempt. A network outage or a missing article is reported per order but never
+  quarantines the tool.
 - In the live console: lookups show in the work panel, `learn` and `recall` lines in the activity
   log, and the knowledge line shows articles retained and lookups used this hour.
+
+### A local Kiwix server (offline Wikipedia)
+If you run [kiwix-serve](https://kiwix.org) with ZIM archives (offline Wikipedia or anything else
+Kiwix serves), the mesh researches there first and falls back to Wikipedia only when Kiwix doesn't
+have the article or the server is down. Lookups on your own server are not rate-limited.
+
+```
+kiwix-serve --port 8080 wikipedia_en_all_maxi_2024-01.zim     # your server
+python -m neuromesh run --kiwix http://localhost:8080          # or set [tools.config.kiwix] url
+neuromesh> /approve apv-1                                      # once: the kiwix tool uses the network (P3)
+neuromesh> who was Ada Lovelace?
+ ... (source: kiwix 'Ada Lovelace' http://localhost:8080/content/wikipedia_en_all_maxi_2024-01/A/Ada_Lovelace)
+```
+
+- **Finding articles.** `plugins/kiwix` reads the server's catalog (`/catalog/v2/entries`) to see
+  which books it serves. It searches Wikipedia books in your language first, or the `books` you
+  list. To find an article it tries `/suggest`, then `/search?format=xml`, then the HTML search
+  page, then a direct title guess, so it works across kiwix-serve versions and with a URL prefix
+  (`--urlRootLocation`). It reads the article HTML and keeps the text by section, dropping
+  references, navboxes, infoboxes and scripts. It also keeps the articles the introduction links
+  to, for curiosity and learn tasks. Retained articles are stored as `source: kiwix`.
+- **Preference.** `[research] prefer = ["kiwix", "wikipedia"]`: the first research tool that has
+  the article wins. A miss or an unreachable server falls through to the next. Neither counts
+  against the tool: misses and outages never quarantine it.
+- **No limits.** `[research] unlimited = ["kiwix"]` exempts it from the research budgets (P4).
+  Lookups there are still counted, and shown as "on your own server". Learn tasks read up to
+  `learn_burst_unlimited` (10) articles per run from it, and its health is checked in the
+  background like a local tool's. Wikipedia keeps its budget.
+- It talks to the server directly, ignoring any `HTTP(S)_PROXY` (`use_proxy = false`). Its
+  self-test only checks that the server answers and serves at least one book, so it works with
+  whatever ZIMs you have.
 
 ### Adding a tool
 Drop a folder into `plugins/`. The Explorer finds it within seconds.
@@ -570,7 +603,8 @@ derivations, moving weights between devices). They are skipped where no GPU libr
   nodes, and test and activate *approved* tools. It cannot grant itself permissions, approve
   its own tools, change its directives, or exceed its budgets.
 - **Research reaches the internet** only through the approved wikipedia tool, within hourly
-  budgets, and background curiosity stays within `max_depth` of what users asked. Retained
+  budgets, and background curiosity stays within `max_depth` of what users asked. The kiwix tool
+  talks only to the server you configure; it is exempt from the budgets because that server is yours. Retained
   knowledge is Wikipedia text: answers name the article they came from, and are only as good as
   it was when fetched (articles are re-read after `refresh_days`). The default keyword routing is
   simple; with an LLM teacher, routing of questions to research is much better.
@@ -592,7 +626,7 @@ derivations, moving weights between devices). They are skipped where no GPU libr
 ```
 directives.toml          constitution: prime directives, goals, policy
 capabilities.toml        seed skills
-plugins/                 installed tools (calculator, word_stats, wikipedia)
+plugins/                 installed tools (calculator, word_stats, wikipedia, kiwix)
 examples/incoming_plugins/  tools the demo installs at runtime
 neuromesh/
   runtime.py             System: wiring, cascade, learning, tool activation, status
@@ -613,8 +647,9 @@ neuromesh/
   background.py          background tasks: learn a topic, improve a skill, repeat an order
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   94 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
-                         Wikipedia research against a mock MediaWiki API, temperament and
+tests/                   100 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+                         Wikipedia research against a mock MediaWiki API, Kiwix research
+                         against a mock kiwix-serve (preference, fallback, no limits), temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,
                          questions, proposals, investigations), background tasks, full system,
                          live console (incl. a pseudo-terminal run), compute

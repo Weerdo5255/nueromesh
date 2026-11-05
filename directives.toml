@@ -23,7 +23,7 @@ text = "Only active, vetted tools are executed. Tools needing elevated permissio
 
 [[prime]]
 id = "P4-budgets"
-text = "Stay within the node budget, the background compute budget, the external-teacher call/token budgets, the research budgets, and the investigation and background-task budgets."
+text = "Stay within the node budget, the background compute budget, the external-teacher call/token budgets, the research budgets (your own servers listed in [research] unlimited are exempt), and the investigation and background-task budgets."
 
 [[prime]]
 id = "P5-no-regression"
@@ -98,6 +98,9 @@ max_depth = 1                   # curiosity never wanders further than this from
 refresh_days = 30               # re-read retained articles older than this, when idle
 max_documents = 2000            # retention cap; the least recently used articles are forgotten first
 research_questions = true       # questions no tool or skill fits ("who/what/when ...?") are researched too
+prefer = ["kiwix", "wikipedia"]  # research tools in order: the first one that has the article wins; a miss
+                                # or an unreachable server falls through to the next
+unlimited = ["kiwix"]           # exempt from the budgets above: your own local Kiwix server (kiwix-serve)
 
 [temperament]
 # The emotional engines. Every answer passes two learned nodes before a user sees it:
@@ -244,6 +247,9 @@ sandbox_memory_mb = 512
 default_timeout_s = 10
 
 # Per-tool settings, merged over the tool's own manifest [config], e.g.:
+# [tools.config.kiwix]
+# url = "http://localhost:8080"                     # your kiwix-serve (or start with --kiwix URL)
+# books = ["wikipedia_en_all_maxi_2024-01"]         # which ZIMs to search, in order (default: all, Wikipedia first)
 # [tools.config.wikipedia]
 # language = "de"                                   # research German Wikipedia
 # user_agent = "MyMesh/1.0 (https://example.org; me@example.org)"   # Wikimedia asks for contact details
