@@ -32,6 +32,7 @@ from .knowledge import Hit
 from .nodes import Architecture, NeuralNode
 from .tasks import DIRECT, DISPATCH, Result, parse_order, skill_payload
 from .tools import ACTIVE, APPROVED, PENDING, QUARANTINED, REJECTED, Tool, outputs_match
+from . import voice
 
 
 class Agent:
@@ -108,6 +109,7 @@ class Orchestrator(Agent):
         except Exception as exc:
             self.log.exception("order %s failed", order.id)
             result = Result(order.id, order.text, None, None, 0.0, ok=False, note=f"internal error: {exc}")
+            voice.finish(result)
         finally:
             self.sys.inflight -= 1
             sem.release()
@@ -118,6 +120,12 @@ class Orchestrator(Agent):
             order.future.set_result(result)
 
     async def fulfil(self, order) -> Result:
+        """Do the order; the reply leads with the result in the mesh's own words (voice.py)."""
+        res = await self._fulfil(order)
+        voice.finish(res)
+        return res
+
+    async def _fulfil(self, order) -> Result:
         s = self.sys
         res = Result(order.id, order.text, None, None, 0.0)
         if s.guardian.halted:
@@ -170,6 +178,7 @@ class Orchestrator(Agent):
                 res.trace.append(f"{route} {'ok' if run.ok else 'failed'} in {run.ms:.0f} ms")
                 if run.ok:
                     res.output = run.output
+                    res.answer = voice.tool_phrase(tool, run)
                 else:
                     res.ok, res.note = False, f"tool error: {run.error}"
         elif route.startswith("skill:"):
@@ -187,6 +196,7 @@ class Orchestrator(Agent):
                     res.ok, res.note = False, "nothing could label this yet; queued for a human teacher"
                 else:
                     res.output = inf.label
+                    res.answer = voice.skill_phrase(s.capabilities[cap], inf.label)
         else:
             pol = s.directives.research
             hits, confidence = s.knowledge.recall(order.text, pol.recall_threshold)
@@ -199,6 +209,8 @@ class Orchestrator(Agent):
                 reply = await s.teachers.answer(order.text)
                 if reply:
                     res.output = reply[0]
+                    res.answer = voice.lead_first(reply[0])
+                    res.sources.append(f"the {reply[1]} teacher (a language model; not checked against a source)")
                     res.trace.append(f"answered directly by the {reply[1]} teacher")
                     kinds.append("teacher")
                 else:
@@ -226,8 +238,9 @@ class Orchestrator(Agent):
         s = self.sys
         doc = hits[0].doc
         s.knowledge.touch(doc)
-        answer, how = await s.answer_from_knowledge(question, hits)
-        res.output, res.knowledge = answer, "recalled"
+        answer, source, how = await s.answer_from_knowledge(question, hits)
+        res.output, res.answer, res.knowledge = answer, answer, "recalled"
+        res.sources.append(source)
         res.trace.append(f"recalled from retained knowledge: '{doc.title}' (confidence {confidence:.2f}, "
                          f"retained {_ago(doc.age)} ago; {how})")
         s.bus.publish("knowledge.recalled", question=question[:200], title=doc.title,
@@ -247,14 +260,16 @@ class Orchestrator(Agent):
         if doc is not None:
             found = s.knowledge.search(question, doc_id=doc.id) or [Hit(doc, "Introduction", doc.summary, 1.0, 1.0)]
             s.knowledge.touch(doc)
-            answer, how = await s.answer_from_knowledge(question, found)
-            res.output, res.knowledge = answer, "researched"
+            answer, source, how = await s.answer_from_knowledge(question, found)
+            res.output, res.answer, res.knowledge = answer, answer, "researched"
+            res.sources.append(source)
             n = doc.passages
             res.trace.append(f"researched with {doc.source}: '{doc.title}' ({n} passage{'s' if n != 1 else ''} "
                              f"retained; {how})")
         elif hits:
-            answer, how = await s.answer_from_knowledge(question, hits)
-            res.output, res.knowledge = answer, "recalled"
+            answer, source, how = await s.answer_from_knowledge(question, hits)
+            res.output, res.answer, res.knowledge = answer, answer, "recalled"
+            res.sources.append(source)
             res.trace.append(f"could not research ({note}); answered from the closest retained knowledge "
                              f"'{hits[0].doc.title}' (confidence {confidence:.2f})")
         else:
@@ -901,8 +916,8 @@ class Investigator(Agent):
                     s.record_tool_run(tool, run, exploratory=True)
                     steps.append(f"ran {tool.name}: " + ("ok" if run.ok else f"failed ({run.error[:80]})"))
                     if run.ok:
-                        answer = str(run.output)
-                        found.append(f"the {tool.name} tool gives {answer[:200]}")
+                        answer = voice.tool_phrase(tool, run)
+                        found.append(f"the {tool.name} tool gives {str(run.output)[:200]}")
                 else:
                     steps.append(f"{route} is not usable now")
             elif route.startswith("skill:") and route[6:] in s.capabilities:
@@ -910,7 +925,7 @@ class Investigator(Agent):
                 read = await s.infer(cap, skill_payload(text), learn=False)
                 steps.append(f"{cap} -> {read.label} via {read.provenance}")
                 if read.label:
-                    answer = read.label
+                    answer = voice.skill_phrase(s.capabilities[cap], read.label)
                     found.append(f"my {cap} skill reads it as {read.label}")
             if answer is None and not docs:
                 tool = s.knowledge_tool()
@@ -937,7 +952,8 @@ class Investigator(Agent):
                 passages = s.knowledge.search(text, doc_id=doc.id) or [Hit(doc, "Introduction", doc.summary, 1.0, 1.0)]
                 s.knowledge.touch(doc)
                 if answer is None:
-                    answer, how = await s.answer_from_knowledge(text, passages)
+                    body, source, how = await s.answer_from_knowledge(text, passages)
+                    answer = f"{body}\nSource: {source}"
                     steps.append(f"answer {how}")
                 found.append(f"'{doc.title}': {' '.join(doc.summary.split())[:200]}")
                 found.extend(await self._read_with_nodes(doc, steps))

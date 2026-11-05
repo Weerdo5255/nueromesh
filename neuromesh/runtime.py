@@ -22,7 +22,7 @@ from .bus import Bus
 from .config import Directives, load_toml
 from .encoding import HashingEncoder
 from .guardian import Guardian
-from .knowledge import Hit, KnowledgeStore, extract_answer
+from .knowledge import Hit, KnowledgeStore, restate
 from .mind import Mind
 from .registry import NodeRegistry
 from .store import Store
@@ -34,7 +34,7 @@ from .tools import ACTIVE, APPROVED, QUARANTINED, RETIRED, Sandbox, Tool, ToolRe
 log = logging.getLogger("neuromesh")
 
 OFFLINE_FIELDS = ("lexicon", "negation", "templates", "label_templates", "fillers", "triggers",
-                  "default_label", "open_labels", "label_descriptions", "internal", "teachers")
+                  "default_label", "open_labels", "label_descriptions", "internal", "teachers", "answer", "answers")
 
 
 class System:
@@ -149,9 +149,10 @@ class System:
         self.order_count += 1
         self.served.append(result.served_by)
         self.store.save_order(result.order_id, result.text, result.to_dict())
+        said = (result.answer or str(result.output)).split("\n", 1)[0]
         self.bus.publish("order.done", order=result.order_id, route=result.route, ok=result.ok,
                          served_by=result.served_by, latency_ms=result.latency_ms,
-                         text=result.text[:200], output=str(result.output)[:200], note=result.note)
+                         text=result.text[:200], output=said[:200], note=result.note)
 
     # -------------------------------------------------------------- encoding
     def encode(self, text: str) -> np.ndarray:
@@ -500,16 +501,24 @@ class System:
             return doc, "learned"
         return None, "; ".join(notes)
 
-    async def answer_from_knowledge(self, question: str, hits: list[Hit]) -> tuple[str, str]:
-        """An answer from retained passages: written by an LLM teacher when one is available
-        (told to use only the passages), otherwise the best matching sentences."""
+    async def answer_from_knowledge(self, question: str, hits: list[Hit]) -> tuple[str, str, str]:
+        """An answer from retained passages, in the mesh's own words: written by an LLM teacher when
+        one is available (told to use only the passages), otherwise restated from the best sentences.
+        Returns (answer, source, how); the source - with the sentences it rests on - goes after the answer."""
+        from .voice import lead_first
         doc = hits[0].doc
         composed = await self.teachers.compose(question, hits)
+        quote = ""
         if composed:
-            body, how = composed[0], f"written by the {composed[1]} teacher from retained passages"
+            body, how = lead_first(composed[0]), f"written by the {composed[1]} teacher from retained passages"
         else:
-            body, how = extract_answer(question, hits), "quoted from retained passages"
-        return f"{body}\n(source: {doc.source} '{doc.title}' {doc.url})", how
+            body, quotes = restate(question, hits)
+            how = "restated from retained passages"
+            quote = " ".join(quotes)
+            if len(quote) > 240:
+                quote = quote[:239].rsplit(" ", 1)[0] + "..."
+        source = f"{doc.source} '{doc.title}' {doc.url}" + (f' ("{quote}")' if quote and quote != body else "")
+        return body, source, how
 
     # ---------------------------------------------------------------- status
     def scorecard(self) -> list[dict]:

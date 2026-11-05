@@ -32,6 +32,8 @@ class CapabilitySpec:
     label_templates: dict[str, list[str]] = field(default_factory=dict)
     fillers: dict[str, list[str]] = field(default_factory=dict)
     kind: str = "classify"
+    answer: str = ""         # how a result is said, e.g. "That reads as {label}." ({label}, {description})
+    answers: dict[str, str] = field(default_factory=dict)  # per-label phrasing, overriding `answer`
     internal: bool = False   # used by the mesh itself (emotional engines): never a route for orders
     teachers: list[str] = field(default_factory=list)  # only these teachers, in this order ([] = all)
     created_at: float = field(default_factory=time.time)
@@ -97,6 +99,8 @@ class Result:
     note: str = ""
     latency_ms: float = 0.0
     knowledge: str = ""      # "recalled" (answered from retained knowledge) | "researched" | ""
+    answer: str = ""         # what a person reads: the result first, in the mesh's own words, then sources
+    sources: list = field(default_factory=list)  # where the result came from (shown after the answer)
     disposition: str = ""    # what the temperament did to the answer ("" = nothing; see temperament.py)
     original: Any = None     # the unchanged answer when the temperament changed or held it (operator-only)
     inquiry: dict | None = None  # a question the mesh asks the user about this order ({"id", "question"})
@@ -108,10 +112,13 @@ class Result:
         """What a user may see: everything but the unchanged answer of a held or withheld reply."""
         d = self.to_dict()
         d.pop("original", None)
+        if self.disposition in ("brief", "confirm", "defer", "block"):
+            d["output"] = None  # the raw result is held back with the answer
         return d
 
     def summary(self) -> str:
-        out = self.output if self.ok else f"(not fulfilled) {self.note}"
+        """The reply, then where it came from: [route | confidence | served by]."""
+        out = self.answer or (self.output if self.ok else f"(not fulfilled) {self.note}")
         return f"{out}  [{self.route or '-'} | conf {self.confidence:.2f} | {self.served_by}]"
 
 

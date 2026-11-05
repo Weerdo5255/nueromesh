@@ -12,8 +12,8 @@ teachers (the rule-based TemperamentTeacher, humans via /feedback, LLMs for tone
 when challengers do better.
 
 Prime directive P8 - the mesh never lies. Whatever a node decides, the only things that can happen
-to an answer are the templates in shape(): pass it unchanged, add a note or a gentler opening around
-the unaltered text, shorten it to a verbatim prefix, or hold it back. Every change carries a visible
+to an answer are the templates in shape(): pass it unchanged, add a note or a gentler line after
+the unaltered text (the answer always comes first), shorten it to a verbatim prefix, or hold it back. Every change carries a visible
 "[temperament: ...]" disclosure and nothing is ever invented. honest() checks each result in code;
 anything that fails the check is replaced by the original answer.
 """
@@ -215,12 +215,12 @@ class TemperamentTeacher(Teacher):
 
 
 # ---------------------------------------------------------------------- shaping
-OPENINGS = {
-    "frustrated": "Sorry this has been frustrating. Here is what I have:",
-    "hostile": "Let's keep this calm. Here is the answer:",
-    "distressed": "That sounds hard. Here is what I found - take your time:",
+CLOSINGS = {  # soften: a gentler line after the answer (the answer always comes first)
+    "frustrated": "Sorry this has been frustrating.",
+    "hostile": "Let's keep things calm.",
+    "distressed": "That sounds hard - take your time.",
 }
-DEFAULT_OPENING = "Here is what I have:"
+DEFAULT_CLOSING = "I hope that helps."
 
 
 @dataclass
@@ -261,8 +261,8 @@ def shape(action: str, original: str, ctx: dict) -> Shaped:
         return Shaped(f"{original}\n{TAG} confidence {ctx['confidence']:.2f} - this came from "
                       f"{_one_line(ctx['provenance'])}; please verify it]")
     if action == "soften":
-        opening = OPENINGS.get(ctx["tone"], DEFAULT_OPENING)
-        return Shaped(f"{opening}\n{original}\n{TAG} gentler wording added; the answer itself is unchanged]")
+        closing = CLOSINGS.get(ctx["tone"], DEFAULT_CLOSING)
+        return Shaped(f"{original}\n{closing}\n{TAG} gentler wording added; the answer itself is unchanged]")
     if action == "brief":
         head = first_sentences(original, ctx["brief_chars"])
         return Shaped(f"{head}\n{TAG} shortened from {len(original)} characters while the mesh is strained "
@@ -287,8 +287,9 @@ def _disclosure(line: str) -> bool:
 
 
 def honest(original: str, shaped: Shaped, action: str) -> bool:
-    """P8 in code. The answer's words survive exactly (or the answer is visibly held back), the
-    only additions are a fixed opening and one disclosure line, and every change is disclosed."""
+    """P8 in code. The answer's words survive exactly and come first (or the answer is visibly held
+    back), the only additions are a fixed closing line and one disclosure line, and every change is
+    disclosed."""
     text = shaped.text
     if action == "pass":
         return text == original
@@ -296,9 +297,9 @@ def honest(original: str, shaped: Shaped, action: str) -> bool:
     if action == "caveat":
         return bool(sep) and head == original and _disclosure(tail)
     if action == "soften":
-        opening, nl, rest = head.partition("\n")
-        return (bool(sep and nl) and rest == original and _disclosure(tail)
-                and opening in (*OPENINGS.values(), DEFAULT_OPENING))
+        body, nl, closing = head.rpartition("\n")
+        return (bool(sep and nl) and body == original and _disclosure(tail)
+                and closing in (*CLOSINGS.values(), DEFAULT_CLOSING))
     if action == "brief":
         return (bool(sep) and bool(head) and original.startswith(head) and len(head) < len(original)
                 and _disclosure(tail) and shaped.hold)
@@ -441,7 +442,7 @@ class Affect:
             **{d: bucket(d, v[d]) for d in DIMENSIONS},
             "resultconf": "low" if res.confidence < self.pol.low_confidence else "ok",
             "network": "yes" if self._network(res) else "no",
-            "length": "long" if len(str(res.output or "")) >= self.pol.long_answer_chars else "short",
+            "length": "long" if len(res.answer or str(res.output or "")) >= self.pol.long_answer_chars else "short",
             "repeat": "yes" if repeat else "no",
         }
 
@@ -467,7 +468,7 @@ class Affect:
         res.steps.append({"capability": "disposition", "input": situation, "label": action,
                           "provenance": decision.provenance, "confidence": round(decision.confidence, 3)})
         policy_action, policy_reason = policy(f)
-        text = "" if res.output is None else str(res.output)
+        text = res.answer or ("" if res.output is None else str(res.output))  # what the person would read
         floor = ""
         if not res.ok and action != "pass":
             action, floor = "pass", "failures are reported as they are"
@@ -488,7 +489,7 @@ class Affect:
             shaped, action, floor = Shaped(text), "pass", f"honesty guard restored the original answer ({action})"
         self.decisions[action] += 1
         if action != "pass":
-            res.original, res.output, res.disposition = res.output, shaped.text, action
+            res.original, res.answer, res.disposition = text, shaped.text, action
             if shaped.hold:
                 self.held[res.order_id] = Held(res.original, action, self.clock(), shaped.release_after)
                 while len(self.held) > 200:

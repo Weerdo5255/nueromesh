@@ -43,7 +43,7 @@ def main():
     value = evaluate(ast.parse(expr, mode="eval"))
     if isinstance(value, float):
         value = int(value) if value.is_integer() else round(value, 6)
-    print(json.dumps({"output": value, "expression": expr}))
+    print(json.dumps({"output": value, "expression": expr, "say": f"{' '.join(expr.split())} = {value}"}))
 
 
 if __name__ == "__main__":

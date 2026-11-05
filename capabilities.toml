@@ -7,6 +7,7 @@
 [sentiment]
 description = "Overall sentiment of a short text such as a review, comment or message."
 labels = ["positive", "negative", "neutral"]
+answer = "That reads as {label}."          # how the mesh says a result ({label}, {description})
 default_label = "neutral"
 open_labels = false
 triggers = ["sentiment", "review", "tone", "how does this sound", "feel about", "mood"]
@@ -55,6 +56,7 @@ color = ["blue", "black", "grey", "white", "green"]
 [urgency]
 description = "Whether a work message needs immediate attention (urgent) or can wait (routine)."
 labels = ["urgent", "routine"]
+answers = { urgent = "That needs attention right away (urgent).", routine = "That can wait (routine)." }
 open_labels = false
 triggers = ["urgency", "how urgent", "triage", "priority"]
 
@@ -94,6 +96,7 @@ later = ["next week", "sometime", "later this month", "eventually"]
 
 [affect]
 description = "How a message to the mesh comes across emotionally: the tone of the person writing it."
+answer = "That comes across as {label}."
 labels = ["distressed", "hostile", "frustrated", "friendly", "neutral"]
 default_label = "neutral"
 open_labels = false
@@ -142,6 +145,7 @@ doask = ["check the build", "answer the question", "fix this", "tell me the tota
 
 
 [disposition]
+answer = "In that situation I would {label} the answer ({description})."
 description = "The mesh's decision engine: given its temperament, the tone of the message and the answer, decide what happens to the answer before the user sees it. It can hold an answer back or add context, never change it."
 labels = ["pass", "caveat", "soften", "brief", "confirm", "defer", "block"]
 open_labels = false

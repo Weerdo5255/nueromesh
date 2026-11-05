@@ -230,12 +230,13 @@ class KiwixSystemTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(e.text == "__selftest__" for e in s.store.examples("dispatch")))
         res = await s.submit("who was Ada Lovelace?")
         self.assertTrue(res.ok, res.note)
-        self.assertIn("source: kiwix 'Ada Lovelace'", res.output)
+        self.assertTrue(res.answer.startswith("Ada Lovelace was an English mathematician"), res.answer)
+        self.assertIn("\nSource: kiwix 'Ada Lovelace'", res.answer)  # the source comes after the answer
         self.assertIn("researched with kiwix", " ".join(res.trace))
         self.assertEqual(fetches(), [], "Wikipedia is not asked when Kiwix has the article")
         res = await s.submit("tell me about the Eiffel Tower")  # not in this ZIM: Wikipedia answers
         self.assertTrue(res.ok, res.note)
-        self.assertIn("source: wikipedia 'Eiffel Tower'", res.output)
+        self.assertIn("\nSource: wikipedia 'Eiffel Tower'", res.answer)
         for topic in ("Napoleon", "the Moon", "Mars", "Venus"):  # misses never count against Kiwix
             await s.research(topic, reason="test")
         self.assertEqual(s.tools.tools["kiwix"].state, "active")

@@ -17,7 +17,10 @@ def main():
     text = target_text(json.load(sys.stdin)["input"])
     words = re.findall(r"\b[\w'-]+\b", text)
     sentences = max(1, len(re.findall(r"[.!?]+", text))) if text.strip() else 0
-    print(json.dumps({"output": f"{len(words)} words, {len(text)} characters, {sentences} sentence(s)"}))
+    w, c = len(words), len(text)
+    say = (f"That text has {w} word{'s' if w != 1 else ''}, {c} character{'s' if c != 1 else ''} and "
+           f"{sentences} sentence{'s' if sentences != 1 else ''}.")
+    print(json.dumps({"output": f"{w} words, {c} characters, {sentences} sentence(s)", "say": say}))
 
 
 if __name__ == "__main__":

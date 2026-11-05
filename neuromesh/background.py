@@ -309,9 +309,9 @@ class BackgroundTasks:
                 await self._read_one(task, tool, frontier, read, depth)
             if not task.met and (not frontier or len(read) >= task.max_articles):
                 task.met = True
-                self._tell(task, f"{task.id} finished a first pass over '{task.target}': {len(read)} article"
-                                 f"{'s' if len(read) != 1 else ''} ({', '.join(read[:6])}"
-                                 f"{', ...' if len(read) > 6 else ''}). It keeps them fresh from now on.")
+                self._tell(task, f"I've read {len(read)} article{'s' if len(read) != 1 else ''} about '{task.target}': "
+                                 f"{', '.join(read[:6])}{', ...' if len(read) > 6 else ''}. ({task.id} finished a "
+                                 f"first pass and keeps them fresh from now on.)")
             return
         # first pass done: keep what was read fresh
         stale_after = s.directives.research.refresh_days * 86400
@@ -372,21 +372,22 @@ class BackgroundTasks:
             task.note = f"at {acc:.3f} (target {task.threshold:.2f}); keeping watch"
             if not task.met:
                 task.met = True
-                self._tell(task, f"{task.id}: my {task.target} skill reached {acc:.3f} on {held} held-out examples "
-                                 f"(target {task.threshold:.2f}), with node {champ.id}. I'll keep watch.")
+                self._tell(task, f"My {task.target} skill reached {acc:.3f} on {held} held-out examples, past the "
+                                 f"target of {task.threshold:.2f}. ({task.id}; node {champ.id}; I'll keep watch.)")
         else:
             why = f"at {acc:.3f}, target {task.threshold:.2f}" if enough else f"{held} held-out examples so far"
             task.note = f"{why}; lessons and challengers go here first"
             if task.met and enough:
                 task.met = False
-                self._tell(task, f"{task.id}: my {task.target} skill slipped to {acc:.3f} (target "
-                                 f"{task.threshold:.2f}); working on it again.")
+                self._tell(task, f"My {task.target} skill slipped to {acc:.3f}, below the target of "
+                                 f"{task.threshold:.2f}. ({task.id}; working on it again.)")
 
     async def _run_order(self, task: BackgroundTask) -> None:
         s = self.sys
         order = Order(text=task.target, source=f"task:{task.id}", background=True)
         res = await s.orchestrator.fulfil(order)
         summary = " ".join(str(res.output if res.ok else f"(not fulfilled) {res.note}").split())[:400]
+        said = (res.answer or summary).split("\n", 1)[0]  # the result first, in the mesh's words
         last = task.history[-1][2] if task.history else None
         task.history.append([round(self.clock(), 1), res.ok, summary])
         del task.history[:-20]
@@ -394,8 +395,8 @@ class BackgroundTasks:
         task.note = f"{'ok' if res.ok else 'failed'}: {summary[:80]}"
         changed = last is not None and summary != last
         if task.notify == "always" or (task.notify == "change" and (last is None or changed)):
-            self._tell(task, f"{task.id} '{task.target[:60]}' changed: {summary} (was {last[:120]})" if changed
-                       else f"{task.id} '{task.target[:60]}': {summary}")
+            where = f"{task.id}, every {every(task.interval)}: '{task.target[:60]}'"
+            self._tell(task, f"{said} ({where}; changed, was {last[:120]})" if changed else f"{said} ({where})")
 
     # ------------------------------------------------------------------ status
     def lines(self) -> list[str]:

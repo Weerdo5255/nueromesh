@@ -143,7 +143,7 @@ class TerminalTests(unittest.TestCase):
                 self.assertTrue(screen_has("network:"), "live view never drew")
                 self.assertIn("activity log", snap.read_text(encoding="utf-8"))
                 os.write(fd, b"what is 6 * 7\r")
-                self.assertTrue(screen_has("] 42"), "order result never shown")
+                self.assertTrue(screen_has("] 6 * 7 = 42."), "order result never shown")
                 os.write(fd, b"/tools\r")
                 self.assertTrue(screen_has("> /tools"), "command output never shown")
                 os.write(fd, b"\t/quit\r")

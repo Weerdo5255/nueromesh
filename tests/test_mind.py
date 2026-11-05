@@ -178,7 +178,7 @@ class MindTests(unittest.IsolatedAsyncioTestCase):
     async def test_investigations_use_tools_without_hurting_them(self):
         s = self.system
         rec = await s.investigator.investigate(Goal("what is 12 * 7", "test", "operator"))
-        self.assertEqual(rec["answer"], "84")
+        self.assertEqual(rec["answer"], "12 * 7 = 84.")
         self.assertTrue(any("ran calculator" in st for st in rec["steps"]))
         calc = s.tools.tools["calculator"]
         for _ in range(4):  # failures on the mesh's own initiative never quarantine a tool
@@ -258,7 +258,9 @@ class MindWithResearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await wait_for(lambda: any(n.kind == "followup" and n.order_id == res.order_id
                                                    for n in m.notes.values()), timeout=30))
         notes = "\n".join((await execute(s, "/notes")).lines)
-        self.assertIn("Earlier you asked 'who was Ada Lovelace?'", notes)
+        self.assertIn("followup", notes)
+        self.assertTrue(follow.text.startswith("Ada Lovelace was an English mathematician"), follow.text)  # result first
+        self.assertIn("(Follow-up: earlier you asked 'who was Ada Lovelace?'", follow.text)
         # it also asks what to read up on, and acts on the answer
         await s.submit("what is 6 * 7")
         interests = next((q for q in m.open_inquiries() if q.kind == "interests"), None)

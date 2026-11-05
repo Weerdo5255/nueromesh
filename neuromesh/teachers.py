@@ -373,7 +373,8 @@ class LLMTeacher(Teacher):
 
     async def answer(self, text):
         system = ("You are the fallback answerer inside a multi-agent system. No specialist node or "
-                  "tool could handle this order. Answer concisely and say if you are unsure.")
+                  "tool could handle this order. Start with the answer itself, in your own words; put any "
+                  "reasoning, caveats or sources after it, never before. Be concise and say if you are unsure.")
         return await self._ask(system, text)
 
     async def propose(self, examples: list[str], known: list[str], hint: str = "") -> dict | None:
@@ -413,8 +414,10 @@ class LLMTeacher(Teacher):
         doc = hits[0].doc
         excerpts = "\n".join(f"[{i + 1}] ({h.section}) {' '.join(h.text.split())[:700]}"
                              for i, h in enumerate(hits[:4]))
-        system = ("Answer the question using only the passages provided. Be concise: at most three "
-                  f"sentences. If the passages do not contain the answer, reply exactly: {self.NOT_FOUND}")
+        system = ("Answer the question using only the passages provided. Write the answer in your own words "
+                  "rather than copying sentences, and start with the answer itself - no preamble; the source is "
+                  "added after your answer automatically. Be concise: at most three sentences. If the passages "
+                  f"do not contain the answer, reply exactly: {self.NOT_FOUND}")
         user = f"Question: {question}\n\nPassages from the {doc.source} article '{doc.title}':\n{excerpts}"
         reply = await self._ask(system, user)
         if not reply or self.NOT_FOUND in reply.upper():

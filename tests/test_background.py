@@ -162,7 +162,7 @@ class LearnTaskTests(unittest.IsolatedAsyncioTestCase):
         for title in t.progress["read"]:
             self.assertIsNotNone(s.knowledge.get(title))
         self.assertIsNotNone(s.mind.find_opinion("Ada Lovelace"), "read with the skill nodes")
-        self.assertTrue(any("finished a first pass over 'Ada Lovelace'" in n.text
+        self.assertTrue(any(n.text.startswith("I've read 3 articles about 'Ada Lovelace'")
                             for n in s.mind.notes.values() if n.kind == "update"))
         self.assertTrue(await wait_for(lambda: "all fresh" in t.note), t.note)
         show = "\n".join((await execute(s, f"/task show {t.id}")).lines)

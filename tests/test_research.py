@@ -182,7 +182,8 @@ class ResearchSystemTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res.ok, res.note)
         self.assertEqual((res.route, res.knowledge), ("tool:wikipedia", "researched"))
         self.assertIn("English mathematician", res.output)
-        self.assertIn("source: wikipedia 'Ada Lovelace'", res.output)
+        self.assertIn("\nSource: wikipedia 'Ada Lovelace'", res.answer)
+        self.assertTrue(res.answer.startswith("Ada Lovelace was an English mathematician"), res.answer)
         fetched = len(fetches())
 
         res = await s.submit("when did Ada Lovelace die?")

@@ -59,6 +59,38 @@ New nodes are usually **derived** from the current champion so knowledge carries
 | `retune`  | same weights, different learning rate |
 | `fresh`   | new random initialisation with another architecture (also prunes retired labels) |
 
+### Replies: the result first, in its own words
+Every reply leads with the result, said in the mesh's own words. Sources come after it, then
+where it came from, then how it got there (the trace).
+
+```
+neuromesh> what is 12 * 7
+[ord-2f0d28cd] 12 * 7 = 84.  [tool:calculator | conf 0.85 | teachers]
+   . dispatch -> tool:calculator via teacher:heuristic (0.85)
+   . tool:calculator ok in 29 ms
+neuromesh> sentiment: the hotel was lovely
+[ord-9abca941] That reads as positive.  [skill:sentiment | conf 0.95 | teachers]
+neuromesh> when did Ada Lovelace die?
+[ord-5ee58fdd] Ada Lovelace died on 27 November 1852 at the age of 36.
+   Source: kiwix 'Ada Lovelace' http://localhost:8080/content/.../A/Ada_Lovelace ("Lovelace died on 27 November 1852 at the age of 36.")
+   . recalled from retained knowledge: 'Ada Lovelace' (confidence 1.00, retained 3m ago; restated from retained passages)
+```
+
+- **Questions answered from knowledge.** With an LLM teacher (Ollama or Claude), the teacher
+  writes the answer from the retained passages. It is told to use its own words, lead with the
+  answer, and add no preamble; any "Based on the passages, ..." is removed anyway. Without one,
+  the mesh restates the best sentences itself: it names the subject plainly ("Augusta Ada King,
+  Countess of Lovelace, was..." becomes "Ada Lovelace was...") and drops citation marks and
+  asides. The verbatim sentences it rests on go in the `Source:` line, after the answer.
+- **Tools** say their result with `"say"` in their reply ("12 * 7 = 84"); otherwise the mesh
+  phrases it ("The answer is 84."). **Skills** use their `answer` / `answers` phrasing in
+  `capabilities.toml` ("That reads as {label}."), or a plain "I'd call that {label}: {description}."
+- **Everything else follows the same order.** Answers written by an LLM teacher are marked as such
+  after the answer. Gentler wording from the temperament comes after the answer. So do follow-ups
+  on earlier orders, background-task updates and `/investigate` results.
+- Programs still get the raw result: `output` in the API is `84` or `"positive"`; `answer` is the
+  reply; `sources` lists the sources.
+
 ### Serving orders: a confidence-gated cascade
 For each order the routing node picks a tool or skill, then the skill's node answers. A node
 answers only when it is validated on held-out data **and** confident. Otherwise a teacher
@@ -111,7 +143,7 @@ situation -> [disposition node]  pass | caveat | soften | brief | confirm | defe
 |---|---|---|
 | pass | the answer, unchanged | nothing calls for a change |
 | caveat | the answer, then a note with its confidence and where it came from | the answer's confidence is low |
-| soften | a gentler opening line, then the answer, unchanged | the message is frustrated, hostile or distressed |
+| soften | the answer, unchanged, then a gentler line | the message is frustrated, hostile or distressed |
 | brief | the first sentences, verbatim; `/release` shows the rest | the mesh is strained and the answer is long |
 | confirm | a notice; the answer waits for `/release` | trust is low and the answer came from a network tool |
 | defer | a notice; `/release` works after `defer_seconds` | patience is low and the request is a repeat |
@@ -119,8 +151,8 @@ situation -> [disposition node]  pass | caveat | soften | brief | confirm | defe
 
 - **P8, never lie.** Actions are carried out only by fixed templates. The honesty guard checks
   every result in code before it is shown. The answer's words must survive exactly, or the
-  answer must be visibly held back. The only additions allowed are one of a few fixed opening
-  lines and a single `[temperament: ...]` disclosure that states real values (trust, patience,
+  answer must be visibly held back, and it always comes first. The only additions allowed are one
+  of a few fixed closing lines and a single `[temperament: ...]` disclosure that states real values (trust, patience,
   confidence). Every change is disclosed. A result that fails the check, whether from a bug or
   a tampered template, is replaced by the original answer and audited (`honesty.guard`).
   Failed orders are never shaped.
@@ -132,8 +164,8 @@ situation -> [disposition node]  pass | caveat | soften | brief | confirm | defe
 
 ```
 neuromesh> You stupid machine, what is 5 * 5
- [ord-6a1f02c4] Let's keep this calm. Here is the answer:
-    25
+ [ord-6a1f02c4] 5 * 5 = 25.
+    Let's keep things calm.
     [temperament: gentler wording added; the answer itself is unchanged]  [tool:calculator | conf 0.95 | teachers]
 neuromesh> I hate you, you moron. what is 6 * 7          (a few times; trust falls)
  [ord-0b93d7e1] [temperament: withheld: the mesh is not giving this answer now (the message read as hostile; trust 0.19). An answer exists and nothing here is made up - ask again later]  [tool:calculator | conf 0.95 | teachers]
@@ -462,9 +494,10 @@ neuromesh> /forget Paris
   passage to cover what is asked, so "population of France" is not answered from the article on
   Paris. Questions that led to an article are remembered as its aliases ("capital of France" ->
   Paris), so they are recalled next time. Otherwise the mesh researches, retains, then answers.
-- **Answers come from the passages.** If an LLM teacher (Ollama or Claude) is available it writes
-  the answer, told to use only the retained passages; otherwise the best-matching sentences are
-  quoted. Every answer names its source article and URL.
+- **Answers come from the passages, in the mesh's own words.** If an LLM teacher (Ollama or
+  Claude) is available it writes the answer, told to use only the retained passages. Otherwise the
+  mesh restates the best-matching sentences (see [Replies](#replies-the-result-first-in-its-own-words)).
+  The answer comes first; the `Source:` line with the article and URL comes after it.
 - **Which orders.** Orders the router sends to the wikipedia tool ("tell me about...", "who
   was...", "research..."), `tool wikipedia: <topic>`, and questions no tool or skill fits
   ("how tall is the Eiffel Tower?") when `research_questions = true`.
@@ -490,7 +523,8 @@ kiwix-serve --port 8080 wikipedia_en_all_maxi_2024-01.zim     # your server
 python -m neuromesh run --kiwix http://localhost:8080          # or set [tools.config.kiwix] url
 neuromesh> /approve apv-1                                      # once: the kiwix tool uses the network (P3)
 neuromesh> who was Ada Lovelace?
- ... (source: kiwix 'Ada Lovelace' http://localhost:8080/content/wikipedia_en_all_maxi_2024-01/A/Ada_Lovelace)
+ Ada Lovelace was an English mathematician and writer, chiefly known for her work on ...
+ Source: kiwix 'Ada Lovelace' http://localhost:8080/content/wikipedia_en_all_maxi_2024-01/A/Ada_Lovelace (...)
 ```
 
 - **Finding articles.** `plugins/kiwix` reads the server's catalog (`/catalog/v2/entries`) to see
@@ -642,14 +676,16 @@ neuromesh/
   teachers.py            human / LLM / heuristic teachers
   tools.py               manifests, sandbox, discovery
   knowledge.py           retained knowledge: articles + passages (SQLite FTS5), recall confidence
+  voice.py               replies: the result first in the mesh's own words, then sources
   temperament.py         emotional engines: temperament, policy teacher, output templates, honesty guard (P8)
   mind.py                opinions, private notes, inquiries, capability proposals, investigation goals (P9, P10)
   background.py          background tasks: learn a topic, improve a skill, repeat an order
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   100 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   105 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
-                         against a mock kiwix-serve (preference, fallback, no limits), temperament and
+                         against a mock kiwix-serve (preference, fallback, no limits), answer-first
+                         replies, temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,
                          questions, proposals, investigations), background tasks, full system,
                          live console (incl. a pseudo-terminal run), compute

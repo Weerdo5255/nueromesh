@@ -278,16 +278,16 @@ class KnowledgeStore:
         return same_doc, best.confidence
 
 
-def extract_answer(question: str, hits: list[Hit], max_chars: int = 480) -> str:
-    """An answer built from retained sentences (used when no LLM teacher can write one).
-    General questions ("who was X") get the article summary; specific ones get the
-    sentences that best cover what was asked."""
+def best_sentences(question: str, hits: list[Hit], n: int = 2) -> list[str]:
+    """The retained sentences that answer a question best, in reading order. General questions
+    ("who was X") get the start of the summary; specific ones the sentences covering what was asked."""
     doc = hits[0].doc
     asked = content_words(question)
     title_words = set(content_words(doc.title))
     specific = [w for w in asked if not any(_same(w, t) for t in title_words)]
+    summary = [x for x in _SENT.split(" ".join(doc.summary.split())) if x]
     if not specific:
-        return _trim(doc.summary, max_chars)
+        return summary[:n]
     scored = []
     for i, hit in enumerate(hits[:5]):
         for j, sentence in enumerate(_SENT.split(" ".join(hit.text.split()))):
@@ -295,10 +295,75 @@ def extract_answer(question: str, hits: list[Hit], max_chars: int = 480) -> str:
             if score > 0:
                 scored.append((score - 0.02 * i - 0.001 * j, i, j, sentence))
     if not scored:
-        return _trim(doc.summary, max_chars)
-    best = sorted(scored, reverse=True)[:2]
+        return summary[:n]
+    best = sorted(scored, reverse=True)[:n]
     best.sort(key=lambda s: (s[1], s[2]))
-    return _trim(" ".join(s[3] for s in best), max_chars)
+    return [s[3] for s in best]
+
+
+def extract_answer(question: str, hits: list[Hit], max_chars: int = 480) -> str:
+    """The best retained sentences, verbatim."""
+    return _trim(" ".join(best_sentences(question, hits)), max_chars)
+
+
+_REF = re.compile(r"\[(?:\d+|[a-z]|citation needed|note \d+)\]", re.I)
+_PAREN = re.compile(r"\s*\([^()]*\)")
+_VERB = (r"(?:is|was|are|were|has|had|have|became|becomes|died|lived|wrote|designed|remains|served|stands|lies|"
+         r"refers|means|began|founded|invented|discovered|developed|created)")
+_SUBJECT = re.compile(r"^(?P<subj>[^.;:]{1,120}?),?\s+" + _VERB + r"\b")
+_CLAUSE = re.compile(r"\b(?:which|who|whom|that|where|when|while|although|because|after|before|in|on)\b", re.I)
+_POSSESSIVE = re.compile(r"^(?:Its|His|Her|Their)\s+")
+_PRONOUN = {"he", "she", "it", "they", "this"}
+
+
+def _name(doc: Document) -> str:
+    """How the article itself refers to its subject ("The Eiffel Tower", "Paris")."""
+    start = " ".join(doc.summary.split())[: len(doc.title) + 4]
+    return f"The {doc.title}" if start.lower().startswith(f"the {doc.title.lower()}") else doc.title
+
+
+def _plain(text: str) -> str:
+    return " ".join(_PAREN.sub("", _REF.sub("", text)).split()).replace(" ,", ",").replace(" .", ".")
+
+
+def _named(sentence: str, doc: Document) -> str:
+    """Name the subject plainly: "Augusta Ada King, Countess of Lovelace was..." / "She died..."
+    become "Ada Lovelace was..." / "Ada Lovelace died...". Other sentences are left alone."""
+    name = _name(doc)
+    m = _POSSESSIVE.match(sentence)
+    if m:
+        return f"{name}'s {sentence[m.end():]}"
+    m = _SUBJECT.match(sentence)
+    if not m:
+        return sentence
+    subj = m.group("subj").strip()
+    low = subj.lower().removeprefix("the ").strip()
+    if low == doc.title.lower() or subj.count(",") > 2 or (low not in _PRONOUN and _CLAUSE.search(subj)):
+        return sentence  # already plain, or not a simple subject ("In 1843 she ...", "The tower, which ...")
+    title_words = set(content_words(doc.title))
+    if low in _PRONOUN or (title_words & set(content_words(subj))):
+        return name + re.sub(r"^,", "", sentence[m.end("subj"):])
+    return sentence
+
+
+def restate(question: str, hits: list[Hit], max_chars: int = 320) -> tuple[str, list[str]]:
+    """The answer in the mesh's own words, without an LLM: the best sentences with the subject named
+    plainly and citation marks and asides dropped, trimmed to the point. Returns (answer, the
+    sentences it rests on, verbatim) - the verbatim ones belong with the source, after the answer."""
+    doc = hits[0].doc
+    quotes = best_sentences(question, hits)
+    out = ""
+    for i, sentence in enumerate(quotes):
+        plain = _plain(sentence)
+        if i == 0:  # name the subject once, at the start; later sentences keep their pronouns
+            plain = _named(plain, doc)
+        if len(plain) > 240:  # keep the main clause
+            cut = max(plain.rfind(x, 120, 240) for x in ("; ", ", which", ", and ", " - ", ", "))
+            plain = (plain[:cut] if cut > 0 else plain[:240].rsplit(" ", 1)[0]).rstrip(",;") + "."
+        if out and len(out) + len(plain) > max_chars:
+            break
+        out = f"{out} {plain}".strip()
+    return (out or _trim(doc.summary, max_chars)), quotes
 
 
 def _trim(text: str, limit: int) -> str:

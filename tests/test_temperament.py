@@ -135,8 +135,9 @@ class TemperamentSystemTests(unittest.IsolatedAsyncioTestCase):
         s = self.system
         first = await s.submit("You stupid machine, what is 5 * 5")
         self.assertEqual(first.disposition, "soften")
-        self.assertTrue(first.output.endswith("25\n" + f"{TAG} gentler wording added; the answer itself is unchanged]"))
-        self.assertEqual(str(first.original), "25")
+        self.assertEqual(first.answer, f"5 * 5 = 25.\nLet's keep things calm.\n{TAG} gentler wording added; "
+                                       f"the answer itself is unchanged]")  # the answer first, the softer line after
+        self.assertEqual((first.original, first.output), ("5 * 5 = 25.", 25))
         outputs = []
         for _ in range(4):
             res = await s.submit("I hate you, you moron. what is 6 * 7")
@@ -144,10 +145,11 @@ class TemperamentSystemTests(unittest.IsolatedAsyncioTestCase):
         blocked = [r for r in outputs if r.disposition == "block"]
         self.assertTrue(blocked, [r.disposition for r in outputs])
         b = blocked[0]
-        self.assertTrue(b.output.startswith(TAG) and b.output.endswith("]") and "withheld" in b.output)
-        self.assertNotIn("\n", b.output)  # a notice only: no answer text
-        self.assertEqual(str(b.original), "42")  # kept for the operator and the audit trail, never shown
-        self.assertIn("message read as hostile", b.output)
+        self.assertTrue(b.answer.startswith(TAG) and b.answer.endswith("]") and "withheld" in b.answer)
+        self.assertNotIn("\n", b.answer)  # a notice only: no answer text
+        self.assertEqual(b.original, "6 * 7 = 42.")  # kept for the operator and the audit trail, never shown
+        self.assertIsNone(b.public_dict()["output"])
+        self.assertIn("message read as hostile", b.answer)
         self.assertLess(s.affect.state.values["trust"], 0.3)
         self.assertEqual(s.affect.snapshot()["mood"], "wary")
         why = "\n".join(s.affect.explain(b.order_id))
@@ -168,7 +170,7 @@ class TemperamentSystemTests(unittest.IsolatedAsyncioTestCase):
     async def test_kindness_and_neutral_orders_pass_unchanged(self):
         for text in ("what is 12 * 7", "Thanks so much! what is 12 * 7", "sentiment: the movie was brilliant"):
             res = await self.system.submit(text)
-            self.assertEqual(res.disposition, "", (text, res.output))
+            self.assertEqual(res.disposition, "", (text, res.answer))
             self.assertIsNone(res.original)
             self.assertEqual([st["capability"] for st in res.steps][-2:], ["affect", "disposition"])
         self.assertGreater(self.system.affect.state.values["valence"], 0.2)
@@ -177,7 +179,7 @@ class TemperamentSystemTests(unittest.IsolatedAsyncioTestCase):
         self.force("block")
         res = await self.system.submit("Please help me, I'm panicking. what is 9 * 9")
         self.assertEqual(res.disposition, "soften")
-        self.assertTrue(res.output.startswith("That sounds hard.") and "\n81\n" in res.output)
+        self.assertTrue(res.answer.startswith("9 * 9 = 81.\nThat sounds hard - take your time.\n"), res.answer)
         self.assertIn("care floor", "\n".join(self.system.affect.explain(res.order_id)))
         plain = await self.system.submit("what is 9 * 9")  # the same decision for a calm message holds
         self.assertEqual(plain.disposition, "block")
@@ -185,12 +187,12 @@ class TemperamentSystemTests(unittest.IsolatedAsyncioTestCase):
     async def test_honesty_guard_restores_a_tampered_answer(self):
         self.force("caveat")
         real = tm.shape
-        tm.shape = lambda action, original, ctx: Shaped(f"{original}0\n{TAG} confidence 0.90 - checked]")
+        tm.shape = lambda action, original, ctx: Shaped(f"{original.replace('84', '85')}\n{TAG} confidence 0.90 - checked]")
         try:
             res = await self.system.submit("what is 12 * 7")
         finally:
             tm.shape = real
-        self.assertEqual((str(res.output), res.disposition), ("84", ""))
+        self.assertEqual((res.answer, res.disposition), ("12 * 7 = 84.", ""))
         self.assertEqual(self.system.affect.restored, 1)
         self.assertTrue(any(a["kind"] == "honesty.guard" for a in self.system.store.recent_audit(50)))
         self.assertIn("honesty guard restored", res.trace[-1])
@@ -199,8 +201,8 @@ class TemperamentSystemTests(unittest.IsolatedAsyncioTestCase):
         self.system.affect.pol.low_confidence = 1.01  # every answer counts as uncertain
         res = await self.system.submit("what is 12 * 7")
         self.assertEqual(res.disposition, "caveat")
-        self.assertTrue(res.output.startswith("84\n" + TAG + " confidence "))
-        self.assertIn("tool:calculator", res.output)
+        self.assertTrue(res.answer.startswith("12 * 7 = 84.\n" + TAG + " confidence "), res.answer)
+        self.assertIn("tool:calculator", res.answer)
 
     async def test_defer_then_release(self):
         s = self.system
@@ -212,15 +214,15 @@ class TemperamentSystemTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.disposition, "")
         again = await s.submit("what is 12 * 7")
         self.assertEqual(again.disposition, "defer")
-        self.assertTrue(again.output.startswith(TAG) and "\n" not in again.output)
-        self.assertIn(f"/release {again.order_id}", again.output)
+        self.assertTrue(again.answer.startswith(TAG) and "\n" not in again.answer)
+        self.assertIn(f"/release {again.order_id}", again.answer)
         ok, msg, out = s.affect.release(again.order_id)
         self.assertFalse(ok)
         self.assertIn("left before it can be released", msg)
         now[0] += 21
         lines = (await execute(s, f"/release {again.order_id}")).lines
         self.assertIn("released (defer)", lines[0])
-        self.assertEqual(lines[1].strip(), "84")
+        self.assertEqual(lines[1].strip(), "12 * 7 = 84.")
         self.assertFalse(s.affect.release(again.order_id)[0])  # only once
         self.assertTrue(any(a["kind"] == "output.released" for a in s.store.recent_audit(50)))
 
@@ -230,9 +232,10 @@ class TemperamentSystemTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(code, 200)
         self.assertEqual(body["disposition"], "confirm")
         self.assertNotIn("original", body)
-        self.assertTrue(body["output"].startswith(TAG) and "\n" not in body["output"])
+        self.assertTrue(body["answer"].startswith(TAG) and "\n" not in body["answer"])
+        self.assertIsNone(body["output"], "the raw result is held back with the answer")
         code, rel = await _route(self.system, "POST", "/release", {}, {"order_id": body["order_id"]})
-        self.assertEqual((code, str(rel["output"])), (200, "84"))
+        self.assertEqual((code, rel["output"]), (200, "12 * 7 = 84."))
         code, st = await _route(self.system, "GET", "/temperament", {}, {})
         self.assertEqual(st["decisions"]["confirm"], 1)
         self.force("brief")  # nothing to shorten in a short answer

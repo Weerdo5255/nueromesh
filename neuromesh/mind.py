@@ -757,7 +757,7 @@ class Mind:
         if goal.order_id and answer:
             short = " ".join(goal.text.split())[:80]
             asked = f"what I think of {short}" if goal.kind == "opinion" else f"'{short}'"
-            text = f"Earlier you asked {asked} ({goal.order_id}). I looked into it on my own: {answer}"
+            text = f"{answer}\n(Follow-up: earlier you asked {asked} ({goal.order_id}); I looked into it on my own.)"
             self.note("followup", f"order:{goal.order_id}", text, private=False, source="my own investigation",
                       order_id=goal.order_id)
             self.unmet.pop(goal.order_id, None)

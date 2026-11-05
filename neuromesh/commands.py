@@ -271,10 +271,10 @@ async def execute(system, line: str) -> Output:
                 return Output(["  usage: /investigate <goal>"])
             from .mind import Goal
             rec = await system.investigator.investigate(Goal(rest, "operator request", "operator"))
-            out = [f"  investigated '{rest}':"] + [f"   . {st}" for st in rec["steps"]]
-            out.append(f"  found: {rec['finding'] or 'nothing useful yet'}")
-            if rec["answer"]:
-                out += [f"  answer: {ln}" for ln in str(rec["answer"]).splitlines()]
+            out = [f"  {ln}" for ln in str(rec["answer"] or "I found nothing useful yet.").splitlines()]
+            if rec["finding"]:
+                out.append(f"  found: {rec['finding']}")
+            out += [f"   . {st}" for st in rec["steps"]]  # how it went about it, last
         elif cmd == "temperament":
             out = temperament_lines(system)
         elif cmd == "why":
