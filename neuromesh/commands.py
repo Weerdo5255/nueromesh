@@ -12,6 +12,9 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /lineage [capability]           family tree of every node ever built
   /tools                          tools and their states
   /teachers                       teacher status (Ollama, Claude, ...)
+  /research <topic>               look it up on Wikipedia now and retain it
+  /knowledge [question]           what the mesh has retained, or what it would recall for a question
+  /forget <article title>         drop a retained article
   /approvals                      pending approvals      /approve <id> [note]   /deny <id> [note]
   /questions                      questions waiting for a human teacher   /answer <qid> <label>
   /feedback <order-id> <label>    correct an answer (a label, or a route like tool:calculator)
@@ -49,6 +52,29 @@ def teacher_lines(system) -> list[str]:
     return lines
 
 
+def knowledge_lines(system, question: str = "") -> list[str]:
+    k = system.knowledge
+    st = k.stats()
+    usage = system.guardian.research_usage()
+    tool = system.knowledge_tool()
+    lines = [f"knowledge: {st.documents} articles, {st.passages} passages retained; {st.recalled} answers "
+             f"recalled, {st.researched} articles researched this run; research {usage['last_hour']}/"
+             f"{usage['limit']} this hour ({usage['background_last_hour']}/{usage['background_limit']} background); "
+             f"tool: {tool.name if tool else 'none active (approve wikipedia)'}"]
+    if question:
+        threshold = system.directives.research.recall_threshold
+        hits = k.search(question)
+        if not hits:
+            return lines + [f"  nothing retained matches '{question}'"]
+        for h in hits[:6]:
+            verdict = "would answer from memory" if h.confidence >= threshold else "would research instead"
+            lines.append(f"  {h.confidence:.2f} {h.doc.title} / {h.section}: {' '.join(h.text.split())[:90]}  ({verdict})")
+        return lines
+    for d in k.documents(15):
+        lines.append(f"  {d.title:<34} {d.passages:>3} passages  used {d.hits:>3}x  {d.reason[:40]}")
+    return lines
+
+
 async def execute(system, line: str) -> Output:
     """Run one order or /command and return what to show."""
     line = line.strip()
@@ -56,8 +82,8 @@ async def execute(system, line: str) -> Output:
         return Output()
     if not line.startswith("/"):
         res = await system.submit(line)
-        return Output([f"[{res.order_id}] {res.summary()}"] + [f"   . {step}" for step in res.trace],
-                      is_order=True)
+        first, *more = f"[{res.order_id}] {res.summary()}".splitlines() or [""]
+        return Output([first] + [f"   {m}" for m in more] + [f"   . {step}" for step in res.trace], is_order=True)
     cmd, _, rest = line[1:].partition(" ")
     rest = rest.strip()
     g = system.guardian
@@ -77,6 +103,20 @@ async def execute(system, line: str) -> Output:
                            f"perms={t['permissions']}  {t['note']}")
         elif cmd == "teachers":
             out = teacher_lines(system)
+        elif cmd == "research":
+            if not rest:
+                return Output(["  usage: /research <topic>"])
+            doc, note = await system.research(rest, reason="operator request")
+            if doc is None:
+                out = [f"  could not research '{rest}': {note}"]
+            else:
+                out = [f"  learned '{doc.title}' ({doc.passages} passages) {doc.url}", f"  {doc.summary}"]
+                if doc.links:
+                    out.append(f"  linked articles queued for background reading: {', '.join(doc.links[:system.directives.research.follow_links])}")
+        elif cmd == "knowledge":
+            out = knowledge_lines(system, rest)
+        elif cmd == "forget":
+            out = [f"  forgot '{rest}'" if system.knowledge.forget(rest) else f"  nothing retained under '{rest}'"]
         elif cmd == "approvals":
             out = [f"  {a.id}: {a.kind} '{a.subject}' {a.detail}" for a in g.pending_approvals()] or ["  none pending"]
         elif cmd in ("approve", "deny"):

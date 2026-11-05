@@ -66,11 +66,12 @@ class Guardian:
         self.approvals: dict[str, Approval] = {}
         self._approval_ids = itertools.count(1)
         self._llm: defaultdict[str, deque[tuple[float, int]]] = defaultdict(deque)
+        self._research: deque[tuple[float, bool]] = deque()
         self._busy: deque[tuple[float, float]] = deque()
         self.decisions: Counter = Counter()
 
     # ----------------------------------------------------------------- audit
-    def audit(self, actor: str, kind: str, subject: str = "", **detail) -> None:
+    def audit(self, actor: str, kind: str, subject: str = "", /, **detail) -> None:
         self.store.audit(actor, kind, subject, detail)
         self.bus.publish("audit", actor=actor, kind=kind, subject=subject, detail=detail)
 
@@ -168,6 +169,37 @@ class Guardian:
         if sum(t for _, t in calls) + est_tokens > cfg.max_tokens_per_hour:
             return self._deny("llm_call", teacher, "hourly token budget exhausted", "P4-budgets")
         return ALLOW
+
+    def authorize_research(self, background: bool) -> Decision:
+        """Research calls (e.g. Wikipedia) have an hourly budget, with a smaller share for
+        background curiosity so orders always have room."""
+        pol = self.d.research
+        now = time.time()
+        while self._research and now - self._research[0][0] > 3600:
+            self._research.popleft()
+        if self.halted:
+            return Decision(Verdict.DENY, "system halted", "P1-human-authority")
+        if not pol.enabled:
+            return Decision(Verdict.DENY, "research is disabled in the directives", "P3-approved-tools-only")
+        if len(self._research) >= pol.max_fetches_per_hour:
+            reason = f"hourly research budget used up ({pol.max_fetches_per_hour}/h)"
+            if background:
+                return Decision(Verdict.DENY, reason, "P4-budgets")
+            return self._deny("research", "", reason, "P4-budgets")
+        if background and sum(1 for _, bg in self._research if bg) >= pol.background_per_hour:
+            return Decision(Verdict.DENY, f"background research budget used up ({pol.background_per_hour}/h)",
+                            "P4-budgets")
+        return ALLOW
+
+    def record_research(self, background: bool) -> None:
+        self._research.append((time.time(), background))
+
+    def research_usage(self) -> dict:
+        now = time.time()
+        recent = [bg for ts, bg in self._research if now - ts <= 3600]
+        pol = self.d.research
+        return {"last_hour": len(recent), "background_last_hour": sum(recent),
+                "limit": pol.max_fetches_per_hour, "background_limit": pol.background_per_hour}
 
     def record_llm_usage(self, teacher: str, tokens: int) -> None:
         self._llm[teacher].append((time.time(), int(tokens)))

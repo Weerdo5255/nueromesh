@@ -30,7 +30,7 @@ class Bus:
     def listen(self, callback: Callable[[Event], None], pattern: str = "*") -> None:
         self._listeners.append((pattern, callback))
 
-    def publish(self, topic: str, **data) -> Event:
+    def publish(self, topic: str, /, **data) -> Event:  # any field name is allowed in data
         event = Event(time.time(), topic, data)
         self.history.append(event)
         for pattern, queue in self._queues:

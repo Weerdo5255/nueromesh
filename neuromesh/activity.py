@@ -118,7 +118,8 @@ def format_event(ev: Event) -> LogEntry | None:
     tag = tag.strip("[ ").lower()
     level = {"spawn": "info", "promote": "good", "retire": "warn", "dispose": "bad", "tool": "tool",
              "approval": "warn", "label": "info", "skill": "info", "lesson": "lesson",
-             "teacher": "teacher", "halt": "bad", "resume": "good"}.get(tag, "info")
+             "teacher": "teacher", "halt": "bad", "resume": "good", "learn": "good", "recall": "lesson",
+             "forget": "warn", "research": "warn"}.get(tag, "info")
     if tag == "tool" and ("REJECTED" in text or "quarantined" in text):
         level = "bad"
     if tag == "teacher" and "unavailable" in text:

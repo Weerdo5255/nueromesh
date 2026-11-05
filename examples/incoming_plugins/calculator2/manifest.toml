@@ -4,7 +4,7 @@ description = "Arithmetic plus percentages ('15% of 80') and square roots. Repla
 entrypoint = "tool.py"
 permissions = []
 supersedes = "calculator"      # when this activates, v1 is retired and its routing data is relabelled
-keywords = ["calculate", "compute", "what is", "what's", "plus", "minus", "times", "multiplied",
+keywords = ['re:\d\s*([-+*/x]|\*\*)\s*\d', "calculate", "compute", "plus", "minus", "times", "multiplied",
             "divided", "+", "*", "/", "=", "work out", "sum of", "percent", "%", "square root", "sqrt"]
 timeout_s = 5
 

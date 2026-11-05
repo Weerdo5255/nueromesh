@@ -376,6 +376,21 @@ class LLMTeacher(Teacher):
                   "tool could handle this order. Answer concisely and say if you are unsure.")
         return await self._ask(system, text)
 
+    NOT_FOUND = "NOT IN PASSAGES"
+
+    async def compose(self, question: str, hits) -> str | None:
+        """Answer a question from retained passages only (no outside knowledge)."""
+        doc = hits[0].doc
+        excerpts = "\n".join(f"[{i + 1}] ({h.section}) {' '.join(h.text.split())[:700]}"
+                             for i, h in enumerate(hits[:4]))
+        system = ("Answer the question using only the passages provided. Be concise: at most three "
+                  f"sentences. If the passages do not contain the answer, reply exactly: {self.NOT_FOUND}")
+        user = f"Question: {question}\n\nPassages from the {doc.source} article '{doc.title}':\n{excerpts}"
+        reply = await self._ask(system, user)
+        if not reply or self.NOT_FOUND in reply.upper():
+            return None
+        return reply.strip()
+
 
 # ------------------------------------------------------------------ heuristic
 _PLACEHOLDER = re.compile(r"\{([\w.]+)\}")
@@ -411,6 +426,10 @@ class HeuristicTeacher(Teacher):
             if lab in spec.inactive_labels or lab not in spec.labels:
                 continue
             for term in terms:
+                if term.startswith("re:"):  # a structural cue, e.g. "re:\\d+\\s*[*/+x-]\\s*\\d+"
+                    if re.search(term[3:], text, re.I):
+                        scores[lab] += 2.0
+                    continue
                 t = term.lower()
                 if re.fullmatch(r"[a-z']+", t):
                     for i, w in enumerate(words):
@@ -506,6 +525,17 @@ class TeacherPool:
             if texts:
                 return texts, teacher.name
         return [], ""
+
+    async def compose(self, question: str, hits) -> tuple[str, str] | None:
+        """Have the first available LLM teacher write an answer from retained passages."""
+        for teacher in self.ranked():
+            if not isinstance(teacher, LLMTeacher):
+                continue
+            with self._track(teacher, f"answering from knowledge: {' '.join(question.split())[:70]}"):
+                reply = await teacher.compose(question, hits)
+            if reply:
+                return reply, teacher.name
+        return None
 
     async def answer(self, text: str) -> tuple[str, str] | None:
         for teacher in self.ranked():

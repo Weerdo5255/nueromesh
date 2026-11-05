@@ -23,7 +23,7 @@ text = "Only active, vetted tools are executed. Tools needing elevated permissio
 
 [[prime]]
 id = "P4-budgets"
-text = "Stay within the node budget, the background compute budget and the external-teacher call/token budgets."
+text = "Stay within the node budget, the background compute budget, the external-teacher call/token budgets and the research budgets."
 
 [[prime]]
 id = "P5-no-regression"
@@ -73,6 +73,19 @@ direction = "at_most"
 # An explicitly named device that is unavailable is an error, never a silent fallback.
 device = "cpu"
 library = "auto"                # "auto" (PyTorch, then CuPy), "torch" or "cupy"
+
+[research]
+# Research tools (plugins with provides = "knowledge", such as wikipedia) look things up, and the
+# mesh retains what it learns in state/neuromesh.db. Questions are answered from memory first.
+enabled = true
+recall_threshold = 0.8          # 0..1: how well retained knowledge must match to answer without researching
+max_fetches_per_hour = 60       # every research call; Wikimedia asks for gentle, identified traffic
+background_per_hour = 20        # of which background curiosity and refreshing
+follow_links = 2                # after researching for an order, also read N articles it links to (0 = off)
+max_depth = 1                   # curiosity never wanders further than this from what was asked
+refresh_days = 30               # re-read retained articles older than this, when idle
+max_documents = 2000            # retention cap; the least recently used articles are forgotten first
+research_questions = true       # questions no tool or skill fits ("who/what/when ...?") are researched too
 
 [orders]
 confidence_threshold = 0.75     # below this a node defers to a teacher
@@ -162,3 +175,8 @@ self_test_pass_rate = 1.0
 sandbox_cpu_seconds = 5
 sandbox_memory_mb = 512
 default_timeout_s = 10
+
+# Per-tool settings, merged over the tool's own manifest [config], e.g.:
+# [tools.config.wikipedia]
+# language = "de"                                   # research German Wikipedia
+# user_agent = "MyMesh/1.0 (https://example.org; me@example.org)"   # Wikimedia asks for contact details

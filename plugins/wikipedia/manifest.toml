@@ -1,0 +1,38 @@
+name = "wikipedia"
+version = "1.0.0"
+description = "Researches a topic on Wikipedia and returns the article as knowledge the mesh retains (who/what/where questions, 'tell me about X', 'research X')."
+entrypoint = "tool.py"
+permissions = ["network"]      # reaches the Wikipedia API -> needs a human's approval (P3)
+provides = "knowledge"         # results are retained in the knowledge store and recalled later
+keywords = ["tell me about", "who was", "who is", "who were", "what is", "what was", "where is", "research",
+            "look up", "wikipedia", "what do you know about", "background on", "history of", "learn about"]
+timeout_s = 30
+
+templates = ["tell me about {topic}", "who was {person}", "what is {thing}", "research {topic}",
+             "look up {topic} on wikipedia", "what do you know about {topic}", "give me background on {topic}",
+             "where is {place}", "history of {topic}"]
+
+[fillers]
+topic = ["the Roman Empire", "photosynthesis", "the Krebs cycle", "jazz", "the Apollo program", "black holes",
+         "the printing press", "volcanoes", "the French Revolution", "machine learning"]
+person = ["Ada Lovelace", "Marie Curie", "Alan Turing", "Nikola Tesla", "Frida Kahlo", "Isaac Newton"]
+thing = ["a neutron star", "the Higgs boson", "DNA", "a transistor", "plate tectonics", "the Internet"]
+place = ["Kyoto", "the Atacama Desert", "Lake Baikal", "Machu Picchu", "Reykjavik"]
+
+# Passed to the tool on every run; override any of these in directives.toml [tools.config.wikipedia].
+[config]
+language = "en"
+# Wikimedia asks automated clients to identify themselves with contact details:
+# https://foundation.wikimedia.org/wiki/Policy:User-Agent_policy
+user_agent = "NeuroMeshResearchBot/0.5 (https://github.com/Weerdo5255/nueromesh) python-urllib"
+max_passages = 40
+links = 8
+
+# Self-tests (run against the live API once the tool is approved).
+[[examples]]
+input = "tell me about the Eiffel Tower"
+expect = "Paris"
+
+[[examples]]
+input = "who was Ada Lovelace"
+expect = "Lovelace"

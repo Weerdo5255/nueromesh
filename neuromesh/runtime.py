@@ -14,12 +14,13 @@ from pathlib import Path
 import numpy as np
 
 from .activity import ActivityLog, ActivityTracker
-from .agents import Architect, Curator, Evaluator, Explorer, Orchestrator, Sentinel, Trainer
+from .agents import Architect, Curator, Evaluator, Explorer, Orchestrator, Researcher, Sentinel, Trainer
 from .backend import select_backend
 from .bus import Bus
 from .config import Directives, load_toml
 from .encoding import HashingEncoder
 from .guardian import Guardian
+from .knowledge import Hit, KnowledgeStore, extract_answer
 from .registry import NodeRegistry
 from .store import Store
 from .tasks import DIRECT, DISPATCH, CapabilitySpec, Inference, Order, Result
@@ -56,6 +57,7 @@ class System:
         self.store = Store(self.state_dir / "neuromesh.db", self.directives.nodes.holdout_percent,
                            priorities=tp.weights)
         self.guardian = Guardian(self.directives, self.store, self.bus, self.state_dir)
+        self.knowledge = KnowledgeStore(self.store.db)  # what research has taught the mesh
         self.encoder = HashingEncoder(self.directives.nodes.input_dim)
         self.registry = NodeRegistry(self.store, self.bus, self.state_dir / "nodes", self.guardian.audit,
                                      self.backend)
@@ -82,8 +84,9 @@ class System:
         self._enc_lock = threading.Lock()
         self._bg_tasks: set[asyncio.Task] = set()
         self._tasks: list[asyncio.Task] = []
+        self.researcher = Researcher(self)
         self.agents = [Orchestrator(self), Architect(self), Trainer(self), Evaluator(self),
-                       Curator(self), Explorer(self), Sentinel(self)]
+                       Curator(self), Explorer(self), self.researcher, Sentinel(self)]
 
     # ------------------------------------------------------------- lifecycle
     async def start(self) -> "System":
@@ -366,8 +369,16 @@ class System:
         self.tools.persist(tool)
         return True, f"{name} queued for self-tests"
 
+    def tool_config(self, tool: Tool) -> dict:
+        """manifest [config], overridden by directives [tools.config.<name>]."""
+        return {**tool.manifest.config, **self.directives.tools.config.get(tool.name, {})}
+
     def record_tool_run(self, tool: Tool, run: ToolRun) -> None:
         tool.runs += 1
+        if not run.ok and run.transient:  # e.g. offline: not evidence that the tool is broken
+            tool.last_error = run.error[:300]
+            self.tools.persist(tool)
+            return
         if run.ok:
             tool.successes += 1
             tool.consecutive_failures = 0
@@ -382,6 +393,58 @@ class System:
                 self.guardian.audit("explorer", "tool.quarantined", tool.name, error=tool.last_error)
                 self.bus.publish("tool.quarantined", tool=tool.name, reason=tool.note)
         self.tools.persist(tool)
+
+    # -------------------------------------------------------------- research
+    def knowledge_tool(self) -> Tool | None:
+        """The active tool that provides knowledge (wikipedia), if research is enabled."""
+        if not self.directives.research.enabled:
+            return None
+        return next((t for t in self.tools.active() if t.manifest.provides == "knowledge"), None)
+
+    async def research(self, topic: str, *, reason: str, background: bool = False,
+                       tool: Tool | None = None):
+        """Look something up with the research tool and retain what comes back.
+        Returns (Document, "learned") or (None, why not)."""
+        tool = tool or self.knowledge_tool()
+        if tool is None:
+            return None, "no active research tool (approve the wikipedia tool: /approvals)"
+        decision = self.guardian.authorize_research(background)
+        if not decision.allowed:
+            return None, decision.reason
+        actor = "researcher" if background else "orchestrator"
+        with self.activity.track("research", actor, f"{tool.name}: {' '.join(topic.split())[:80]}"):
+            run = await self.sandbox.run(tool, topic, tool.manifest.timeout_s or self.directives.tools.default_timeout_s,
+                                         self.tool_config(tool))
+        self.guardian.record_research(background)
+        self.record_tool_run(tool, run)
+        if not run.ok:
+            self.bus.publish("knowledge.failed", tool=tool.name, topic=topic[:200], error=run.error,
+                             background=background)
+            return None, run.error
+        k = run.extra.get("knowledge")
+        if not isinstance(k, dict) or not k.get("title"):
+            return None, f"{tool.name} returned no knowledge"
+        doc = self.knowledge.add(k, reason)
+        self.guardian.audit(actor, "knowledge.learned", doc.title, source=doc.source, url=doc.url,
+                            passages=doc.passages, reason=reason)
+        self.bus.publish("knowledge.learned", title=doc.title, url=doc.url, source=doc.source,
+                         passages=doc.passages, reason=reason, background=background, topic=topic[:200])
+        pol = self.directives.research
+        if not background and pol.max_depth >= 1:
+            for link in doc.links[: pol.follow_links]:
+                self.researcher.enqueue(link, f"linked from '{doc.title}'", 1)
+        return doc, "learned"
+
+    async def answer_from_knowledge(self, question: str, hits: list[Hit]) -> tuple[str, str]:
+        """An answer from retained passages: written by an LLM teacher when one is available
+        (told to use only the passages), otherwise the best matching sentences."""
+        doc = hits[0].doc
+        composed = await self.teachers.compose(question, hits)
+        if composed:
+            body, how = composed[0], f"written by the {composed[1]} teacher from retained passages"
+        else:
+            body, how = extract_answer(question, hits), "quoted from retained passages"
+        return f"{body}\n(source: {doc.source} '{doc.title}' {doc.url})", how
 
     # ---------------------------------------------------------------- status
     def scorecard(self) -> list[dict]:
@@ -434,6 +497,9 @@ class System:
             "approvals": [a.to_dict() for a in self.guardian.pending_approvals()],
             "questions": list(self.teachers.human.questions),
             "teachers": self.teachers.describe(), "llm_usage": self.guardian.llm_usage(),
+            "knowledge": {**vars(self.knowledge.stats()), "research": self.guardian.research_usage(),
+                          "queued": len(self.researcher.queue),
+                          "tool": (self.knowledge_tool().name if self.knowledge_tool() else None)},
             "scorecard": self.scorecard(),
             "agents": {a.name: dict(a.stats) for a in self.agents},
         }

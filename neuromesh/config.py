@@ -180,6 +180,20 @@ class ToolPolicy:
     sandbox_cpu_seconds: int = 5
     sandbox_memory_mb: int = 512
     default_timeout_s: float = 10.0
+    config: dict = field(default_factory=dict)  # [tools.config.<tool>] overrides of manifest [config]
+
+
+@dataclass
+class ResearchPolicy:
+    enabled: bool = True                # research tools (wikipedia) may be used at all
+    recall_threshold: float = 0.8       # how well retained knowledge must match to answer from memory
+    max_fetches_per_hour: int = 60      # every research call: orders and background together
+    background_per_hour: int = 20       # of which background curiosity and refreshing
+    follow_links: int = 2               # after learning an article for an order, also read N linked ones
+    max_depth: int = 1                  # how far curiosity may wander from what was asked
+    refresh_days: float = 30.0          # re-read retained articles older than this when idle
+    max_documents: int = 2000           # retention cap; the least recently used are forgotten first
+    research_questions: bool = True     # research unroutable questions ("who/what/...") on Wikipedia
 
 
 @dataclass
@@ -195,6 +209,7 @@ class Directives:
     prime: list = field(default_factory=list)
     goals: list = field(default_factory=list)
     compute: ComputePolicy = field(default_factory=ComputePolicy)
+    research: ResearchPolicy = field(default_factory=ResearchPolicy)
     orders: OrderPolicy = field(default_factory=OrderPolicy)
     nodes: NodePolicy = field(default_factory=NodePolicy)
     background: BackgroundPolicy = field(default_factory=BackgroundPolicy)
@@ -210,6 +225,7 @@ class Directives:
             prime=[PrimeDirective(**p) for p in d.get("prime", [])],
             goals=[Goal(**g) for g in d.get("goals", [])],
             compute=build(ComputePolicy, d.get("compute")),
+            research=build(ResearchPolicy, d.get("research")),
             orders=build(OrderPolicy, d.get("orders")),
             nodes=build(NodePolicy, d.get("nodes")),
             background=build(BackgroundPolicy, d.get("background")),

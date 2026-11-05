@@ -23,10 +23,11 @@ FAST = {
 }
 
 
-def make_root(tmp: Path) -> Path:
+def make_root(tmp: Path, wikipedia: bool = False) -> Path:
     for name in ("directives.toml", "capabilities.toml"):
         shutil.copy(ROOT / name, tmp / name)
-    shutil.copytree(ROOT / "plugins", tmp / "plugins")
+    skip = () if wikipedia else ("wikipedia",)  # the network tool would wait for approval
+    shutil.copytree(ROOT / "plugins", tmp / "plugins", ignore=shutil.ignore_patterns(*skip))
     return tmp
 
 

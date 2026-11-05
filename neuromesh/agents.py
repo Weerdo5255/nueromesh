@@ -11,6 +11,8 @@ background, yielding whenever an order is in flight (prime directive P2).
   Curator      - disposes superseded and failed nodes, enforces the node budget
   Explorer     - discovers new tools, routes them through approval, self-tests them,
                  activates them and runs health checks
+  Researcher   - reads up in the background (within its budget) on articles linked from
+                 what users asked about, and refreshes retained knowledge that has aged
   Sentinel     - watches the kill switch, re-checks local teacher servers (Ollama) and
                  publishes heartbeats with the scorecard
 """
@@ -19,12 +21,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import re
 import time
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 
 import numpy as np
 
 from .guardian import Verdict
+from .knowledge import Hit
 from .nodes import Architecture, NeuralNode
 from .tasks import DIRECT, DISPATCH, Result, parse_order, skill_payload
 from .tools import ACTIVE, APPROVED, PENDING, QUARANTINED, REJECTED, Tool, outputs_match
@@ -134,9 +138,11 @@ class Orchestrator(Agent):
             decision = s.guardian.authorize_tool_run(tool)
             if not decision.allowed:
                 res.ok, res.note = False, f"tool refused: {decision.reason}"
+            elif tool.manifest.provides == "knowledge":
+                await self.knowledge_order(res, payload, tool)
             else:
                 timeout = tool.manifest.timeout_s or s.directives.tools.default_timeout_s
-                run = await s.sandbox.run(tool, payload, timeout)
+                run = await s.sandbox.run(tool, payload, timeout, s.tool_config(tool))
                 s.record_tool_run(tool, run)
                 res.trace.append(f"{route} {'ok' if run.ok else 'failed'} in {run.ms:.0f} ms")
                 if run.ok:
@@ -159,15 +165,23 @@ class Orchestrator(Agent):
                 else:
                     res.output = inf.label
         else:
-            reply = await s.teachers.answer(order.text)
-            if reply:
-                res.output = reply[0]
-                res.trace.append(f"answered directly by the {reply[1]} teacher")
-                kinds.append("teacher")
+            pol = s.directives.research
+            hits, confidence = s.knowledge.recall(order.text, pol.recall_threshold)
+            tool = s.knowledge_tool()
+            if hits and confidence >= pol.recall_threshold:
+                await self.answer_from_memory(res, order.text, hits, confidence)
+            elif tool is not None and pol.research_questions and is_question(order.text):
+                await self.knowledge_order(res, order.text, tool)
             else:
-                res.ok = False
-                res.note = "no tool, skill or teacher can fulfil this yet; queued for a human teacher"
-                s.teachers.human.ask(DISPATCH, order.text, "unroutable order")
+                reply = await s.teachers.answer(order.text)
+                if reply:
+                    res.output = reply[0]
+                    res.trace.append(f"answered directly by the {reply[1]} teacher")
+                    kinds.append("teacher")
+                else:
+                    res.ok = False
+                    res.note = "no tool, skill or teacher can fulfil this yet; queued for a human teacher"
+                    s.teachers.human.ask(DISPATCH, order.text, "unroutable order")
 
         res.confidence = round(conf, 3)
         node_kinds = {"node", "node-lowconf"}
@@ -182,6 +196,65 @@ class Orchestrator(Agent):
         else:
             res.served_by = "mixed"
         return res
+
+
+    # ------------------------------------------------------------- knowledge
+    async def answer_from_memory(self, res: Result, question: str, hits, confidence: float) -> None:
+        s = self.sys
+        doc = hits[0].doc
+        s.knowledge.touch(doc)
+        answer, how = await s.answer_from_knowledge(question, hits)
+        res.output, res.knowledge = answer, "recalled"
+        res.trace.append(f"recalled from retained knowledge: '{doc.title}' (confidence {confidence:.2f}, "
+                         f"retained {_ago(doc.age)} ago; {how})")
+        s.bus.publish("knowledge.recalled", question=question[:200], title=doc.title,
+                      confidence=confidence, how=how)
+
+    async def knowledge_order(self, res: Result, question: str, tool: Tool) -> None:
+        """Memory first: answer from retained knowledge when it covers the question,
+        otherwise research it (and retain what was learned), then answer."""
+        s = self.sys
+        pol = s.directives.research
+        hits, confidence = s.knowledge.recall(question, pol.recall_threshold)
+        fresh = bool(hits) and hits[0].doc.age < pol.refresh_days * 86400
+        if hits and confidence >= pol.recall_threshold and fresh:
+            await self.answer_from_memory(res, question, hits, confidence)
+            return
+        doc, note = await s.research(question, reason=f"order {res.order_id}", tool=tool)
+        if doc is not None:
+            found = s.knowledge.search(question, doc_id=doc.id) or [Hit(doc, "Introduction", doc.summary, 1.0, 1.0)]
+            s.knowledge.touch(doc)
+            answer, how = await s.answer_from_knowledge(question, found)
+            res.output, res.knowledge = answer, "researched"
+            n = doc.passages
+            res.trace.append(f"researched with {tool.name}: '{doc.title}' ({n} passage{'s' if n != 1 else ''} "
+                             f"retained; {how})")
+        elif hits:
+            answer, how = await s.answer_from_knowledge(question, hits)
+            res.output, res.knowledge = answer, "recalled"
+            res.trace.append(f"could not research ({note}); answered from the closest retained knowledge "
+                             f"'{hits[0].doc.title}' (confidence {confidence:.2f})")
+        else:
+            res.ok, res.note = False, f"could not research this: {note}"
+
+
+_QUESTION = re.compile(r"^\s*(who|what|when|where|why|how|which|tell me about|explain|describe|"
+                       r"what's|whats|who's)\b|\?\s*$", re.I)
+
+
+def is_question(text: str) -> bool:
+    return bool(_QUESTION.search(text))
+
+
+def _ago(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    if seconds < 90:
+        return f"{seconds}s"
+    if seconds < 5400:
+        return f"{seconds // 60}m"
+    if seconds < 172800:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
 
 
 # ======================================================================= architect
@@ -515,6 +588,8 @@ class Curator(Agent):
         if len(live) > ceiling:
             for n in sorted(s.registry.retired(), key=lambda n: n.retired_at or 0)[: len(live) - ceiling]:
                 s.registry.dispose(n.id, "node budget pressure (P4)")
+        for title in s.knowledge.enforce_cap(s.directives.research.max_documents):
+            s.bus.publish("knowledge.forgotten", title=title, reason="retention cap (least recently used)")
 
 
 # ======================================================================== explorer
@@ -542,6 +617,8 @@ class Explorer(Agent):
             await self._self_test(tool)
         interval = s.directives.background.health_check_seconds
         for tool in s.tools.active():
+            if "network" in tool.manifest.permissions:
+                continue  # no background traffic to outside services just to check health
             if time.time() - tool.last_health > interval and s.inflight == 0 and s.guardian.background_allowed():
                 await self._health_check(tool)
 
@@ -614,7 +691,7 @@ class Explorer(Agent):
         with s.activity.track("self-test", "explorer", f"{tool.name} v{tool.manifest.version}: "
                               f"{len(examples)} sandboxed self-tests"):
             for ex in examples:
-                run = await s.sandbox.run(tool, ex["input"], timeout)
+                run = await s.sandbox.run(tool, ex["input"], timeout, s.tool_config(tool))
                 if run.ok and outputs_match(run.output, ex.get("expect")):
                     passed += 1
                 else:
@@ -634,11 +711,59 @@ class Explorer(Agent):
     async def _health_check(self, tool: Tool) -> None:
         s = self.sys
         ex = tool.manifest.examples[0]
-        run = await s.sandbox.run(tool, ex["input"], tool.manifest.timeout_s or s.directives.tools.default_timeout_s)
+        run = await s.sandbox.run(tool, ex["input"], tool.manifest.timeout_s or s.directives.tools.default_timeout_s,
+                                  s.tool_config(tool))
         if run.ok and not outputs_match(run.output, ex.get("expect")):
             run.ok, run.error = False, f"health check expected {ex.get('expect')!r}, got {run.output!r}"
         tool.last_health = time.time()
         s.record_tool_run(tool, run)
+
+
+# ====================================================================== researcher
+class Researcher(Agent):
+    """Background research within its own budget: reads up on articles linked from what
+    users asked about (curiosity, depth-limited) and re-reads retained articles once they
+    are older than refresh_days. Never runs while an order is in flight."""
+    name = "researcher"
+
+    def __init__(self, system):
+        super().__init__(system)
+        self.queue: deque[tuple[str, str, int]] = deque()
+        self._queued: set[str] = set()
+        self._last_refresh_scan = 0.0
+
+    def enqueue(self, topic: str, reason: str, depth: int) -> bool:
+        key = topic.strip().lower()
+        if not key or key in self._queued or self.sys.knowledge.get(topic) is not None:
+            return False
+        self._queued.add(key)
+        self.queue.append((topic, reason, depth))
+        return True
+
+    async def step(self) -> None:
+        s = self.sys
+        pol = s.directives.research
+        if not pol.enabled or s.inflight or not s.guardian.background_allowed():
+            return
+        tool = s.knowledge_tool()
+        if tool is None:
+            return
+        if time.time() - self._last_refresh_scan > 60:
+            self._last_refresh_scan = time.time()
+            for doc in s.knowledge.stale(pol.refresh_days, limit=3):
+                key = doc.title.lower()
+                if key not in self._queued:
+                    self._queued.add(key)
+                    self.queue.append((doc.title, f"refresh (retained {doc.age / 86400:.0f} days ago)", pol.max_depth))
+        if not self.queue or not s.guardian.authorize_research(background=True).allowed:
+            return
+        topic, reason, depth = self.queue.popleft()
+        self._queued.discard(topic.strip().lower())
+        doc, _ = await s.research(topic, reason=reason, background=True, tool=tool)
+        self.stats["researched" if doc else "failed"] += 1
+        if doc is not None and depth < pol.max_depth:
+            for link in doc.links[: pol.follow_links]:
+                self.enqueue(link, f"linked from '{doc.title}'", depth + 1)
 
 
 # ======================================================================== sentinel

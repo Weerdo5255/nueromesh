@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import locale
 import os
+import re
 import textwrap
 import time
 
@@ -30,6 +31,7 @@ ASCII = dict(h="-", v="|", tee="+", end="`", pipe="|", arrow="->", dashed="~>", 
              ok="ok", no="x", spin="|/-\\", dot="-", up="^")
 
 Line = tuple[str, str]  # (text, style)
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def glyphs_for_terminal(force_ascii: bool = False) -> dict:
@@ -85,7 +87,11 @@ def _route_target(system, route: str, g: dict) -> tuple[str, str]:
         if tool is None:
             return f"{route[5:]} (missing)", "bad"
         style = {"active": "tool", "retired": "dim", "quarantined": "bad"}.get(tool.state, "warn")
-        return f"{tool.name} v{tool.manifest.version} [{tool.state}] {tool.runs} runs", style
+        extra = ""
+        if tool.manifest.provides == "knowledge":
+            st = s.knowledge.stats()
+            extra = f" {g['dot']} {st.documents} articles retained"
+        return f"{tool.name} v{tool.manifest.version} [{tool.state}] {tool.runs} runs{extra}", style
     if route.startswith("skill:"):
         cap = route[6:]
         champ = s.registry.champion(cap)
@@ -163,7 +169,7 @@ def work_lines(system, g: dict, limit: int = 6) -> list[Line]:
     s = system
     frame = g["spin"][int(time.time() * 8) % len(g["spin"])]
     style = {"lesson": "lesson", "training": "work", "evaluation": "work", "self-test": "tool",
-             "order": "order"}
+             "order": "order", "research": "lesson"}
     active = s.activity.current()
     lines: list[Line] = []
     for a in active[-limit:]:
@@ -205,7 +211,16 @@ def teacher_goal_lines(system, g: dict) -> list[Line]:
         shown = "-" if v is None else (f"{v:.3f}".rstrip("0").rstrip(".") if isinstance(v, float) else str(v))
         op = ">=" if goal["direction"] == "at_least" else "<="
         goals.append(f"{goal['id'].split('-')[0]}:{shown} {op}{goal['target']:g} {g['ok'] if goal['met'] else g['no']}")
+    k = s.knowledge.stats()
+    r = s.guardian.research_usage()
+    tool = s.knowledge_tool()
+    queued = len(s.researcher.queue)
+    knowledge = (f"knowledge: {k.documents} articles ({k.passages} passages) {g['dot']} {r['last_hour']}/{r['limit']} "
+                 f"lookups/h {g['dot']} recalled {k.recalled} {g['dot']} researched {k.researched}"
+                 + (f" {g['dot']} {queued} queued" if queued else "")
+                 + ("" if tool else f" {g['dot']} no research tool active"))
     return [("teachers: " + f" {g['dot']} ".join(parts), "teacher"),
+            (knowledge, "good" if tool else "dim"),
             ("goals:    " + f" {g['dot']} ".join(goals), "info")]
 
 
@@ -460,7 +475,7 @@ class LiveView:
         width = room if width is None else min(width, room)
         if width <= 0 or not 0 <= y < self._H:
             return
-        text = text[:width]
+        text = _CONTROL.sub(" ", text)[:width]  # a newline would move the cursor and wreck the layout
         try:
             self.scr.addstr(y, x, text, self.styles.get(style, 0))
         except self.curses.error:

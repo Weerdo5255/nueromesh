@@ -3,7 +3,7 @@ version = "1.0.0"
 description = "Evaluates arithmetic written with numbers and + - * / or words like plus, minus, times, divided by."
 entrypoint = "tool.py"
 permissions = []
-keywords = ["calculate", "compute", "what is", "what's", "plus", "minus", "times", "multiplied",
+keywords = ['re:\d\s*([-+*/x]|\*\*)\s*\d', "calculate", "compute", "plus", "minus", "times", "multiplied",
             "divided", "+", "*", "/", "=", "work out", "sum of"]
 timeout_s = 5
 

@@ -93,6 +93,7 @@ class Result:
     ok: bool = True
     note: str = ""
     latency_ms: float = 0.0
+    knowledge: str = ""      # "recalled" (answered from retained knowledge) | "researched" | ""
 
     def to_dict(self) -> dict:
         return asdict(self)

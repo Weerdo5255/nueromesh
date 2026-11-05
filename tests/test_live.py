@@ -90,7 +90,8 @@ class PanelTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("lessons given so far:", lines[-1])
         tg = [line for line, _ in teacher_goal_lines(s, UNICODE)]
         self.assertTrue(tg[0].startswith("teachers:") and "heuristic" in tg[0])
-        self.assertTrue(tg[1].startswith("goals:") and "G1:" in tg[1])
+        self.assertTrue(tg[1].startswith("knowledge:") and "articles" in tg[1])
+        self.assertTrue(tg[2].startswith("goals:") and "G1:" in tg[2])
 
 
 @unittest.skipUnless(os.name == "posix", "pseudo-terminals are POSIX-only")

@@ -41,6 +41,16 @@ def describe_event(ev: Event) -> str | None:
         return f"[skill]    new capability '{d['capability']}' labels={d['labels']}"
     if t == "teacher.lesson":
         return f"[lesson]   {d['source']} taught {d['examples']} x {d['capability']}={d['label']} ({d['reason']})"
+    if t == "knowledge.learned":
+        why = "background" if d.get("background") else "for an order"
+        n = d["passages"]
+        return f"[learn]    {d['source']} '{d['title']}' retained ({n} passage{'s' if n != 1 else ''}, {why}: {d['reason']})"
+    if t == "knowledge.recalled":
+        return f"[recall]   '{d['question'][:60]}' answered from '{d['title']}' ({d['confidence']:.2f})"
+    if t == "knowledge.forgotten":
+        return f"[forget]   '{d['title']}' - {d['reason']}"
+    if t == "knowledge.failed":
+        return f"[research] {d['tool']} could not look up '{d['topic'][:60]}': {d['error']}"
     if t == "teacher.status":
         verb = "ready" if d["state"] == "ready" else f"unavailable ({d['state']})"
         return f"[teacher]  {d['teacher']} {verb}: {d['detail']}"
@@ -85,6 +95,12 @@ def render_status(st: dict) -> str:
         used = f", {usage['calls_last_hour']} calls/{usage['tokens_last_hour']} tokens this hour" if usage else ""
         state = "ready" if v["available"] else f"off ({v.get('detail') or 'unavailable'})"
         lines.append(f"  {name:<10}{model:<32} {state}; {v['lessons']} lessons{used}")
+    k = st.get("knowledge")
+    if k:
+        r = k["research"]
+        lines.append(f"knowledge: {k['documents']} articles / {k['passages']} passages retained; "
+                     f"{k['recalled']} recalled, {k['researched']} researched this run; research "
+                     f"{r['last_hour']}/{r['limit']} this hour; tool: {k['tool'] or 'none active'}")
     lines.append("")
     lines.append("directive scorecard:")
     for g in st["scorecard"]:

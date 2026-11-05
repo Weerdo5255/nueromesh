@@ -44,9 +44,11 @@ class ToolManifest:
     keywords: tuple = ()
     timeout_s: float | None = None
     supersedes: str | None = None
+    provides: str = ""            # "knowledge": results are retained and recalled later
     examples: list = field(default_factory=list)
     templates: list = field(default_factory=list)
     fillers: dict = field(default_factory=dict)
+    config: dict = field(default_factory=dict)  # passed to the tool on every run
 
     @property
     def route(self) -> str:
@@ -60,8 +62,9 @@ class ToolManifest:
                    version=m.get("version", "0.0.0"), description=m.get("description", ""),
                    entrypoint=m.get("entrypoint", "tool.py"), permissions=tuple(m.get("permissions", [])),
                    keywords=tuple(m.get("keywords", [])), timeout_s=m.get("timeout_s"),
-                   supersedes=m.get("supersedes") or None, examples=list(m.get("examples", [])),
-                   templates=list(m.get("templates", [])), fillers=dict(m.get("fillers", {})))
+                   supersedes=m.get("supersedes") or None, provides=m.get("provides", ""),
+                   examples=list(m.get("examples", [])), templates=list(m.get("templates", [])),
+                   fillers=dict(m.get("fillers", {})), config=dict(m.get("config", {})))
 
 
 @dataclass
@@ -95,6 +98,8 @@ class ToolRun:
     output: object = None
     error: str = ""
     ms: float = 0.0
+    extra: dict = field(default_factory=dict)   # everything else the tool returned (e.g. "knowledge")
+    transient: bool = False                     # e.g. network down: does not count towards quarantine
 
 
 _LAUNCHER = """
@@ -117,20 +122,26 @@ class Sandbox:
         self.cpu_seconds = cpu_seconds
         self.memory_mb = memory_mb
 
-    async def run(self, tool: Tool, text: str, timeout: float) -> ToolRun:
+    NETWORK_ENV = ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+                   "SSL_CERT_FILE", "SSL_CERT_DIR")
+
+    async def run(self, tool: Tool, text: str, timeout: float, config: dict | None = None) -> ToolRun:
         m = tool.manifest
         entry = (m.path / m.entrypoint).resolve()
         if m.path.resolve() not in entry.parents:
             return ToolRun(False, error="entrypoint escapes the tool folder")
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONIOENCODING": "utf-8",
                "LANG": "C.UTF-8", "NEUROMESH_TOOL": m.name}
+        if "network" in m.permissions:  # proxy/certificate settings only for approved network tools
+            env.update({k: os.environ[k] for k in self.NETWORK_ENV if k in os.environ})
         t0 = time.perf_counter()
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-I", "-c", _LAUNCHER, str(self.cpu_seconds), str(self.memory_mb), str(entry),
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             cwd=str(m.path), env=env)
         try:
-            out, err = await asyncio.wait_for(proc.communicate(json.dumps({"input": text}).encode()), timeout)
+            request = {"input": text, "config": config if config is not None else dict(m.config)}
+            out, err = await asyncio.wait_for(proc.communicate(json.dumps(request).encode()), timeout)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
@@ -144,8 +155,9 @@ class Sandbox:
         except json.JSONDecodeError:
             return ToolRun(False, error="tool printed invalid JSON", ms=ms)
         if "error" in data:
-            return ToolRun(False, error=str(data["error"]), ms=ms)
-        return ToolRun(True, output=data.get("output"), ms=ms)
+            return ToolRun(False, error=str(data["error"]), ms=ms, transient=bool(data.get("transient")))
+        extra = {k: v for k, v in data.items() if k != "output"}
+        return ToolRun(True, output=data.get("output"), ms=ms, extra=extra)
 
 
 def outputs_match(output: object, expect: object) -> bool:

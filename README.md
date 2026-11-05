@@ -80,6 +80,7 @@ All run concurrently (asyncio) and coordinate through a message bus, the registr
 | Evaluator | benchmarks champion vs challengers on held-out data (paired test) and promotes winners |
 | Curator | disposes retired nodes after the rollback window and failed challengers; enforces the node budget |
 | Explorer | discovers tools, routes them through approval, self-tests them, activates them, health-checks them, handles tool supersession |
+| Researcher | reads up in the background (own hourly budget) on articles linked from what users asked about, and refreshes retained knowledge that has aged |
 | Sentinel | watches the kill switch, re-checks local teacher servers (Ollama), publishes heartbeats with the directive scorecard |
 
 Background agents yield whenever an order is in flight and stay within a compute duty cycle.
@@ -176,6 +177,7 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /define language english,french,spanish :: Which language a sentence is in
 /questions    /answer q1 french
 /rollback sentiment    /pause    /halt    /resume
+/research <topic>    /knowledge [question]    /forget <article title>
 ```
 
 ### HTTP API (`serve`)
@@ -189,8 +191,9 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | POST | `/answer` | `{"question_id": "q1", "label": "..."}` |
 | POST | `/define` | `{"name": "...", "labels": [...], "description": "..."}` |
 | POST | `/approve` | `{"id": "apv-1", "approve": true}` |
+| POST | `/research` | `{"topic": "..."}` |
 | POST | `/halt`, `/resume`, `/pause`, `/rollback` | |
-| GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions` | |
+| GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions`, `/knowledge?q=...` | |
 
 ```
 python -m neuromesh order "convert 10 km to miles"
@@ -244,6 +247,48 @@ timeout_s = 300
 Leaving a teacher out of `order` switches it off; so does `enabled = false`. The demo stays
 offline unless you pass `--ollama MODEL` or `--llm`.
 
+### Research and retained knowledge (Wikipedia)
+The mesh can look things up on Wikipedia and keeps what it learns.
+
+```
+neuromesh> /approve apv-1               # once: the wikipedia tool needs network access
+neuromesh> who was Ada Lovelace?        # researched: fetched, retained, answered
+neuromesh> when was Ada Lovelace born?  # recalled: answered from memory, no network
+neuromesh> /research the Krebs cycle    # read up on something now
+neuromesh> /knowledge                   # what has been retained
+neuromesh> /knowledge capital of France # what it would recall for a question, and how confidently
+neuromesh> /forget Paris
+```
+
+- **Approval first.** `plugins/wikipedia` declares the `network` permission, so it waits for a
+  human's `/approve` (P3), then self-tests against the live API before it is used. It is the
+  only component that talks to Wikipedia. It identifies itself with a User-Agent and contact URL,
+  as [Wikimedia asks](https://foundation.wikimedia.org/wiki/Policy:User-Agent_policy).
+  Set your own contact in `[tools.config.wikipedia]`.
+- **Retained.** Each article is stored with its sections as passages, in `state/neuromesh.db`
+  (indexed with SQLite FTS5), so it survives restarts. Reference sections are dropped.
+- **Memory first.** A question is answered from retained knowledge when it matches well enough
+  (`recall_threshold`, 0.8). Confidence needs the question to name the article's subject *and* a
+  passage to cover what is asked, so "population of France" is not answered from the article on
+  Paris. Questions that led to an article are remembered as its aliases ("capital of France" ->
+  Paris), so they are recalled next time. Otherwise the mesh researches, retains, then answers.
+- **Answers come from the passages.** If an LLM teacher (Ollama or Claude) is available it writes
+  the answer, told to use only the retained passages; otherwise the best-matching sentences are
+  quoted. Every answer names its source article and URL.
+- **Which orders.** Orders the router sends to the wikipedia tool ("tell me about...", "who
+  was...", "research..."), `tool wikipedia: <topic>`, and questions no tool or skill fits
+  ("how tall is the Eiffel Tower?") when `research_questions = true`.
+- **Background curiosity.** After researching for an order, the Researcher agent also reads up to
+  `follow_links` (2) articles the introduction links to, never more than `max_depth` (1) away
+  from what was asked. It re-reads retained articles older than `refresh_days` (30). It only
+  works when no order is in flight, within its own hourly budget.
+- **Budgets and limits** (`[research]` in `directives.toml`): `max_fetches_per_hour` (60) for all
+  lookups, `background_per_hour` (20) for curiosity and refreshing, `max_documents` (2000)
+  retained, after which the least recently used are forgotten. A network outage is reported per
+  order but never quarantines the tool.
+- In the live console: lookups show in the work panel, `learn` and `recall` lines in the activity
+  log, and the knowledge line shows articles retained and lookups used this hour.
+
 ### Adding a tool
 Drop a folder into `plugins/`. The Explorer finds it within seconds.
 ```
@@ -255,8 +300,10 @@ name = "my_tool"
 version = "1.0.0"
 description = "What it does (the LLM teacher routes by this)"
 permissions = []               # e.g. ["network"] -> needs human approval
-keywords = ["..."]             # offline teacher's routing cues
+keywords = ["...", 're:\d+\s*[*/+-]\s*\d+']   # offline teacher's routing cues; re: patterns count double
 supersedes = "old_tool"        # optional: retire old_tool and relabel its routing data
+provides = "knowledge"         # optional: results are retained and recalled (see Research)
+[config]                       # optional: settings passed to the tool as "config" on every run
 templates = ["..."]            # optional: practice orders the offline teacher can generate
 [[examples]]                   # self-tests; all must pass before activation
 input = "..."
@@ -333,6 +380,11 @@ derivations, moving weights between devices). They are skipped where no GPU libr
 - **Self-improvement is bounded on purpose**: the system can create, train, promote and delete
   nodes, and test and activate *approved* tools. It cannot grant itself permissions, approve
   its own tools, change its directives, or exceed its budgets.
+- **Research reaches the internet** only through the approved wikipedia tool, within hourly
+  budgets, and background curiosity stays within `max_depth` of what users asked. Retained
+  knowledge is Wikipedia text: answers name the article they came from, and are only as good as
+  it was when fetched (articles are re-read after `refresh_days`). The default keyword routing is
+  simple; with an LLM teacher, routing of questions to research is much better.
 - The offline heuristic teacher is a stand-in so the system and its tests run anywhere; labels
   from it are only as good as its lexicon.
 
@@ -340,7 +392,7 @@ derivations, moving weights between devices). They are skipped where no GPU libr
 ```
 directives.toml          constitution: prime directives, goals, policy
 capabilities.toml        seed skills
-plugins/                 installed tools (calculator, word_stats)
+plugins/                 installed tools (calculator, word_stats, wikipedia)
 examples/incoming_plugins/  tools the demo installs at runtime
 neuromesh/
   runtime.py             System: wiring, cascade, learning, tool activation, status
@@ -355,10 +407,12 @@ neuromesh/
   guardian.py            directive enforcement, budgets, approvals, kill switch, audit
   teachers.py            human / LLM / heuristic teachers
   tools.py               manifests, sandbox, discovery
+  knowledge.py           retained knowledge: articles + passages (SQLite FTS5), recall confidence
   store.py               SQLite: experience, lineage, tools, orders, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   56 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
-                         full system, live console (incl. a pseudo-terminal run), compute
+tests/                   63 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+                         Wikipedia research against a mock MediaWiki API, full system,
+                         live console (incl. a pseudo-terminal run), compute
                          backends (4 GPU parity tests run where PyTorch or CuPy is installed)
 ```
 
