@@ -14,17 +14,20 @@ a Guardian enforces in code.
 python -m neuromesh demo      # 30-second offline demo of the whole life cycle
 python -m neuromesh run       # interactive console
 python -m neuromesh serve     # daemon + HTTP API on 127.0.0.1:8765
+python -m neuromesh bench     # CPU vs GPU speed for node training and inference
 ```
 
-Requirements: Python 3.11+ and numpy. Nothing else; no GPU.
+Requirements: Python 3.11+ and numpy. Optional: PyTorch or CuPy to run the nodes on a GPU
+(see [Running on a GPU](#running-on-a-gpu)).
 
 ---
 
 ## How it works
 
 ### Neural nodes
-A node is a small MLP (numpy, ReLU hidden layers, softmax output, Adam) bound to one
-**capability**: routing orders (`dispatch`), or a skill such as `sentiment` or `urgency`.
+A node is a small MLP (ReLU hidden layers, softmax output, Adam; numpy on the CPU, or
+PyTorch / CuPy on a GPU) bound to one **capability**: routing orders (`dispatch`), or a
+skill such as `sentiment` or `urgency`.
 Every node reads the same hashed text features (unigrams, bigrams, character trigrams, with
 negation scope marking), so new capabilities never need a new vocabulary.
 
@@ -172,6 +175,52 @@ expands the routing node → Evaluator promotes it → old router disposed after
 `/define <name> <labels>` at runtime, or a section in `capabilities.toml`. With the LLM
 teacher, a description and labels are enough; the offline teacher also needs a lexicon.
 
+### Running on a GPU
+Nodes run on numpy on the CPU by default. To train and serve them on a GPU, install one of:
+
+- **PyTorch**: NVIDIA (CUDA), AMD (ROCm build) or Apple Silicon (MPS);
+  see https://pytorch.org/get-started/locally/
+- **CuPy**: NVIDIA only; `pip install cupy-cuda12x` (match your CUDA version)
+
+Then choose the device with `--device`, the `NEUROMESH_DEVICE` environment variable, or
+`[compute]` in `directives.toml` (in that order of precedence):
+```
+python -m neuromesh run --device auto       # best GPU found, otherwise the CPU
+python -m neuromesh serve --device cuda:1   # second NVIDIA GPU
+python -m neuromesh demo --device mps       # Apple Silicon
+python -m neuromesh run --device cuda --gpu-library cupy
+```
+`auto` falls back to the CPU when no GPU is usable. A device you name explicitly that isn't
+available is an error that says what to install, never a silent fallback. `/status` shows
+the device in use.
+
+On the GPU: node training, held-out evaluation and every forward pass that answers an
+order. On the CPU: text encoding, tools and everything else. Weights are saved
+device-independent, so you can train on a GPU box and serve from a laptop, or switch devices
+between runs.
+
+**Is it worth it?** The default nodes are small (1,024 inputs, 64 hidden units, batches of 32).
+At that size a GPU will likely be no faster than numpy, because kernel-launch and transfer
+overhead dominate. GPUs pay off when the nodes grow. Measure on your own hardware:
+```
+python -m neuromesh bench --device auto
+python -m neuromesh bench --device auto --input-dim 16384 --hidden 512,256 --batch-size 256
+```
+The benchmark trains identical nodes on CPU and GPU and reports the speed-up and whether
+the two agree. A GPU-sized starting point for `[nodes]` in `directives.toml`:
+```toml
+input_dim = 16384        # wider text features: fewer hash collisions, more for the GPU to do
+default_hidden = [512]
+batch_size = 256
+max_hidden = 2048        # lets the architect breed wider challengers
+```
+Changing `input_dim` retires the saved nodes (they can't read the new features); the
+architect rebuilds them from the stored experience, so nothing learned from teachers is lost.
+
+To check a GPU setup: `python -m pytest tests/test_backend.py`. Its parity tests compare
+every GPU backend installed on the machine against numpy (forward pass, training, node
+derivations, moving weights between devices). They are skipped where no GPU library exists.
+
 ---
 
 ## Safety model and honest limits
@@ -202,13 +251,16 @@ neuromesh/
   runtime.py             System: wiring, cascade, learning, tool activation, status
   agents.py              the seven agents
   nodes.py               NeuralNode + derivations (expand / widen / deepen / retune / fresh)
+  backend.py             compute backends: numpy (CPU), PyTorch (CUDA / ROCm / MPS), CuPy
+  bench.py               CPU vs GPU benchmark
   registry.py            node life cycle
   guardian.py            directive enforcement, budgets, approvals, kill switch, audit
   teachers.py            human / LLM / heuristic teachers
   tools.py               manifests, sandbox, discovery
   store.py               SQLite: experience, lineage, tools, orders, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   29 tests: nodes, guardian, LLM wire format (mock server), full system
+tests/                   39 tests: nodes, guardian, LLM wire format (mock server), full system,
+                         compute backends (4 GPU parity tests run where PyTorch or CuPy is installed)
 ```
 
 State lives in `state/` (SQLite database, node weights, log). Delete it to start fresh.

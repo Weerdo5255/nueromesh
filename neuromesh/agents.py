@@ -207,8 +207,9 @@ class Architect(Agent):
             if champ is None:
                 if not cands and sum(counts.values()) >= npol.min_examples_to_spawn and len(have) >= 2:
                     node = NeuralNode(cap, have, npol.input_dim,
-                                      Architecture(hidden=tuple(npol.default_hidden), lr=npol.default_lr),
-                                      origin="seed", seed=s.rng.randrange(1 << 30))
+                                      Architecture(hidden=tuple(npol.default_hidden), lr=npol.default_lr,
+                                                   batch_size=npol.batch_size),
+                                      origin="seed", seed=s.rng.randrange(1 << 30), backend=s.backend)
                     self._spawn(node, f"capability gap: {sum(counts.values())} examples and no node")
                 continue
             missing = [lab for lab in have if lab not in champ.labels]
@@ -230,9 +231,10 @@ class Architect(Agent):
         for _ in range(len(MUTATIONS)):
             kind = MUTATIONS[self.mutation_index[champ.capability] % len(MUTATIONS)]
             self.mutation_index[champ.capability] += 1
-            if kind == "widen" and max(champ.arch.hidden or (0,)) >= 512:
+            npol = self.sys.directives.nodes
+            if kind == "widen" and max(champ.arch.hidden or (0,)) * 1.5 > npol.max_hidden:
                 continue
-            if kind == "deepen" and len(champ.arch.hidden) >= 3:
+            if kind == "deepen" and len(champ.arch.hidden) >= npol.max_depth:
                 continue
             break
         if kind == "widen":
@@ -241,7 +243,11 @@ class Architect(Agent):
             return champ.spawn_deeper(), kind
         if kind == "retune":
             return champ.spawn_retuned(self.sys.rng.choice([0.5, 2.0])), kind
-        hidden = self.sys.rng.choice([(32,), (64,), (128,), (96, 32)])
+        npol = self.sys.directives.nodes
+        base = int(npol.default_hidden[0]) if npol.default_hidden else 64
+        options = [(max(8, base // 2),), (base,), (min(base * 2, npol.max_hidden),),
+                   (min(base * 3 // 2, npol.max_hidden), max(8, base // 2))]
+        hidden = self.sys.rng.choice([o for o in options if len(o) <= max(1, npol.max_depth)])
         active = [lab for lab in champ.labels if lab not in spec.inactive_labels]
         return champ.spawn_fresh(hidden, labels=active or None), "fresh"
 

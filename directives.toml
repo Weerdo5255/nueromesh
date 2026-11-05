@@ -64,6 +64,16 @@ target = 20
 direction = "at_most"
 
 # ------------------------------------------------------------------------ policy
+[compute]
+# Where neural nodes train and run. Overridden by --device or NEUROMESH_DEVICE.
+#   "cpu"    numpy on the CPU (default, no extra dependencies)
+#   "auto"   best GPU found (PyTorch CUDA/ROCm, then Apple MPS, then CuPy), else the CPU
+#   "cuda" / "cuda:1"   an NVIDIA GPU (or AMD with a ROCm build of PyTorch)
+#   "mps"    an Apple Silicon GPU (PyTorch)
+# An explicitly named device that is unavailable is an error, never a silent fallback.
+device = "cpu"
+library = "auto"                # "auto" (PyTorch, then CuPy), "torch" or "cupy"
+
 [orders]
 confidence_threshold = 0.75     # below this a node defers to a teacher
 audit_sample_rate = 0.1         # fraction of node answers spot-checked by a teacher
@@ -74,7 +84,10 @@ max_nodes = 40
 max_candidates_per_capability = 2
 default_hidden = [64]
 default_lr = 0.01
-input_dim = 1024
+batch_size = 32
+max_hidden = 512                # widest hidden layer the architect may breed
+max_depth = 3                   # most hidden layers the architect may breed
+input_dim = 1024                # encoder width; changing it retires saved nodes (they are rebuilt)
 min_examples_to_spawn = 12      # experience needed before a capability gets its first node
 serve_min_accuracy = 0.8        # held-out accuracy a champion needs before it may answer orders
 target_accuracy = 0.95          # below this the architect breeds challengers

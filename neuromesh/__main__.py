@@ -4,6 +4,9 @@
   python -m neuromesh serve    daemon with an HTTP API on 127.0.0.1:8765
   python -m neuromesh order    send one order to a running daemon
   python -m neuromesh demo     offline, scripted demonstration of the whole life cycle
+  python -m neuromesh bench    compare CPU and GPU speed for node training and inference
+
+run, serve, demo and bench take --device cpu|auto|cuda|cuda:N|mps (GPU needs PyTorch or CuPy).
 """
 from __future__ import annotations
 
@@ -47,7 +50,7 @@ async def _console(args) -> None:
     from .report import describe_event, render_lineage, render_status
     from .runtime import System
 
-    system = System(args.root)
+    system = System(args.root, device=args.device, library=args.gpu_library)
     loop = asyncio.get_running_loop()
 
     def show(ev):
@@ -58,7 +61,8 @@ async def _console(args) -> None:
     system.bus.listen(show)
     async with system:
         print(f"{system.directives.name} running - {len(system.agents)} agents, "
-              f"{len(system.registry.live())} live nodes. /help for commands.\n")
+              f"{len(system.registry.live())} live nodes, compute: {system.backend.describe()}. "
+              f"/help for commands.\n")
         while True:
             try:
                 line = (await loop.run_in_executor(None, input, "neuromesh> ")).strip()
@@ -151,11 +155,12 @@ async def _serve(args) -> None:
     from .runtime import System
     from .server import serve_http
 
-    system = System(args.root)
+    system = System(args.root, device=args.device, library=args.gpu_library)
     system.bus.listen(lambda ev: (line := describe_event(ev)) and print(line, flush=True))
     async with system:
         server = await serve_http(system, args.host, args.port)
-        print(f"{system.directives.name} serving on http://{args.host}:{args.port}  (Ctrl-C to stop)", flush=True)
+        print(f"{system.directives.name} serving on http://{args.host}:{args.port}  "
+              f"(compute: {system.backend.describe()}; Ctrl-C to stop)", flush=True)
         async with server:
             await server.serve_forever()
 
@@ -194,6 +199,19 @@ def main(argv: list[str] | None = None) -> None:
     p_demo.add_argument("--llm", action="store_true", help="also use the LLM teacher if configured")
     p_demo.add_argument("--keep", action="store_true", help="keep the demo's working folder")
     p_demo.add_argument("--seed", type=int, default=7)
+    p_bench = sub.add_parser("bench", help="compare CPU and GPU speed for node training and inference")
+    p_bench.add_argument("--input-dim", type=int, default=1024, help="encoder width (directives: input_dim)")
+    p_bench.add_argument("--hidden", default="64", help="hidden layer sizes, e.g. 64 or 512,256")
+    p_bench.add_argument("--batch-size", type=int, default=32)
+    p_bench.add_argument("--examples", type=int, default=4000)
+    p_bench.add_argument("--labels", type=int, default=8)
+    p_bench.add_argument("--epochs", type=int, default=3)
+    for p in (p_run, p_serve, p_demo, p_bench):
+        p.add_argument("--device", default=None,
+                       help="cpu | auto | cuda | cuda:N | mps (default: [compute] device in directives.toml, "
+                            "or NEUROMESH_DEVICE; bench defaults to auto)")
+        p.add_argument("--gpu-library", default=None, choices=["auto", "torch", "cupy", "numpy"],
+                       help="which library drives the GPU (default: auto = PyTorch, then CuPy)")
     args = parser.parse_args(argv)
 
     if args.cmd in ("run", "serve"):
@@ -201,6 +219,7 @@ def main(argv: list[str] | None = None) -> None:
         if not (args.root / "directives.toml").exists():
             sys.exit(f"no directives.toml in {args.root}; run from the project folder or pass --root")
         _setup_logging(args.root, args.verbose)
+    from .backend import BackendUnavailable
     try:
         if args.cmd == "run":
             asyncio.run(_console(args))
@@ -210,7 +229,16 @@ def main(argv: list[str] | None = None) -> None:
             _order(args)
         elif args.cmd == "demo":
             from .demo import run_demo
-            asyncio.run(run_demo(use_llm=args.llm, keep=args.keep, seed=args.seed))
+            asyncio.run(run_demo(use_llm=args.llm, keep=args.keep, seed=args.seed,
+                                 device=args.device, library=args.gpu_library))
+        elif args.cmd == "bench":
+            from .bench import run_bench
+            hidden = tuple(int(h) for h in args.hidden.replace(" ", "").split(",") if h)
+            run_bench(device=args.device or "auto", library=args.gpu_library or "auto",
+                      input_dim=args.input_dim, hidden=hidden, batch_size=args.batch_size,
+                      examples=args.examples, labels=args.labels, epochs=args.epochs)
+    except BackendUnavailable as exc:
+        sys.exit(f"error: {exc}")
     except KeyboardInterrupt:
         pass
 

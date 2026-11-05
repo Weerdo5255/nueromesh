@@ -149,7 +149,8 @@ NEW_MIX = {"tool:calculator2": 0.2, "tool:unit_convert": 0.15, "tool:glossary": 
            "sentiment/explicit": 0.15, "sentiment/implicit": 0.08, "urgency/explicit": 0.12, "urgency/implicit": 0.1}
 
 
-async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7) -> None:
+async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7,
+                   device: str | None = None, library: str | None = None) -> None:
     work = Path(tempfile.mkdtemp(prefix="neuromesh-demo-"))
     for name in ("directives.toml", "capabilities.toml"):
         shutil.copy(PROJECT / name, work / name)
@@ -157,12 +158,16 @@ async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7) -> 
     overrides = dict(DEMO_OVERRIDES)
     if not use_llm:
         overrides["teachers"] = {"order": ["human", "heuristic"]}
-    system = System(work, overrides=overrides, seed=seed)
+    try:
+        system = System(work, overrides=overrides, seed=seed, device=device, library=library)
+    except Exception:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
     demo = Demo(system, OrderFactory(seed))
     system.bus.listen(demo.on_event)
     teachers = [t.name for t in system.teachers.ranked()]
-    print(f"NeuroMesh demo - working folder {work}\nteachers in use: {teachers}"
-          + ("" if use_llm else " (offline; pass --llm to add the LLM teacher)"))
+    print(f"NeuroMesh demo - working folder {work}\ncompute: {system.backend.describe()}\n"
+          f"teachers in use: {teachers}" + ("" if use_llm else " (offline; pass --llm to add the LLM teacher)"))
 
     async with system:
         demo.t0 = time.time()

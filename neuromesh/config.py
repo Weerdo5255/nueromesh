@@ -93,6 +93,9 @@ class NodePolicy:
     min_eval_samples: int = 10
     min_train_steps_before_eval: int = 3
     max_candidate_slices: int = 12
+    batch_size: int = 32
+    max_hidden: int = 512           # widest hidden layer the architect may breed
+    max_depth: int = 3              # most hidden layers the architect may breed
     challenger_cooldown_seconds: float = 30.0
     retired_grace_seconds: float = 120.0
     candidate_max_age_seconds: float = 600.0
@@ -147,11 +150,18 @@ class ToolPolicy:
 
 
 @dataclass
+class ComputePolicy:
+    device: str = "cpu"     # "cpu" | "auto" | "cuda" | "cuda:N" | "mps"
+    library: str = "auto"   # "auto" | "numpy" | "torch" | "cupy"
+
+
+@dataclass
 class Directives:
     name: str = "NeuroMesh"
     mission: str = ""
     prime: list = field(default_factory=list)
     goals: list = field(default_factory=list)
+    compute: ComputePolicy = field(default_factory=ComputePolicy)
     orders: OrderPolicy = field(default_factory=OrderPolicy)
     nodes: NodePolicy = field(default_factory=NodePolicy)
     background: BackgroundPolicy = field(default_factory=BackgroundPolicy)
@@ -166,6 +176,7 @@ class Directives:
             mission=ident.get("mission", ""),
             prime=[PrimeDirective(**p) for p in d.get("prime", [])],
             goals=[Goal(**g) for g in d.get("goals", [])],
+            compute=build(ComputePolicy, d.get("compute")),
             orders=build(OrderPolicy, d.get("orders")),
             nodes=build(NodePolicy, d.get("nodes")),
             background=build(BackgroundPolicy, d.get("background")),

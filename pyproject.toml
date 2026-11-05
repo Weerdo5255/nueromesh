@@ -10,6 +10,13 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.24"]
 
+[project.optional-dependencies]
+# GPU support. For PyTorch, the right build depends on your platform (CUDA, ROCm, Apple):
+# see https://pytorch.org/get-started/locally/. For CuPy, pick the package for your CUDA version.
+torch = ["torch>=2.1"]
+cupy = ["cupy-cuda12x>=13"]
+dev = ["pytest"]
+
 [project.scripts]
 neuromesh = "neuromesh.__main__:main"
 

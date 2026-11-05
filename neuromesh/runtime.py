@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import re
 import threading
@@ -13,6 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from .agents import Architect, Curator, Evaluator, Explorer, Orchestrator, Sentinel, Trainer
+from .backend import select_backend
 from .bus import Bus
 from .config import Directives, load_toml
 from .encoding import HashingEncoder
@@ -32,9 +34,15 @@ OFFLINE_FIELDS = ("lexicon", "negation", "templates", "label_templates", "filler
 class System:
     def __init__(self, root: str | Path = ".", *, directives_path: str | Path | None = None,
                  capabilities_path: str | Path | None = None, state_dir: str | Path | None = None,
-                 overrides: dict | None = None, seed: int | None = None):
+                 overrides: dict | None = None, seed: int | None = None,
+                 device: str | None = None, library: str | None = None):
         self.root = Path(root).resolve()
         self.directives = Directives.load(Path(directives_path or self.root / "directives.toml"), overrides)
+        # compute device: argument (e.g. --device) > environment > directives [compute]
+        compute = self.directives.compute
+        self.backend = select_backend(device or os.environ.get("NEUROMESH_DEVICE") or compute.device,
+                                      library or os.environ.get("NEUROMESH_GPU_LIBRARY") or compute.library)
+        log.info("compute backend: %s", self.backend.describe())
         self.state_dir = Path(state_dir or self.root / "state")
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.rng = random.Random(seed)
@@ -43,7 +51,8 @@ class System:
         self.store = Store(self.state_dir / "neuromesh.db", self.directives.nodes.holdout_percent)
         self.guardian = Guardian(self.directives, self.store, self.bus, self.state_dir)
         self.encoder = HashingEncoder(self.directives.nodes.input_dim)
-        self.registry = NodeRegistry(self.store, self.bus, self.state_dir / "nodes", self.guardian.audit)
+        self.registry = NodeRegistry(self.store, self.bus, self.state_dir / "nodes", self.guardian.audit,
+                                     self.backend)
         self.tools = ToolRegistry(self.root, self.directives.tools.plugin_dirs, self.store)
         self.sandbox = Sandbox(self.directives.tools.sandbox_cpu_seconds, self.directives.tools.sandbox_memory_mb)
         tp = self.directives.teachers
@@ -52,7 +61,7 @@ class System:
 
         self.capabilities: dict[str, CapabilitySpec] = {}
         self._load_capabilities(Path(capabilities_path or self.root / "capabilities.toml"))
-        self.registry.load()
+        self.registry.load(self.directives.nodes.input_dim)
 
         self.orders: asyncio.Queue = asyncio.Queue()
         self.inflight = 0
@@ -79,8 +88,8 @@ class System:
         for agent in self.agents:
             self._tasks.append(asyncio.create_task(agent.run(), name=f"agent:{agent.name}"))
         self.guardian.audit("system", "system.start", self.directives.name,
-                            prime=[p.id for p in self.directives.prime])
-        self.bus.publish("system.start", name=self.directives.name)
+                            prime=[p.id for p in self.directives.prime], compute=self.backend.describe())
+        self.bus.publish("system.start", name=self.directives.name, compute=self.backend.describe())
         return self
 
     async def stop(self) -> None:
@@ -400,6 +409,7 @@ class System:
         lineage = self.registry.lineage.values()
         return {
             "name": self.directives.name, "uptime_s": round(time.time() - self.started_at, 1),
+            "compute": self.backend.describe(),
             "halted": self.guardian.halted, "halt_reason": self.guardian.halt_reason,
             "background_paused": self.guardian.paused, "inflight": self.inflight,
             "background_duty_cycle": round(self.guardian.duty_cycle(), 3), "orders": self.order_count,

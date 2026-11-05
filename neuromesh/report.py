@@ -57,6 +57,7 @@ def render_status(st: dict) -> str:
              f"background duty={st['background_duty_cycle']:.0%}"
              + ("  ** HALTED: " + st["halt_reason"] if st["halted"] else "")
              + ("  (background paused)" if st["background_paused"] else "")]
+    lines.append(f"compute: {st['compute']}")
     n = st["nodes"]
     lines.append(f"nodes: {n['live']} live, {n['ever']} ever built, {n['disposed']} disposed   "
                  f"recent orders served by: {st['served_recent']}")

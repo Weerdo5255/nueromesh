@@ -1,14 +1,19 @@
 """Neural nodes: small specialist networks the system grows, trains, replaces and disposes.
 
-Each node is a numpy MLP (ReLU hidden layers, softmax output, Adam) bound to one
-capability. New nodes are usually *derived* from an existing one so knowledge carries
-over:
+Each node is an MLP (ReLU hidden layers, softmax output, Adam) bound to one capability.
+Its math runs on a compute backend (numpy on the CPU by default, or PyTorch / CuPy on a
+GPU; see backend.py). Everything outside the node sees numpy arrays only.
+
+New nodes are usually *derived* from an existing one so knowledge carries over:
 
 * expand  - add output units for new labels, initialised "quiet" so old behaviour is kept
 * widen   - Net2Wider: function-preserving widening of every hidden layer
 * deepen  - Net2Deeper: insert an identity layer (exact for post-ReLU inputs)
 * retune  - same weights, different learning rate
 * fresh   - new random initialisation with a different architecture
+
+Derivations are rare, so they are done on CPU copies of the weights and the child moves
+its weights to the device.
 """
 from __future__ import annotations
 
@@ -20,6 +25,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+
+from .backend import Backend, NumpyBackend
+
+_DEFAULT_BACKEND = NumpyBackend()
 
 
 @dataclass
@@ -43,22 +52,35 @@ class Architecture:
                    weight_decay=d.get("weight_decay", 1e-4), batch_size=d.get("batch_size", 32))
 
 
-def _softmax(z: np.ndarray) -> np.ndarray:
-    z = z - z.max(axis=1, keepdims=True)
-    e = np.exp(z)
-    return e / e.sum(axis=1, keepdims=True)
-
-
-def _forward(params: list[np.ndarray], X: np.ndarray, keep: bool = False):
+# ------------------------------------------------------------------ backend math
+def _forward(B: Backend, params: list, X, keep: bool = False):
     acts = [X]
     h = X
     n_layers = len(params) // 2
     for i in range(n_layers):
         z = h @ params[2 * i] + params[2 * i + 1]
-        h = np.maximum(z, 0.0) if i < n_layers - 1 else z
+        h = B.relu(z) if i < n_layers - 1 else z
         acts.append(h)
-    probs = _softmax(h)
+    e = B.exp(h - B.max_rows(h))
+    probs = e / B.sum_rows(e)
     return (probs, acts) if keep else probs
+
+
+def _grads(B: Backend, params: list, X, y, w, weight_decay: float):
+    probs, acts = _forward(B, params, X, keep=True)
+    rows = B.arange(X.shape[0])
+    wn = w / w.sum()
+    d = B.copy(probs)
+    d[rows, y] -= 1.0
+    d = d * wn[:, None]
+    grads: list = [None] * len(params)
+    for i in reversed(range(len(params) // 2)):
+        grads[2 * i] = acts[i].T @ d + weight_decay * params[2 * i]
+        grads[2 * i + 1] = B.sum0(d)
+        if i > 0:
+            d = (d @ params[2 * i].T) * B.gt0(acts[i])
+    loss = -(wn * B.log(probs[rows, y] + 1e-9)).sum()
+    return grads, loss
 
 
 class NeuralNode:
@@ -67,12 +89,14 @@ class NeuralNode:
     def __init__(self, capability: str, labels: list[str], input_dim: int,
                  arch: Architecture | None = None, *, node_id: str | None = None,
                  parent_id: str | None = None, generation: int = 0, origin: str = "seed",
-                 seed: int | None = None, params: list[np.ndarray] | None = None):
+                 seed: int | None = None, params: list[np.ndarray] | None = None,
+                 backend: Backend | None = None):
         self.id = node_id or f"{capability}-{uuid.uuid4().hex[:6]}"
         self.capability = capability
         self.labels = list(labels)
         self.input_dim = input_dim
         self.arch = arch or Architecture()
+        self.backend = backend or _DEFAULT_BACKEND
         self.parent_id = parent_id
         self.generation = generation
         self.origin = origin
@@ -90,11 +114,16 @@ class NeuralNode:
                               "live_agree": 0, "live_total": 0, "serves": 0, "last_loss": None}
         self.lock = threading.Lock()
         self.rng = np.random.default_rng(seed)
-        self.params = params if params is not None else self._init_params()
-        self.opt = self._fresh_opt(self.params)
+        host = params if params is not None else self._init_params()
+        B = self.backend
+        with B.scope():
+            self.params = [B.asarray(p) for p in host]
+            self.opt = {"m": [B.zeros_like(p) for p in self.params],
+                        "v": [B.zeros_like(p) for p in self.params], "t": 0}
 
     # ------------------------------------------------------------------ setup
     def _init_params(self) -> list[np.ndarray]:
+        """Initialised on the CPU from the node's seed, so every backend starts identical."""
         sizes = [self.input_dim, *self.arch.hidden, len(self.labels)]
         params: list[np.ndarray] = []
         for a, b in zip(sizes, sizes[1:]):
@@ -102,14 +131,19 @@ class NeuralNode:
             params.append(np.zeros(b, dtype=np.float32))
         return params
 
-    @staticmethod
-    def _fresh_opt(params) -> dict:
-        return {"m": [np.zeros_like(p) for p in params],
-                "v": [np.zeros_like(p) for p in params], "t": 0}
+    def numpy_params(self) -> list[np.ndarray]:
+        """CPU copies of the current weights."""
+        with self.lock:
+            params = list(self.params)
+        with self.backend.scope():
+            return [np.array(self.backend.to_numpy(p), dtype=np.float32) for p in params]
 
     # ------------------------------------------------------------- inference
-    def predict_proba(self, X: np.ndarray, params: list[np.ndarray] | None = None) -> np.ndarray:
-        return _forward(params if params is not None else self.params, X)
+    def predict_proba(self, X: np.ndarray, params: list | None = None) -> np.ndarray:
+        B = self.backend
+        with B.scope():
+            probs = _forward(B, params if params is not None else self.params, B.asarray(X))
+            return np.asarray(B.to_numpy(probs))
 
     def predict(self, x: np.ndarray, exclude: set[str] | frozenset = frozenset()) -> tuple[str, float]:
         p = self.predict_proba(x[None, :])[0]
@@ -121,11 +155,12 @@ class NeuralNode:
         i = int(p.argmax())
         return self.labels[i], float(p[i])
 
-    def correct(self, X: np.ndarray, labels: list[str],
-                params: list[np.ndarray] | None = None) -> np.ndarray:
+    def correct(self, X: np.ndarray, labels: list[str], params: list | None = None) -> np.ndarray:
         if len(labels) == 0:
             return np.zeros(0, dtype=bool)
-        pred = self.predict_proba(X, params).argmax(axis=1)
+        B = self.backend
+        with B.scope():
+            pred = B.argmax_rows(_forward(B, params if params is not None else self.params, B.asarray(X)))
         return np.array([self.labels[i] == lab for i, lab in zip(pred, labels)], dtype=bool)
 
     def label_indices(self, labels: list[str]) -> np.ndarray:
@@ -133,52 +168,40 @@ class NeuralNode:
         return np.array([index.get(lab, -1) for lab in labels], dtype=np.int64)
 
     # -------------------------------------------------------------- training
-    def _grads(self, params, X, y, w):
-        probs, acts = _forward(params, X, keep=True)
-        n = X.shape[0]
-        wn = w / w.sum()
-        d = probs.copy()
-        d[np.arange(n), y] -= 1.0
-        d *= wn[:, None]
-        grads: list[np.ndarray] = [None] * len(params)  # type: ignore[list-item]
-        n_layers = len(params) // 2
-        for i in reversed(range(n_layers)):
-            grads[2 * i] = acts[i].T @ d + self.arch.weight_decay * params[2 * i]
-            grads[2 * i + 1] = d.sum(axis=0)
-            if i > 0:
-                d = (d @ params[2 * i].T) * (acts[i] > 0)
-        loss = float(-(wn * np.log(probs[np.arange(n), y] + 1e-9)).sum())
-        return grads, loss
-
     def train_copy(self, X: np.ndarray, y: np.ndarray, w: np.ndarray, epochs: int):
-        """Train a copy of the weights; the caller decides whether to commit it."""
-        params = [p.copy() for p in self.params]
-        opt = {"m": [m.copy() for m in self.opt["m"]],
-               "v": [v.copy() for v in self.opt["v"]], "t": self.opt["t"]}
+        """Train a copy of the weights (on the node's device); the caller decides whether
+        to commit it. Inputs are numpy arrays; they are moved to the device once."""
+        B = self.backend
         keep = y >= 0
-        X, y, w = X[keep], y[keep], w[keep].astype(np.float32)
-        if len(y) == 0:
-            return params, opt, None
+        X, y, w = X[keep], y[keep], w[keep]
         rng = np.random.default_rng(int(self.rng.integers(1 << 31)))
-        lr, bs = self.arch.lr, self.arch.batch_size
+        lr, bs, wd = self.arch.lr, self.arch.batch_size, self.arch.weight_decay
         b1, b2, eps = 0.9, 0.999, 1e-8
-        total, batches = 0.0, 0
-        for _ in range(epochs):
-            order = rng.permutation(len(y))
-            for start in range(0, len(y), bs):
-                idx = order[start:start + bs]
-                grads, loss = self._grads(params, X[idx], y[idx], w[idx])
-                opt["t"] += 1
-                t = opt["t"]
-                for k, (p, g) in enumerate(zip(params, grads)):
-                    opt["m"][k] = b1 * opt["m"][k] + (1 - b1) * g
-                    opt["v"][k] = b2 * opt["v"][k] + (1 - b2) * g * g
-                    m_hat = opt["m"][k] / (1 - b1 ** t)
-                    v_hat = opt["v"][k] / (1 - b2 ** t)
-                    p -= (lr * m_hat / (np.sqrt(v_hat) + eps)).astype(np.float32)
-                total += loss
-                batches += 1
-        return params, opt, total / max(batches, 1)
+        with self.lock:
+            src_params, src_opt = list(self.params), self.opt
+        with B.scope():
+            params = [B.copy(p) for p in src_params]
+            opt = {"m": [B.copy(m) for m in src_opt["m"]], "v": [B.copy(v) for v in src_opt["v"]],
+                   "t": src_opt["t"]}
+            if len(y) == 0:
+                return params, opt, None
+            Xd, yd, wd_ = B.asarray(X), B.asarray(y, integer=True), B.asarray(w)
+            total, batches = 0.0, 0
+            for _ in range(epochs):
+                order = B.asarray(rng.permutation(len(y)), integer=True)
+                for start in range(0, len(y), bs):
+                    idx = order[start:start + bs]
+                    grads, loss = _grads(B, params, Xd[idx], yd[idx], wd_[idx], wd)
+                    opt["t"] += 1
+                    t = opt["t"]
+                    c1, c2 = 1 - b1 ** t, 1 - b2 ** t
+                    for k, g in enumerate(grads):
+                        opt["m"][k] = b1 * opt["m"][k] + (1 - b1) * g
+                        opt["v"][k] = b2 * opt["v"][k] + (1 - b2) * g * g
+                        params[k] = params[k] - lr * (opt["m"][k] / c1) / (B.sqrt(opt["v"][k] / c2) + eps)
+                    total = total + loss
+                    batches += 1
+            return params, opt, float(total) / max(batches, 1)
 
     def commit(self, params, opt, loss=None) -> None:
         with self.lock:
@@ -196,11 +219,11 @@ class NeuralNode:
             arch or copy.deepcopy(self.arch), parent_id=self.id,
             generation=self.generation + 1, origin=origin,
             seed=int(self.rng.integers(1 << 31)),
-            params=params if params is not None else [p.copy() for p in self.params])
+            params=params if params is not None else self.numpy_params(), backend=self.backend)
 
     def spawn_expanded(self, new_labels: list[str]) -> "NeuralNode":
         add = [lab for lab in new_labels if lab not in self.labels]
-        params = [p.copy() for p in self.params]
+        params = self.numpy_params()
         W, b = params[-2], params[-1]
         params[-2] = np.concatenate(
             [W, self.rng.normal(0.0, 0.01, (W.shape[0], len(add))).astype(np.float32)], axis=1)
@@ -208,7 +231,7 @@ class NeuralNode:
         return self._child("expand", params=params, labels=self.labels + add)
 
     def spawn_wider(self, factor: float = 1.5, noise: float = 1e-3) -> "NeuralNode":
-        params = [p.copy() for p in self.params]
+        params = self.numpy_params()
         n_hidden = len(params) // 2 - 1
         if n_hidden == 0:
             return self.spawn_fresh((64,))
@@ -232,7 +255,7 @@ class NeuralNode:
     def spawn_deeper(self, noise: float = 1e-3) -> "NeuralNode":
         if len(self.params) // 2 - 1 == 0:
             return self.spawn_fresh((64,))
-        params = [p.copy() for p in self.params]
+        params = self.numpy_params()
         h = params[-2].shape[0]
         eye = np.eye(h, dtype=np.float32)
         if noise:
@@ -250,15 +273,14 @@ class NeuralNode:
     def spawn_fresh(self, hidden: tuple, labels: list[str] | None = None) -> "NeuralNode":
         arch = copy.deepcopy(self.arch)
         arch.hidden = tuple(hidden)
-        node = NeuralNode(self.capability, labels or list(self.labels), self.input_dim, arch,
+        return NeuralNode(self.capability, labels or list(self.labels), self.input_dim, arch,
                           parent_id=self.id, generation=self.generation + 1, origin="fresh",
-                          seed=int(self.rng.integers(1 << 31)))
-        return node
+                          seed=int(self.rng.integers(1 << 31)), backend=self.backend)
 
     # ----------------------------------------------------------- persistence
     @property
     def param_count(self) -> int:
-        return int(sum(p.size for p in self.params))
+        return int(sum(int(np.prod(tuple(p.shape))) for p in self.params))
 
     def meta(self) -> dict:
         return {
@@ -276,18 +298,16 @@ class NeuralNode:
         return Path(directory) / f"{self.id}.npz"
 
     def save(self, directory: Path) -> None:
-        with self.lock:
-            params = list(self.params)
-        np.savez(self.weights_path(directory), *params)
+        np.savez(self.weights_path(directory), *self.numpy_params())
 
     @classmethod
-    def load(cls, meta: dict, directory: Path) -> "NeuralNode":
+    def load(cls, meta: dict, directory: Path, backend: Backend | None = None) -> "NeuralNode":
         with np.load(Path(directory) / f"{meta['id']}.npz") as data:
             params = [data[f"arr_{i}"] for i in range(len(data.files))]
         node = cls(meta["capability"], meta["labels"], meta["input_dim"],
                    Architecture.from_dict(meta["arch"]), node_id=meta["id"],
                    parent_id=meta.get("parent_id"), generation=meta.get("generation", 0),
-                   origin=meta.get("origin", "seed"), params=params)
+                   origin=meta.get("origin", "seed"), params=params, backend=backend)
         for key in ("status", "created_at", "updated_at", "promoted_at", "retired_at",
                     "last_used", "train_steps", "examples_seen"):
             if key in meta:

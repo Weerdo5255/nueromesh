@@ -11,26 +11,40 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from .backend import Backend
 from .bus import Bus
 from .nodes import NeuralNode
 from .store import Store
 
 
 class NodeRegistry:
-    def __init__(self, store: Store, bus: Bus, nodes_dir: Path, audit: Callable[..., None]):
+    def __init__(self, store: Store, bus: Bus, nodes_dir: Path, audit: Callable[..., None],
+                 backend: Backend | None = None):
         self.store = store
         self.bus = bus
         self.dir = Path(nodes_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.audit = audit
+        self.backend = backend
         self.nodes: dict[str, NeuralNode] = {}
         self.lineage: dict[str, dict] = {}
 
-    def load(self) -> None:
+    def load(self, input_dim: int | None = None) -> None:
+        """Load saved nodes onto this registry's device. Nodes built for a different input
+        size (input_dim changed in the directives) cannot be used and are disposed; the
+        architect rebuilds them from the stored experience."""
         for meta in self.store.load_nodes():
             self.lineage[meta["id"]] = meta
-            if meta["status"] != "disposed" and (self.dir / f"{meta['id']}.npz").exists():
-                self.nodes[meta["id"]] = NeuralNode.load(meta, self.dir)
+            if meta["status"] == "disposed" or not (self.dir / f"{meta['id']}.npz").exists():
+                continue
+            stale = input_dim is not None and meta["input_dim"] != input_dim
+            node = NeuralNode.load(meta, self.dir, None if stale else self.backend)
+            if stale:
+                self.nodes[node.id] = node
+                self.dispose(node.id, f"input_dim changed from {node.input_dim} to {input_dim}",
+                             actor="registry")
+                continue
+            self.nodes[node.id] = node
 
     # --------------------------------------------------------------- queries
     def live(self) -> list[NeuralNode]:
