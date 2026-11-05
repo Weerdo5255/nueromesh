@@ -1,0 +1,32 @@
+name = "calculator2"
+version = "2.0.0"
+description = "Arithmetic plus percentages ('15% of 80') and square roots. Replaces calculator v1."
+entrypoint = "tool.py"
+permissions = []
+supersedes = "calculator"      # when this activates, v1 is retired and its routing data is relabelled
+keywords = ["calculate", "compute", "what is", "what's", "plus", "minus", "times", "multiplied",
+            "divided", "+", "*", "/", "=", "work out", "sum of", "percent", "%", "square root", "sqrt"]
+timeout_s = 5
+
+templates = ["what is {a} {op} {b}", "calculate {a} {op} {b}", "{a} {op} {b} = ?", "what's {a} {op} {b}",
+             "what is {p}% of {b}", "{p} percent of {b}", "calculate {p}% of {a}",
+             "square root of {sq}", "what is the square root of {sq}", "sqrt {sq}"]
+
+[fillers]
+a = ["3", "7", "12", "19", "25", "42", "64", "99", "128", "250", "1000"]
+b = ["2", "4", "6", "8", "11", "20", "36", "75", "80", "120"]
+op = ["+", "*", "/", "plus", "minus", "times", "divided by", "multiplied by"]
+p = ["5", "10", "12.5", "15", "20", "25", "50", "75"]
+sq = ["4", "9", "16", "81", "144", "169", "225", "1024"]
+
+[[examples]]
+input = "what is 15% of 80"
+expect = "12"
+
+[[examples]]
+input = "square root of 144"
+expect = "12"
+
+[[examples]]
+input = "what is 12 * 7"
+expect = "84"

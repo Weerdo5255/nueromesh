@@ -1,0 +1,181 @@
+"""Directive loading.
+
+The directives file (directives.toml) is the system's constitution: immutable prime
+directives, measurable goals, and the operating policy every agent must respect.
+"""
+from __future__ import annotations
+
+import copy
+import tomllib
+from dataclasses import MISSING, dataclass, field, fields, is_dataclass
+from pathlib import Path
+from typing import Any
+
+
+def deep_merge(base: dict, override: dict) -> dict:
+    out = copy.deepcopy(base)
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = deep_merge(out[key], value)
+        else:
+            out[key] = copy.deepcopy(value)
+    return out
+
+
+def load_toml(path: Path) -> dict:
+    with open(path, "rb") as fh:
+        return tomllib.load(fh)
+
+
+def build(cls, data: dict | None):
+    """Build a dataclass from a dict, ignoring unknown keys and coercing lists/dicts."""
+    data = data or {}
+    kwargs: dict[str, Any] = {}
+    for f in fields(cls):
+        if f.name not in data:
+            continue
+        value = data[f.name]
+        if f.default is not MISSING:
+            default = f.default
+        elif f.default_factory is not MISSING:  # type: ignore[misc]
+            default = f.default_factory()  # type: ignore[misc]
+        else:
+            default = None
+        if is_dataclass(default) and isinstance(value, dict):
+            value = build(type(default), value)
+        elif isinstance(default, tuple) and isinstance(value, list):
+            value = tuple(value)
+        elif isinstance(default, dict) and isinstance(value, dict):
+            value = {**default, **value}
+        kwargs[f.name] = value
+    return cls(**kwargs)
+
+
+@dataclass(frozen=True)
+class PrimeDirective:
+    id: str
+    text: str
+
+
+@dataclass(frozen=True)
+class Goal:
+    id: str
+    text: str
+    metric: str
+    target: float
+    direction: str = "at_least"  # or "at_most"
+
+    def met(self, value: float | None) -> bool:
+        if value is None:
+            return False
+        return value >= self.target if self.direction == "at_least" else value <= self.target
+
+
+@dataclass
+class OrderPolicy:
+    confidence_threshold: float = 0.75
+    audit_sample_rate: float = 0.1
+    max_concurrent_orders: int = 16
+
+
+@dataclass
+class NodePolicy:
+    max_nodes: int = 40
+    max_candidates_per_capability: int = 2
+    default_hidden: tuple = (64,)
+    default_lr: float = 0.01
+    input_dim: int = 1024
+    min_examples_to_spawn: int = 12
+    serve_min_accuracy: float = 0.8
+    target_accuracy: float = 0.95
+    promotion_margin: float = 0.01
+    promotion_z: float = 1.0
+    min_eval_samples: int = 10
+    min_train_steps_before_eval: int = 3
+    max_candidate_slices: int = 12
+    challenger_cooldown_seconds: float = 30.0
+    retired_grace_seconds: float = 120.0
+    candidate_max_age_seconds: float = 600.0
+    champion_update_tolerance: float = 0.0
+    holdout_percent: int = 20
+
+
+@dataclass
+class BackgroundPolicy:
+    enabled: bool = True
+    max_duty_cycle: float = 0.5
+    tick_seconds: float = 1.0
+    train_epochs_per_slice: int = 8
+    synthesis_cooldown_seconds: float = 20.0
+    synthesis_batch: int = 8
+    min_examples_per_label: int = 8
+    health_check_seconds: float = 300.0
+
+
+@dataclass
+class LLMConfig:
+    provider: str = "anthropic"  # "anthropic" or "openai" (any OpenAI-compatible endpoint)
+    model: str = "claude-haiku-5-5"
+    api_key_env: str = "ANTHROPIC_API_KEY"
+    base_url: str = ""
+    anthropic_version: str = "2023-06-01"
+    timeout_s: float = 30.0
+    max_tokens: int = 400
+    max_calls_per_hour: int = 300
+    max_tokens_per_hour: int = 200_000
+
+
+@dataclass
+class TeacherPolicy:
+    order: tuple = ("human", "llm", "heuristic")
+    weights: dict = field(default_factory=lambda: {
+        "human": 3.0, "tool-manifest": 2.0, "llm": 1.5, "heuristic": 1.0})
+    llm: LLMConfig = field(default_factory=LLMConfig)
+
+
+@dataclass
+class ToolPolicy:
+    plugin_dirs: tuple = ("plugins",)
+    auto_approve_permissions: tuple = ()
+    allowed_permissions: tuple = ("network", "fs_read")
+    quarantine_after_failures: int = 3
+    scan_seconds: float = 2.0
+    self_test_pass_rate: float = 1.0
+    sandbox_cpu_seconds: int = 5
+    sandbox_memory_mb: int = 512
+    default_timeout_s: float = 10.0
+
+
+@dataclass
+class Directives:
+    name: str = "NeuroMesh"
+    mission: str = ""
+    prime: list = field(default_factory=list)
+    goals: list = field(default_factory=list)
+    orders: OrderPolicy = field(default_factory=OrderPolicy)
+    nodes: NodePolicy = field(default_factory=NodePolicy)
+    background: BackgroundPolicy = field(default_factory=BackgroundPolicy)
+    teachers: TeacherPolicy = field(default_factory=TeacherPolicy)
+    tools: ToolPolicy = field(default_factory=ToolPolicy)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Directives":
+        ident = d.get("identity", {})
+        return cls(
+            name=ident.get("name", "NeuroMesh"),
+            mission=ident.get("mission", ""),
+            prime=[PrimeDirective(**p) for p in d.get("prime", [])],
+            goals=[Goal(**g) for g in d.get("goals", [])],
+            orders=build(OrderPolicy, d.get("orders")),
+            nodes=build(NodePolicy, d.get("nodes")),
+            background=build(BackgroundPolicy, d.get("background")),
+            teachers=build(TeacherPolicy, d.get("teachers")),
+            tools=build(ToolPolicy, d.get("tools")),
+        )
+
+    @classmethod
+    def load(cls, path: Path, overrides: dict | None = None) -> "Directives":
+        data = load_toml(path)
+        if overrides:
+            data = deep_merge(data, overrides)
+        return cls.from_dict(data)

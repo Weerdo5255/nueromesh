@@ -1,0 +1,30 @@
+name = "calculator"
+version = "1.0.0"
+description = "Evaluates arithmetic written with numbers and + - * / or words like plus, minus, times, divided by."
+entrypoint = "tool.py"
+permissions = []
+keywords = ["calculate", "compute", "what is", "what's", "plus", "minus", "times", "multiplied",
+            "divided", "+", "*", "/", "=", "work out", "sum of"]
+timeout_s = 5
+
+# Used by the offline teacher to write practice orders for routing.
+templates = ["what is {a} {op} {b}", "calculate {a} {op} {b}", "compute {a} {op} {b} please",
+             "{a} {op} {b} = ?", "can you work out {a} {op} {b}", "what's {a} {op} {b}"]
+
+[fillers]
+a = ["3", "7", "12", "19", "25", "42", "64", "99", "128", "250", "1000", "3.5"]
+b = ["2", "4", "6", "8", "11", "13", "17", "20", "36", "75"]
+op = ["+", "*", "/", "plus", "minus", "times", "divided by", "multiplied by"]
+
+# Self-tests run in the sandbox before the tool is activated.
+[[examples]]
+input = "what is 12 * 7"
+expect = "84"
+
+[[examples]]
+input = "calculate 100 divided by 8"
+expect = "12.5"
+
+[[examples]]
+input = "19 plus 23 minus 2 = ?"
+expect = "40"

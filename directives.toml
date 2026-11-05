@@ -1,0 +1,132 @@
+# NeuroMesh directives - the system's constitution.
+#
+# Prime directives are enforced in code by the Guardian (neuromesh/guardian.py); the text
+# here documents them and is written to the audit log at start-up. Goals are measured
+# continuously and reported on the scorecard. Everything below them is operating policy.
+
+[identity]
+name = "NeuroMesh"
+mission = "Fulfil user orders accurately and honestly, and keep improving in the background within these directives."
+
+# ---------------------------------------------------------------- prime directives
+[[prime]]
+id = "P1-human-authority"
+text = "A human operator can pause, halt or override the system at any time. A halt (command, API call or a state/STOP file) is obeyed immediately and stops all autonomous activity."
+
+[[prime]]
+id = "P2-orders-first"
+text = "User orders take precedence over background self-improvement. Background work only runs while no order is in flight and within its compute duty cycle."
+
+[[prime]]
+id = "P3-approved-tools-only"
+text = "Only active, vetted tools are executed. Tools needing elevated permissions require explicit human approval; forbidden permissions are always refused; a tool whose code changes is re-vetted."
+
+[[prime]]
+id = "P4-budgets"
+text = "Stay within the node budget, the background compute budget and the external-teacher call/token budgets."
+
+[[prime]]
+id = "P5-no-regression"
+text = "Never replace or update a serving node with one that performs worse on held-out data. Superseded nodes are kept for a rollback window before disposal."
+
+[[prime]]
+id = "P6-auditability"
+text = "Record every lifecycle change, tool decision, approval and policy denial in the audit log."
+
+[[prime]]
+id = "P7-honesty"
+text = "Every answer carries its confidence and provenance (which node, teacher or tool produced it). Unfulfilled orders are reported as such, never guessed at silently."
+
+# ------------------------------------------------------------------------- goals
+[[goals]]
+id = "G1-competence"
+text = "Every capability's serving node reaches the target accuracy on held-out data."
+metric = "min_capability_accuracy"
+target = 0.95
+
+[[goals]]
+id = "G2-autonomy"
+text = "Most orders are fulfilled by the system's own nodes rather than by external teachers."
+metric = "node_coverage"
+target = 0.8
+
+[[goals]]
+id = "G3-tool-fluency"
+text = "Every approved tool is self-tested, integrated and routable."
+metric = "tool_integration"
+target = 1.0
+
+[[goals]]
+id = "G4-economy"
+text = "Keep the network lean: superseded and failed nodes are disposed."
+metric = "live_nodes"
+target = 20
+direction = "at_most"
+
+# ------------------------------------------------------------------------ policy
+[orders]
+confidence_threshold = 0.75     # below this a node defers to a teacher
+audit_sample_rate = 0.1         # fraction of node answers spot-checked by a teacher
+max_concurrent_orders = 16
+
+[nodes]
+max_nodes = 40
+max_candidates_per_capability = 2
+default_hidden = [64]
+default_lr = 0.01
+input_dim = 1024
+min_examples_to_spawn = 12      # experience needed before a capability gets its first node
+serve_min_accuracy = 0.8        # held-out accuracy a champion needs before it may answer orders
+target_accuracy = 0.95          # below this the architect breeds challengers
+promotion_margin = 0.01         # a challenger must beat the champion by this much ...
+promotion_z = 1.5               # ... and by this paired-test z-score (wins vs losses)
+min_eval_samples = 20           # held-out examples needed before a champion can be challenged
+min_train_steps_before_eval = 3
+max_candidate_slices = 12       # training slices a challenger gets before it must win or go
+challenger_cooldown_seconds = 30
+retired_grace_seconds = 120     # rollback window before a superseded node is disposed
+candidate_max_age_seconds = 600
+champion_update_tolerance = 0.0
+holdout_percent = 20
+
+[background]
+enabled = true
+max_duty_cycle = 0.5            # share of wall time background work may use
+tick_seconds = 1.0
+train_epochs_per_slice = 8
+synthesis_cooldown_seconds = 20
+synthesis_batch = 8
+min_examples_per_label = 8
+health_check_seconds = 300
+
+[teachers]
+order = ["human", "llm", "heuristic"]   # who is asked first when a node is unsure
+
+[teachers.weights]                      # how much each source's examples count in training
+human = 3.0
+tool-manifest = 2.0
+llm = 1.5
+heuristic = 1.0
+
+[teachers.llm]
+provider = "anthropic"                  # "anthropic", or "openai" for any OpenAI-compatible server
+model = "claude-haiku-5-5"
+api_key_env = "ANTHROPIC_API_KEY"       # teacher is disabled when this variable is unset
+base_url = ""                           # e.g. "http://localhost:11434" for Ollama with provider="openai"
+anthropic_version = "2023-06-01"
+timeout_s = 30
+max_tokens = 400
+max_calls_per_hour = 300
+max_tokens_per_hour = 200000
+
+[tools]
+plugin_dirs = ["plugins"]
+auto_approve_permissions = []           # tools whose permissions all appear here skip human approval
+                                        # (empty: only tools that need no permissions are auto-approved)
+allowed_permissions = ["network", "fs_read"]   # anything else (fs_write, subprocess, ...) is always refused
+quarantine_after_failures = 3
+scan_seconds = 2
+self_test_pass_rate = 1.0
+sandbox_cpu_seconds = 5
+sandbox_memory_mb = 512
+default_timeout_s = 10

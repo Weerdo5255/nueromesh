@@ -1,0 +1,24 @@
+name = "word_stats"
+version = "1.0.0"
+description = "Counts words, characters and sentences in a piece of text (after a colon or in double quotes)."
+entrypoint = "tool.py"
+permissions = []
+keywords = ["count", "words", "word count", "characters", "how many words", "text stats", "letters", "sentences"]
+timeout_s = 5
+
+templates = ["count the words in: {sentence}", "how many words are in \"{sentence}\"", "word count: {sentence}",
+             "how many characters does this have: {sentence}", "give me text stats for: {sentence}"]
+
+[fillers]
+sentence = ["The quick brown fox jumps over the lazy dog.", "Meeting moved to Thursday at noon.",
+            "Please send the quarterly report before Friday.", "Rain is expected later this evening.",
+            "The train leaves platform four at seven.", "Bring two copies of the signed contract.",
+            "Our office is closed on public holidays.", "She planted tomatoes and basil in spring."]
+
+[[examples]]
+input = "count the words in: the quick brown fox"
+expect = "4 words"
+
+[[examples]]
+input = "how many words are in \"one two three\""
+expect = "3 words"

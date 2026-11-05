@@ -1,0 +1,29 @@
+name = "unit_convert"
+version = "1.0.0"
+description = "Converts quantities between units of length, mass, volume and temperature (e.g. km to miles)."
+entrypoint = "tool.py"
+permissions = []
+keywords = ["convert", "conversion", "miles", "mile", "km", "kilometers", "feet", "meters", "kg", "pounds",
+            "lbs", "celsius", "fahrenheit", "liters", "gallons", "ounces", "grams"]
+timeout_s = 5
+
+templates = ["convert {n} {pair}", "{n} {pair} please", "what is {n} {pair}", "please convert {n} {pair}",
+             "can you convert {n} {pair}"]
+
+[fillers]
+n = ["1", "2.5", "5", "10", "12", "26.2", "40", "100", "180"]
+pair = ["km to miles", "miles to km", "kg to pounds", "pounds to kg", "celsius to fahrenheit",
+        "fahrenheit to celsius", "meters to feet", "feet to meters", "liters to gallons",
+        "grams to ounces", "km in miles", "kg in pounds"]
+
+[[examples]]
+input = "convert 10 km to miles"
+expect = "6.2137"
+
+[[examples]]
+input = "100 celsius to fahrenheit please"
+expect = "212"
+
+[[examples]]
+input = "what is 2 kg in pounds"
+expect = "4.409"

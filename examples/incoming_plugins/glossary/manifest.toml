@@ -1,0 +1,21 @@
+name = "glossary"
+version = "1.0.0"
+description = "Looks up the definition of a word in a local glossary file."
+entrypoint = "tool.py"
+permissions = ["fs_read"]      # reads glossary.json -> needs a human's approval under the default directives
+keywords = ["define", "definition", "meaning", "mean", "what does"]
+timeout_s = 5
+
+templates = ["define {word}", "what does {word} mean", "meaning of {word}", "give me the definition of {word}",
+             "what does the word {word} mean"]
+
+[fillers]
+word = ["serendipity", "ephemeral", "ubiquitous", "pragmatic", "resilient", "candid", "meticulous", "lucid"]
+
+[[examples]]
+input = "define ephemeral"
+expect = "short"
+
+[[examples]]
+input = "what does candid mean"
+expect = "honest"

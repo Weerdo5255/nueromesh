@@ -1,0 +1,86 @@
+# Seed skills. Each becomes a capability that neural nodes are grown for.
+# More can be added at runtime with /define (console) or POST /define (API).
+#
+# lexicon / negation / templates / fillers only feed the offline heuristic teacher.
+# With an LLM teacher configured, description + labels are all a capability needs.
+
+[sentiment]
+description = "Overall sentiment of a short text such as a review, comment or message."
+labels = ["positive", "negative", "neutral"]
+default_label = "neutral"
+open_labels = false
+triggers = ["sentiment", "review", "tone", "how does this sound", "feel about", "mood"]
+negation = { positive = "negative", negative = "positive" }
+templates = [
+  "The {noun} was {word}.",
+  "Honestly, the {noun} felt {word}.",
+  "I thought the {noun} was {word}.",
+  "Overall the {noun} is {word}.",
+  "Our {noun} turned out {word}.",
+  "Everyone agreed the {noun} was {word}.",
+  "The {noun} was {word} from start to finish.",
+]
+
+[sentiment.lexicon]
+positive = ["great", "excellent", "amazing", "wonderful", "fantastic", "delightful", "brilliant",
+            "superb", "perfect", "beautiful", "awesome", "pleasant", "impressive", "charming",
+            "lovely", "outstanding", "love", "loved", "enjoyed", "recommend"]
+negative = ["terrible", "awful", "horrible", "boring", "disappointing", "poor", "bad", "annoying",
+            "broken", "mediocre", "dull", "ugly", "rude", "painful", "dreadful", "useless",
+            "hate", "hated", "waste", "refund"]
+
+[sentiment.label_templates]
+neutral = [
+  "The {noun} arrived on {day}.",
+  "I picked up the {noun} on {day}.",
+  "The {noun} is {color}.",
+  "We discussed the {noun} at the meeting.",
+  "The {noun} comes in a {color} box.",
+  "My {noun} was delivered on {day}.",
+  "There is a {noun} on the table.",
+]
+
+[sentiment.fillers]
+noun = ["movie", "hotel", "pizza", "concert", "laptop", "service", "book", "flight", "game",
+        "coffee", "app", "meal", "show", "class", "phone", "museum", "podcast", "sofa"]
+day = ["Monday", "Tuesday", "Friday", "the weekend", "Sunday morning"]
+color = ["blue", "black", "grey", "white", "green"]
+# adjectives that read naturally in the templates above
+"word.positive" = ["great", "excellent", "amazing", "wonderful", "fantastic", "delightful", "brilliant",
+                   "superb", "perfect", "beautiful", "pleasant", "impressive", "charming", "lovely", "outstanding"]
+"word.negative" = ["terrible", "awful", "horrible", "boring", "disappointing", "poor", "bad", "annoying",
+                   "broken", "mediocre", "dull", "ugly", "rude", "painful", "dreadful", "useless"]
+
+
+[urgency]
+description = "Whether a work message needs immediate attention (urgent) or can wait (routine)."
+labels = ["urgent", "routine"]
+open_labels = false
+triggers = ["urgency", "how urgent", "triage", "priority"]
+
+[urgency.lexicon]
+urgent = ["asap", "immediately", "urgently", "urgent", "emergency", "outage", "down", "critical",
+          "right now", "deadline", "fix it now"]
+routine = ["no rush", "fyi", "reminder", "whenever", "next week", "sometime", "eventually",
+           "later", "when you get a chance"]
+
+[urgency.label_templates]
+urgent = [
+  "The {system} is down, we need help {asap}.",
+  "Critical: {system} outage affecting customers.",
+  "Please fix the {system} {asap}, the deadline is today.",
+  "Emergency with the {system}, call me {asap}.",
+  "Customers can't log in, the {system} is down.",
+]
+routine = [
+  "No rush, but can you look at the {system} {later}?",
+  "FYI the {system} report is ready.",
+  "Reminder: {system} review {later}.",
+  "Whenever you get a chance, update the {system} docs.",
+  "Let's plan the {system} upgrade {later}, no rush.",
+]
+
+[urgency.fillers]
+system = ["database", "website", "payment system", "VPN", "build server", "email server", "checkout page"]
+asap = ["asap", "immediately", "right now", "urgently"]
+later = ["next week", "sometime", "later this month", "eventually"]

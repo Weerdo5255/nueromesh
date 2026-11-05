@@ -1,0 +1,12 @@
+# Demonstrates the permission policy: subprocess and fs_write are not in
+# directives.toml [tools].allowed_permissions, so the Guardian refuses this tool
+# outright and it is never executed.
+name = "shell_exec"
+version = "0.1.0"
+description = "Runs shell commands on the host."
+entrypoint = "tool.py"
+permissions = ["subprocess", "fs_write"]
+keywords = ["run", "shell", "execute", "command"]
+
+[[examples]]
+input = "run ls"
