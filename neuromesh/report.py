@@ -41,6 +41,9 @@ def describe_event(ev: Event) -> str | None:
         return f"[skill]    new capability '{d['capability']}' labels={d['labels']}"
     if t == "teacher.lesson":
         return f"[lesson]   {d['source']} taught {d['examples']} x {d['capability']}={d['label']} ({d['reason']})"
+    if t == "teacher.status":
+        verb = "ready" if d["state"] == "ready" else f"unavailable ({d['state']})"
+        return f"[teacher]  {d['teacher']} {verb}: {d['detail']}"
     if t == "system.halt":
         return f"[HALT]     {d['reason']} (by {d['by']})"
     if t == "system.resume":
@@ -75,8 +78,13 @@ def render_status(st: dict) -> str:
                                                        for a in st["approvals"]))
     if st["questions"]:
         lines.append(f"questions for a human teacher: {len(st['questions'])}  (/questions)")
-    teachers = ", ".join(f"{k}{'' if v['available'] else '(off)'}:{v['lessons']}" for k, v in st["teachers"].items())
-    lines.append(f"teachers (lessons given): {teachers}   llm usage: {st['llm_usage']}")
+    lines.append("teachers (in order asked):")
+    for name, v in st["teachers"].items():
+        model = f" {v['provider']}:{v['model']}" if v.get("provider") else ""
+        usage = st["llm_usage"].get(name)
+        used = f", {usage['calls_last_hour']} calls/{usage['tokens_last_hour']} tokens this hour" if usage else ""
+        state = "ready" if v["available"] else f"off ({v.get('detail') or 'unavailable'})"
+        lines.append(f"  {name:<10}{model:<32} {state}; {v['lessons']} lessons{used}")
     lines.append("")
     lines.append("directive scorecard:")
     for g in st["scorecard"]:

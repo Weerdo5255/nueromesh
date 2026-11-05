@@ -37,11 +37,14 @@ class GuardianTests(unittest.TestCase):
         self.assertEqual(self.g.authorize_tool(manifest(["fs_read"])).verdict, Verdict.NEEDS_APPROVAL)
         self.assertEqual(self.g.authorize_tool(manifest(["subprocess"])).verdict, Verdict.DENY)
 
-    def test_llm_budget(self):
-        self.assertTrue(self.g.authorize_llm_call(100).allowed)
-        self.g.record_llm_usage(100)
-        self.g.record_llm_usage(100)
-        self.assertFalse(self.g.authorize_llm_call(100).allowed)  # call budget of 2 used up
+    def test_llm_budget_is_per_teacher(self):
+        cfg = self.d.teachers.llm
+        self.assertTrue(self.g.authorize_llm_call("llm", cfg, 100).allowed)
+        self.g.record_llm_usage("llm", 100)
+        self.g.record_llm_usage("llm", 100)
+        self.assertFalse(self.g.authorize_llm_call("llm", cfg, 100).allowed)  # call budget of 2 used up
+        self.assertTrue(self.g.authorize_llm_call("ollama", self.d.teachers.models["ollama"], 100).allowed)
+        self.assertEqual(self.g.llm_usage()["llm"], {"calls_last_hour": 2, "tokens_last_hour": 200})
 
     def test_no_regression(self):
         self.assertFalse(self.g.authorize_promotion("x", 0.9, 0.85).allowed)

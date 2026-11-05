@@ -34,9 +34,12 @@ class Example:
 
 
 class Store:
-    def __init__(self, path: Path, holdout_percent: int = 20):
+    def __init__(self, path: Path, holdout_percent: int = 20, priorities: dict | None = None):
+        """priorities: how much each source is trusted when two sources label the same text
+        (the teacher weights from the directives); unknown sources rank lowest."""
         self.path = Path(path)
         self.holdout_percent = holdout_percent
+        self.priorities = dict(priorities) if priorities else dict(SOURCE_PRIORITY)
         self.db = sqlite3.connect(self.path, isolation_level=None)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
@@ -63,9 +66,10 @@ class Store:
             "SELECT text, label, weight, source FROM examples WHERE capability=? ORDER BY id",
             (capability,)).fetchall()
         best: dict[str, Example] = {}
+        rank = self.priorities
         for text, label, weight, source in rows:
             cur = best.get(text)
-            if cur is None or SOURCE_PRIORITY.get(source, 2) >= SOURCE_PRIORITY.get(cur.source, 2):
+            if cur is None or rank.get(source, 0.5) >= rank.get(cur.source, 0.5):
                 best[text] = Example(text, label, weight, source)
         out = list(best.values())
         if split:

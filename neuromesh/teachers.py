@@ -1,9 +1,10 @@
 """External teachers. Nodes never learn from themselves; they learn from:
 
 * HumanTeacher     - corrections and examples from people (highest trust)
-* LLMTeacher       - an external LLM (Anthropic Messages API or any OpenAI-compatible
-                     endpoint such as Ollama or vLLM) that labels data, writes synthetic
-                     training examples, and answers orders no node can handle yet
+* LLMTeacher       - an external LLM that labels data, writes synthetic training examples
+                     and answers orders no node can handle yet: Claude via the Anthropic API,
+                     a local model on an Ollama server, or any OpenAI-compatible endpoint.
+                     Several can be configured; each is its own named teacher with a budget
 * HeuristicTeacher - an offline rule-based stand-in so the system runs with no API key
 
 The TeacherPool asks them in the order set by the directives.
@@ -17,6 +18,8 @@ import os
 import random
 import re
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -84,6 +87,11 @@ class HumanTeacher(Teacher):
 
 
 # ----------------------------------------------------------------------- llm
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_THINK_RE = re.compile(r"<think>.*?</think>", re.S | re.I)
+DEFAULT_ENDPOINTS = {"anthropic": "https://api.anthropic.com", "openai": "https://api.openai.com"}
+
+
 def _extract_json(text: str) -> dict | None:
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end <= start:
@@ -98,65 +106,218 @@ def _clean_label(label: str) -> str:
     return re.sub(r"[^a-z0-9_:\-]+", "_", label.strip().lower()).strip("_")
 
 
-class LLMTeacher(Teacher):
-    name = "llm"
+def ollama_base_url(configured: str = "") -> str:
+    """Resolve the Ollama endpoint: the configured base_url, else $OLLAMA_HOST (same rules
+    as the ollama CLI: bare host -> port 11434), else http://localhost:11434."""
+    raw = (configured or os.environ.get("OLLAMA_HOST", "") or "http://localhost:11434").strip()
+    default_port = 11434
+    if "://" not in raw:
+        raw = "http://" + raw
+    elif raw.startswith("http://"):
+        default_port = 80 if not configured and os.environ.get("OLLAMA_HOST") else 11434
+    elif raw.startswith("https://"):
+        default_port = 443
+    parts = urllib.parse.urlsplit(raw)
+    host = parts.hostname or "localhost"
+    if host in ("0.0.0.0", "::"):  # a server bind address; connect locally
+        host = "127.0.0.1"
+    if ":" in host:
+        host = f"[{host}]"
+    return f"{parts.scheme}://{host}:{parts.port or default_port}{parts.path.rstrip('/')}"
 
-    def __init__(self, cfg: LLMConfig, guardian):
+
+def _is_chat_model(entry: dict) -> bool:
+    name = str(entry.get("name") or entry.get("model") or "").lower()
+    details = entry.get("details") or {}
+    families = [details.get("family") or ""] + list(details.get("families") or [])
+    return "embed" not in name and not any("bert" in str(f).lower() for f in families)
+
+
+def _http_error_detail(exc: urllib.error.HTTPError) -> str:
+    try:
+        body = json.loads(exc.read().decode("utf-8", errors="replace"))
+        return str(body.get("error") or body)
+    except Exception:
+        return f"HTTP {exc.code}"
+
+
+class LLMTeacher(Teacher):
+    """An external LLM as a teacher. Providers:
+
+    anthropic - Anthropic Messages API (needs an API key)
+    ollama    - a local Ollama server via its native /api/chat. Replies are constrained by a
+                JSON schema (labels become an enum), which keeps small local models on-label.
+                The server and model are probed periodically; while either is missing the
+                teacher is skipped and the next one in the order is asked.
+    openai    - any OpenAI-compatible /v1/chat/completions endpoint (vLLM, LM Studio, ...)
+
+    Every call is authorised against this teacher's own hourly budget by the Guardian.
+    """
+
+    def __init__(self, name: str, cfg: LLMConfig, guardian, bus=None):
+        self.name = name
         self.cfg = cfg
         self.guardian = guardian
+        self.bus = bus
+        self.provider = cfg.provider
+        self.model = cfg.model
         self.calls = 0
         self.errors = 0
+        self.installed: list[str] = []
+        self._probed_at = 0.0
+        if self.provider == "ollama":
+            self.base_url = ollama_base_url(cfg.base_url)
+            self.state, self.detail = "unknown", "not checked yet"
+        else:
+            self.base_url = (cfg.base_url or DEFAULT_ENDPOINTS.get(self.provider, "")).rstrip("/")
+            self.state, self.detail = "ready", ""
+        local = urllib.parse.urlsplit(self.base_url).hostname in LOCAL_HOSTS
+        # a local server must never be reached through an HTTP(S)_PROXY from the environment
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}) if local
+                                                   else urllib.request.ProxyHandler())
 
+    # ------------------------------------------------------------ availability
     def _key(self) -> str:
         return os.environ.get(self.cfg.api_key_env, "") if self.cfg.api_key_env else ""
 
     def available(self) -> bool:
-        if self.cfg.provider == "anthropic":
+        if not self.cfg.enabled:
+            return False
+        if self.provider == "anthropic":
             return bool(self._key())
-        if self.cfg.provider == "openai":
+        if self.provider == "openai":
             return bool(self.cfg.base_url or self._key())
+        if self.provider == "ollama":
+            return self.state == "ready"
         return False
 
-    def _post(self, system: str, user: str) -> tuple[str, int]:
-        cfg = self.cfg
-        if cfg.provider == "anthropic":
-            url = (cfg.base_url or "https://api.anthropic.com").rstrip("/") + "/v1/messages"
-            headers = {"x-api-key": self._key(), "anthropic-version": cfg.anthropic_version,
-                       "content-type": "application/json"}
-            body = {"model": cfg.model, "max_tokens": cfg.max_tokens, "system": system,
-                    "messages": [{"role": "user", "content": user}]}
+    def status(self) -> dict:
+        if not self.cfg.enabled:
+            state, detail = "off", "disabled in directives"
+        elif self.provider == "ollama":
+            state, detail = self.state, self.detail
+        elif self.available():
+            state, detail = "ready", ""
         else:
-            url = (cfg.base_url or "https://api.openai.com").rstrip("/") + "/v1/chat/completions"
-            headers = {"content-type": "application/json"}
-            if self._key():
-                headers["authorization"] = f"Bearer {self._key()}"
-            body = {"model": cfg.model, "max_tokens": cfg.max_tokens,
-                    "messages": [{"role": "system", "content": system},
-                                 {"role": "user", "content": user}]}
-        req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=cfg.timeout_s) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        if cfg.provider == "anthropic":
+            state, detail = "off", f"set {self.cfg.api_key_env}" if self.cfg.api_key_env else "no endpoint configured"
+        return {"provider": self.provider, "model": self.model, "endpoint": self.base_url,
+                "state": state, "detail": detail, "calls": self.calls, "errors": self.errors}
+
+    def _set_state(self, state: str, detail: str) -> None:
+        changed = (state, detail) != (self.state, self.detail)
+        self.state, self.detail = state, detail
+        if changed:
+            log.info("teacher %s: %s %s", self.name, state, detail)
+            if self.bus is not None:
+                self.bus.publish("teacher.status", teacher=self.name, state=state, detail=detail,
+                                 model=self.model, provider=self.provider)
+
+    def _probe_sync(self) -> tuple[str, str, list[str], str | None]:
+        try:
+            data = self._http("GET", "/api/tags", None, timeout=min(5.0, self.cfg.timeout_s))
+        except Exception as exc:
+            reason = getattr(exc, "reason", exc)
+            return "unreachable", f"no Ollama server at {self.base_url} ({reason}); start it with: ollama serve", [], None
+        models = data.get("models") or []
+        names = [str(m.get("name") or m.get("model")) for m in models]
+        if self.cfg.model in ("", "auto"):
+            chat = [m for m in models if _is_chat_model(m)]
+            if not chat:
+                return "no_model", "Ollama is running but has no chat model; run: ollama pull llama3.1", names, None
+            picked = str(chat[0].get("name") or chat[0].get("model"))
+            return "ready", f"auto-selected {picked} at {self.base_url}", names, picked
+        wanted = self.cfg.model if ":" in self.cfg.model else f"{self.cfg.model}:latest"
+        if wanted in names or self.cfg.model in names:
+            return "ready", f"{self.cfg.model} at {self.base_url}", names, self.cfg.model
+        installed = f" (installed: {', '.join(names[:6])})" if names else ""
+        return "no_model", f"model {self.cfg.model} is not pulled; run: ollama pull {self.cfg.model}{installed}", names, None
+
+    async def refresh(self, force: bool = False) -> None:
+        """Re-check the Ollama server and model (no-op for hosted providers)."""
+        if self.provider != "ollama" or not self.cfg.enabled:
+            return
+        if not force and time.time() - self._probed_at < self.cfg.probe_seconds:
+            return
+        self._probed_at = time.time()
+        state, detail, names, model = await asyncio.to_thread(self._probe_sync)
+        self.installed = names
+        if model:
+            self.model = model
+        self._set_state(state, detail)
+
+    # ------------------------------------------------------------------- calls
+    def _http(self, method: str, path: str, body: dict | None, timeout: float, headers: dict | None = None) -> dict:
+        req = urllib.request.Request(self.base_url + path, method=method,
+                                     data=json.dumps(body).encode() if body is not None else None,
+                                     headers={"content-type": "application/json", **(headers or {})})
+        with self._opener.open(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    def _post(self, system: str, user: str, schema: dict | None = None) -> tuple[str, int]:
+        cfg = self.cfg
+        if self.provider == "anthropic":
+            data = self._http("POST", "/v1/messages", {
+                "model": self.model, "max_tokens": cfg.max_tokens, "temperature": cfg.temperature,
+                "system": system, "messages": [{"role": "user", "content": user}]},
+                cfg.timeout_s, {"x-api-key": self._key(), "anthropic-version": cfg.anthropic_version})
             text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
             usage = data.get("usage", {})
             tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+        elif self.provider == "ollama":
+            body = {"model": self.model, "stream": False, "keep_alive": cfg.keep_alive,
+                    "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                    "options": {"temperature": cfg.temperature, "num_predict": cfg.max_tokens}}
+            if schema is not None:
+                body["format"] = schema
+            if cfg.think != "":
+                body["think"] = cfg.think
+            data = self._http("POST", "/api/chat", body, cfg.timeout_s)
+            if data.get("error"):
+                raise RuntimeError(data["error"])
+            text = (data.get("message") or {}).get("content") or ""
+            tokens = int(data.get("prompt_eval_count") or 0) + int(data.get("eval_count") or 0)
         else:
+            headers = {"authorization": f"Bearer {self._key()}"} if self._key() else {}
+            data = self._http("POST", "/v1/chat/completions", {
+                "model": self.model, "max_tokens": cfg.max_tokens, "temperature": cfg.temperature,
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]},
+                cfg.timeout_s, headers)
             text = data["choices"][0]["message"]["content"] or ""
             tokens = data.get("usage", {}).get("total_tokens", 0)
-        return text, tokens
+        return _THINK_RE.sub("", text).strip(), tokens
 
-    async def _ask(self, system: str, user: str) -> str | None:
-        decision = self.guardian.authorize_llm_call(len(system + user) // 4 + self.cfg.max_tokens)
+    async def _ask(self, system: str, user: str, schema: dict | None = None) -> str | None:
+        if not self.available():
+            return None
+        decision = self.guardian.authorize_llm_call(self.name, self.cfg, len(system + user) // 4 + self.cfg.max_tokens)
         if not decision.allowed:
             return None
         try:
-            text, tokens = await asyncio.to_thread(self._post, system, user)
-        except Exception as exc:  # network errors, HTTP errors, malformed payloads
+            text, tokens = await asyncio.to_thread(self._post, system, user, schema)
+        except urllib.error.HTTPError as exc:
             self.errors += 1
-            log.warning("LLM teacher call failed: %s", exc)
+            detail = _http_error_detail(exc)
+            if self.provider == "ollama" and exc.code == 404:
+                self._set_state("no_model", f"{detail}; run: ollama pull {self.model}")
+            log.warning("teacher %s: HTTP %s %s", self.name, exc.code, detail)
+            return None
+        except (TimeoutError, urllib.error.URLError, ConnectionError, OSError) as exc:
+            self.errors += 1
+            reason = getattr(exc, "reason", exc)
+            if isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError):
+                log.warning("teacher %s: no reply within %ss (raise timeout_s for slow models)",
+                            self.name, self.cfg.timeout_s)
+            elif self.provider == "ollama":
+                self._set_state("unreachable", f"lost contact with {self.base_url} ({reason})")
+            else:
+                log.warning("teacher %s: call failed: %s", self.name, reason)
+            return None
+        except Exception as exc:  # malformed payloads and the like
+            self.errors += 1
+            log.warning("teacher %s: call failed: %s", self.name, exc)
             return None
         self.calls += 1
-        self.guardian.record_llm_usage(tokens)
+        self.guardian.record_llm_usage(self.name, tokens)
         return text
 
     @staticmethod
@@ -169,6 +330,11 @@ class LLMTeacher(Teacher):
 
     async def label(self, spec, text):
         allow_new = spec.open_labels and spec.name != DISPATCH
+        active = spec.active_labels()
+        label_schema = {"type": "string"} if allow_new or not active else {"type": "string", "enum": active}
+        schema = {"type": "object", "required": ["label", "confidence"],
+                  "properties": {"label": label_schema, "confidence": {"type": "number"},
+                                 "why": {"type": "string"}}}
         system = ("You are a teacher producing training labels for a small specialist neural "
                   "network. Reply with a single JSON object and nothing else.")
         user = (f"Capability: {spec.name}\nDescription: {spec.description}\n"
@@ -177,20 +343,21 @@ class LLMTeacher(Teacher):
                    "You must choose one of the labels above.\n")
                 + f"\nInput:\n<<<\n{text}\n>>>\n\n"
                 'Return {"label": "<label>", "confidence": <0..1>, "why": "<short reason>"}')
-        reply = await self._ask(system, user)
-        data = _extract_json(reply or "")
+        data = _extract_json(await self._ask(system, user, schema) or "")
         if not data or not data.get("label"):
             return None
         lab = str(data["label"]).strip() if spec.name == DISPATCH else _clean_label(str(data["label"]))
-        if lab not in spec.active_labels() and not allow_new:
+        if lab not in active and not allow_new:
             return None
         try:
             conf = float(data.get("confidence", 0.8))
         except (TypeError, ValueError):
             conf = 0.8
-        return Lesson(lab, max(0.0, min(conf, 1.0)), "llm", str(data.get("why", ""))[:200])
+        return Lesson(lab, max(0.0, min(conf, 1.0)), self.name, str(data.get("why", ""))[:200])
 
     async def generate(self, spec, label, n):
+        schema = {"type": "object", "required": ["examples"],
+                  "properties": {"examples": {"type": "array", "items": {"type": "string"}}}}
         system = "You write realistic, varied training data. Reply with a single JSON object only."
         desc = spec.label_descriptions.get(label, "")
         user = (f"Capability: {spec.name} - {spec.description}\nAll labels:\n{self._catalog(spec)}\n\n"
@@ -198,7 +365,7 @@ class LLMTeacher(Teacher):
                 + (f" ({desc})" if desc else "") + ". Vary length, wording and style; include "
                 "a few hard cases near the boundary with other labels.\n"
                 'Return {"examples": ["...", "..."]}')
-        data = _extract_json(await self._ask(system, user) or "")
+        data = _extract_json(await self._ask(system, user, schema) or "")
         if not data:
             return []
         return [str(x)[:400] for x in data.get("examples", []) if str(x).strip()][:n]
@@ -333,6 +500,21 @@ class TeacherPool:
                 return reply, teacher.name
         return None
 
+    async def refresh(self, force: bool = False) -> None:
+        """Re-probe teachers that depend on a local server (Ollama)."""
+        await asyncio.gather(*(t.refresh(force) for name, t in self.teachers.items()
+                               if hasattr(t, "refresh") and name in self.order))
+
     def describe(self) -> dict:
-        return {name: {"available": t.available(), "lessons": self.lessons.get(name, 0)}
-                for name, t in self.teachers.items()}
+        out = {}
+        names = [n for n in self.order if n in self.teachers] + [n for n in self.teachers if n not in self.order]
+        for name in names:
+            t = self.teachers[name]
+            listed = name in self.order
+            info = {"available": listed and t.available(), "in_order": listed, "lessons": self.lessons.get(name, 0)}
+            if hasattr(t, "status"):
+                info.update(t.status())
+            if not listed:
+                info["detail"] = "not listed in teachers.order"
+            out[name] = info
+        return out

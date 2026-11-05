@@ -73,7 +73,7 @@ class LLMTeacherTests(unittest.TestCase):
             "provider": provider, "base_url": self.url, "api_key_env": "TEST_LLM_KEY", **llm}}})
         self.store = Store(Path(self.tmp.name) / "db.sqlite")
         self.guardian = Guardian(d, self.store, Bus(), Path(self.tmp.name))
-        return LLMTeacher(d.teachers.llm, self.guardian)
+        return LLMTeacher("llm", d.teachers.models["llm"], self.guardian)
 
     def test_anthropic_messages_format(self):
         t = self.teacher("anthropic")
@@ -87,7 +87,7 @@ class LLMTeacherTests(unittest.TestCase):
         self.assertEqual(req["body"]["model"], "claude-haiku-5-5")
         self.assertEqual(req["body"]["messages"][0]["role"], "user")
         self.assertIn("what a lovely day", req["body"]["messages"][0]["content"])
-        self.assertEqual(self.guardian.llm_usage()["tokens_last_hour"], 50)
+        self.assertEqual(self.guardian.llm_usage()["llm"]["tokens_last_hour"], 50)
 
     def test_openai_compatible_format(self):
         t = self.teacher("openai", model="llama3")

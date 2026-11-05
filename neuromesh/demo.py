@@ -150,13 +150,19 @@ NEW_MIX = {"tool:calculator2": 0.2, "tool:unit_convert": 0.15, "tool:glossary": 
 
 
 async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7,
-                   device: str | None = None, library: str | None = None) -> None:
+                   device: str | None = None, library: str | None = None,
+                   ollama: str | None = None, ollama_url: str | None = None) -> None:
     work = Path(tempfile.mkdtemp(prefix="neuromesh-demo-"))
     for name in ("directives.toml", "capabilities.toml"):
         shutil.copy(PROJECT / name, work / name)
     shutil.copytree(PROJECT / "plugins", work / "plugins")
     overrides = dict(DEMO_OVERRIDES)
-    if not use_llm:
+    if ollama or ollama_url:  # a local model teaches; the heuristic teacher covers any gaps
+        local = {"provider": "ollama", "enabled": True, "model": ollama or "auto"}
+        if ollama_url:
+            local["base_url"] = ollama_url
+        overrides["teachers"] = {"order": ["human", "ollama", "heuristic"], "ollama": local}
+    elif not use_llm:
         overrides["teachers"] = {"order": ["human", "heuristic"]}
     try:
         system = System(work, overrides=overrides, seed=seed, device=device, library=library)
@@ -165,11 +171,15 @@ async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7,
         raise
     demo = Demo(system, OrderFactory(seed))
     system.bus.listen(demo.on_event)
-    teachers = [t.name for t in system.teachers.ranked()]
-    print(f"NeuroMesh demo - working folder {work}\ncompute: {system.backend.describe()}\n"
-          f"teachers in use: {teachers}" + ("" if use_llm else " (offline; pass --llm to add the LLM teacher)"))
+    print(f"NeuroMesh demo - working folder {work}\ncompute: {system.backend.describe()}")
 
     async with system:
+        teachers = [t.name for t in system.teachers.ranked()]
+        hint = "" if (use_llm or ollama or ollama_url) else " (offline; --ollama MODEL or --llm to add an LLM teacher)"
+        print(f"teachers in use: {teachers}{hint}")
+        for name, info in system.teachers.describe().items():
+            if info.get("provider") and info.get("in_order") and not info["available"]:
+                print(f"  note: {name} is unavailable - {info.get('detail')}; the demo continues without it")
         demo.t0 = time.time()
         demo.say("Phase 1 - cold start: no nodes exist; teachers answer and their answers become training data")
         await demo.run_orders("1 cold start", demo.f.batch(70, BASE_MIX))

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import itertools
 import time
-from collections import Counter, deque
+from collections import Counter, defaultdict, deque
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -65,7 +65,7 @@ class Guardian:
         self.paused = False
         self.approvals: dict[str, Approval] = {}
         self._approval_ids = itertools.count(1)
-        self._llm: deque[tuple[float, int]] = deque()
+        self._llm: defaultdict[str, deque[tuple[float, int]]] = defaultdict(deque)
         self._busy: deque[tuple[float, float]] = deque()
         self.decisions: Counter = Counter()
 
@@ -155,26 +155,30 @@ class Guardian:
             return Decision(Verdict.DENY, "candidate slots full", "P4-budgets")
         return ALLOW
 
-    def authorize_llm_call(self, est_tokens: int) -> Decision:
-        cfg = self.d.teachers.llm
+    def authorize_llm_call(self, teacher: str, cfg, est_tokens: int) -> Decision:
+        """Each LLM teacher has its own hourly call and token budget (from its config)."""
+        calls = self._llm[teacher]
         now = time.time()
-        while self._llm and now - self._llm[0][0] > 3600:
-            self._llm.popleft()
+        while calls and now - calls[0][0] > 3600:
+            calls.popleft()
         if self.halted:
             return Decision(Verdict.DENY, "system halted", "P1-human-authority")
-        if len(self._llm) >= cfg.max_calls_per_hour:
-            return self._deny("llm_call", cfg.model, "hourly call budget exhausted", "P4-budgets")
-        if sum(t for _, t in self._llm) + est_tokens > cfg.max_tokens_per_hour:
-            return self._deny("llm_call", cfg.model, "hourly token budget exhausted", "P4-budgets")
+        if len(calls) >= cfg.max_calls_per_hour:
+            return self._deny("llm_call", teacher, "hourly call budget exhausted", "P4-budgets")
+        if sum(t for _, t in calls) + est_tokens > cfg.max_tokens_per_hour:
+            return self._deny("llm_call", teacher, "hourly token budget exhausted", "P4-budgets")
         return ALLOW
 
-    def record_llm_usage(self, tokens: int) -> None:
-        self._llm.append((time.time(), int(tokens)))
+    def record_llm_usage(self, teacher: str, tokens: int) -> None:
+        self._llm[teacher].append((time.time(), int(tokens)))
 
     def llm_usage(self) -> dict:
         now = time.time()
-        recent = [(ts, t) for ts, t in self._llm if now - ts <= 3600]
-        return {"calls_last_hour": len(recent), "tokens_last_hour": sum(t for _, t in recent)}
+        out = {}
+        for teacher, calls in self._llm.items():
+            recent = [t for ts, t in calls if now - ts <= 3600]
+            out[teacher] = {"calls_last_hour": len(recent), "tokens_last_hour": sum(recent)}
+        return out
 
     # ------------------------------------------------------- P5: no regression
     def authorize_promotion(self, capability: str, champion_acc: float | None,

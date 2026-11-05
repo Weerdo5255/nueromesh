@@ -15,10 +15,12 @@ python -m neuromesh demo      # 30-second offline demo of the whole life cycle
 python -m neuromesh run       # interactive console
 python -m neuromesh serve     # daemon + HTTP API on 127.0.0.1:8765
 python -m neuromesh bench     # CPU vs GPU speed for node training and inference
+python -m neuromesh teachers  # which teachers are available (Ollama, Claude); --test for a live lesson
 ```
 
-Requirements: Python 3.11+ and numpy. Optional: PyTorch or CuPy to run the nodes on a GPU
-(see [Running on a GPU](#running-on-a-gpu)).
+Requirements: Python 3.11+ and numpy. Optional: [Ollama](https://ollama.com) for a local
+teacher model (see [LLM teachers](#llm-teachers-local-models-ollama-and-claude)), and PyTorch
+or CuPy to run the nodes on a GPU (see [Running on a GPU](#running-on-a-gpu)).
 
 ---
 
@@ -61,9 +63,10 @@ of orders at cold start to ~2% in steady state).
 Nodes never learn from themselves. They learn from:
 - **HumanTeacher**: corrections (`/feedback`), examples (`/teach`) and answers to questions
   the system queues when nothing can label an input. Weighted highest.
-- **LLMTeacher**: an external LLM labels inputs, writes synthetic training examples for the
-  weakest labels, and answers open-ended orders no node or tool can handle. Speaks the
-  Anthropic Messages API or any OpenAI-compatible endpoint (Ollama, vLLM, ...).
+- **LLM teachers**: a language model labels inputs, writes synthetic training examples for
+  the weakest labels, and answers open-ended orders no node or tool can handle. Use Claude
+  (Anthropic API), a **local model on Ollama**, or any OpenAI-compatible server; configure
+  as many as you like, each with its own budget, and choose the order they are asked in.
 - **HeuristicTeacher**: an offline, lexicon-based stand-in so everything runs with no API key.
 
 ### The agents
@@ -77,7 +80,7 @@ All run concurrently (asyncio) and coordinate through a message bus, the registr
 | Evaluator | benchmarks champion vs challengers on held-out data (paired test) and promotes winners |
 | Curator | disposes retired nodes after the rollback window and failed challengers; enforces the node budget |
 | Explorer | discovers tools, routes them through approval, self-tests them, activates them, health-checks them, handles tool supersession |
-| Sentinel | watches the kill switch and publishes heartbeats with the directive scorecard |
+| Sentinel | watches the kill switch, re-checks local teacher servers (Ollama), publishes heartbeats with the directive scorecard |
 
 Background agents yield whenever an order is in flight and stay within a compute duty cycle.
 
@@ -90,7 +93,7 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P1 human authority | `/halt`, `POST /halt` or a `state/STOP` file stops all autonomous activity and order handling immediately |
 | P2 orders first | background work waits while orders are in flight and is capped by `max_duty_cycle` |
 | P3 approved tools only | tools needing permissions wait for a human; forbidden permissions are always refused; changed tool code is re-vetted |
-| P4 budgets | node budget, background compute budget, LLM call/token budgets per hour |
+| P4 budgets | node budget, background compute budget, per-teacher LLM call/token budgets per hour |
 | P5 no regression | a challenger is promoted, or a champion updated, only if it is not worse on held-out data; superseded nodes stay rollback-able for a grace period |
 | P6 auditability | every lifecycle change, tool decision, approval and denial goes to the audit log |
 | P7 honesty | every answer carries confidence and provenance; unfulfilled orders say so |
@@ -134,20 +137,53 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 python -m neuromesh order "convert 10 km to miles"
 ```
 
-### Turning on the LLM teacher
+### LLM teachers: local models (Ollama) and Claude
+Teachers are asked in the order set by `[teachers] order` (default: human, ollama, llm,
+heuristic). A teacher that is unavailable is skipped automatically, and the next one answers.
+
+**A local model with Ollama.** Teaching then stays on your machine and costs nothing per call.
 ```
-export ANTHROPIC_API_KEY=...        # teacher is off while this is unset
+ollama pull llama3.1                        # or any chat model you like
+python -m neuromesh teachers --test         # is it found? does a live lesson work?
+python -m neuromesh run                     # uses it automatically
+python -m neuromesh run --ollama qwen2.5:7b # pick a specific model
+python -m neuromesh demo --ollama auto      # the demo, taught by your local model
+```
+- With `model = "auto"` (the default) NeuroMesh uses the first chat model Ollama has installed
+  (embedding models are skipped). Set `model` in `[teachers.ollama]` to choose one.
+- It talks to Ollama's native `/api/chat`. Every lesson uses a JSON schema, and on a fixed
+  label set the labels are an enum, so even a small model can only answer with a valid label.
+- The server is found at `base_url`, else `$OLLAMA_HOST`, else `http://localhost:11434`;
+  proxy settings are ignored for local servers. Use `--ollama-url` for another machine.
+- The server and model are re-checked every 30 s (`probe_seconds`). If Ollama stops, or the
+  model is removed, the teacher goes offline, the next teacher takes over, and it comes back by
+  itself when Ollama does. `/status` and `teachers` say why a teacher is off and what to run.
+- Local models on a CPU can be slow: raise `timeout_s` if lessons time out. For reasoning
+  models, `think = false` skips the thinking phase and is much faster.
+- Examples taught by Ollama are weighted 1.2 (Claude 1.5, human 3.0). Change this in
+  `[teachers.weights]`.
+
+**Claude.**
+```
+export ANTHROPIC_API_KEY=...                # the teacher is off while this is unset
 python -m neuromesh run
 ```
-Model, budgets and provider live under `[teachers.llm]`. For a local model:
+**Your own mix.** Any `[teachers.<name>]` table with a `provider` (`ollama`, `anthropic`,
+`openai`) defines another teacher with its own model and hourly budget. List its name in
+`order` to use it. For example, a fast local model first and a larger one on another
+machine as backup:
 ```toml
-[teachers.llm]
-provider = "openai"
-base_url = "http://localhost:11434"   # Ollama
-model = "llama3.1"
-api_key_env = ""
+[teachers]
+order = ["human", "ollama", "big_local", "heuristic"]
+
+[teachers.big_local]
+provider = "ollama"
+model = "llama3.1:70b"
+base_url = "http://gpu-box:11434"
+timeout_s = 300
 ```
-The demo stays offline unless you pass `--llm`.
+Leaving a teacher out of `order` switches it off; so does `enabled = false`. The demo stays
+offline unless you pass `--ollama MODEL` or `--llm`.
 
 ### Adding a tool
 Drop a folder into `plugins/`. The Explorer finds it within seconds.
@@ -259,8 +295,9 @@ neuromesh/
   tools.py               manifests, sandbox, discovery
   store.py               SQLite: experience, lineage, tools, orders, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   39 tests: nodes, guardian, LLM wire format (mock server), full system,
-                         compute backends (4 GPU parity tests run where PyTorch or CuPy is installed)
+tests/                   50 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+                         full system, compute backends (4 GPU parity tests run where PyTorch or
+                         CuPy is installed)
 ```
 
 State lives in `state/` (SQLite database, node weights, log). Delete it to start fresh.

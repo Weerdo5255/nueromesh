@@ -117,23 +117,56 @@ class BackgroundPolicy:
 
 @dataclass
 class LLMConfig:
-    provider: str = "anthropic"  # "anthropic" or "openai" (any OpenAI-compatible endpoint)
+    provider: str = "anthropic"  # "anthropic", "ollama", or "openai" (any OpenAI-compatible endpoint)
+    enabled: bool = True
     model: str = "claude-haiku-5-5"
     api_key_env: str = "ANTHROPIC_API_KEY"
     base_url: str = ""
     anthropic_version: str = "2023-06-01"
     timeout_s: float = 30.0
     max_tokens: int = 400
+    temperature: float = 0.2
     max_calls_per_hour: int = 300
     max_tokens_per_hour: int = 200_000
+    keep_alive: str = "10m"         # ollama: how long the model stays loaded between calls
+    think: object = ""              # ollama: true/false or "low"/"medium"/"high" for reasoning models; "" = model default
+    probe_seconds: float = 30.0     # ollama: how often to re-check the server and model
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "LLMConfig":
+        provider = str(d.get("provider", "anthropic")).lower()
+        return build(cls, {**PROVIDER_DEFAULTS.get(provider, {}), **d, "provider": provider})
+
+
+PROVIDER_DEFAULTS: dict[str, dict] = {
+    "anthropic": {"model": "claude-haiku-5-5", "api_key_env": "ANTHROPIC_API_KEY", "timeout_s": 30.0},
+    "openai": {"model": "", "api_key_env": "OPENAI_API_KEY", "timeout_s": 60.0},
+    # local models: no key, generous timeouts and budgets (the cost is your own hardware)
+    "ollama": {"model": "auto", "api_key_env": "", "timeout_s": 120.0, "temperature": 0.1,
+               "max_calls_per_hour": 3000, "max_tokens_per_hour": 3_000_000},
+}
 
 
 @dataclass
 class TeacherPolicy:
-    order: tuple = ("human", "llm", "heuristic")
+    order: tuple = ("human", "ollama", "llm", "heuristic")
     weights: dict = field(default_factory=lambda: {
-        "human": 3.0, "tool-manifest": 2.0, "llm": 1.5, "heuristic": 1.0})
-    llm: LLMConfig = field(default_factory=LLMConfig)
+        "human": 3.0, "tool-manifest": 2.0, "llm": 1.5, "ollama": 1.2, "heuristic": 1.0})
+    models: dict = field(default_factory=dict)  # teacher name -> LLMConfig, from [teachers.<name>]
+
+    @property
+    def llm(self) -> LLMConfig | None:
+        return self.models.get("llm")
+
+    @classmethod
+    def from_dict(cls, d: dict | None) -> "TeacherPolicy":
+        """Every [teachers.<name>] table with a `provider` key defines an LLM teacher called
+        <name>. `order` is authoritative: a teacher that is not listed there is never asked."""
+        d = d or {}
+        is_model = lambda k, v: isinstance(v, dict) and ("provider" in v or k == "llm")  # noqa: E731
+        policy = build(cls, {k: v for k, v in d.items() if not is_model(k, v) and k != "models"})
+        policy.models = {k: LLMConfig.from_dict(v) for k, v in d.items() if is_model(k, v)}
+        return policy
 
 
 @dataclass
@@ -180,7 +213,7 @@ class Directives:
             orders=build(OrderPolicy, d.get("orders")),
             nodes=build(NodePolicy, d.get("nodes")),
             background=build(BackgroundPolicy, d.get("background")),
-            teachers=build(TeacherPolicy, d.get("teachers")),
+            teachers=TeacherPolicy.from_dict(d.get("teachers")),
             tools=build(ToolPolicy, d.get("tools")),
         )
 

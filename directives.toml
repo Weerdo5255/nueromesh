@@ -113,19 +113,38 @@ min_examples_per_label = 8
 health_check_seconds = 300
 
 [teachers]
-order = ["human", "llm", "heuristic"]   # who is asked first when a node is unsure
+# Who is asked, in order, when a node is unsure. Teachers that are unavailable (no API key,
+# Ollama not running, model not pulled) are skipped automatically. A teacher that is not
+# listed here is never used, so to add one of your own, define [teachers.<name>] and list it.
+order = ["human", "ollama", "llm", "heuristic"]
 
-[teachers.weights]                      # how much each source's examples count in training
-human = 3.0
+[teachers.weights]                      # how much each source's examples count in training,
+human = 3.0                             # and which source wins when two label the same text
 tool-manifest = 2.0
 llm = 1.5
+ollama = 1.2
 heuristic = 1.0
 
+# Each [teachers.<name>] table with a `provider` is an LLM teacher with its own budget.
+[teachers.ollama]
+provider = "ollama"                     # a local model served by Ollama (https://ollama.com)
+enabled = true                          # used whenever the server is up and the model is pulled
+model = "auto"                          # e.g. "llama3.1:8b", "qwen2.5:7b"; "auto" = first chat model installed
+base_url = ""                           # default: $OLLAMA_HOST, else http://localhost:11434
+timeout_s = 120                         # local models on a CPU can be slow
+max_tokens = 400
+temperature = 0.1
+keep_alive = "10m"                      # keep the model loaded between lessons
+think = ""                              # reasoning models: false to skip thinking (faster), "" = default
+probe_seconds = 30                      # how often to re-check the server and model
+max_calls_per_hour = 3000
+max_tokens_per_hour = 3000000
+
 [teachers.llm]
-provider = "anthropic"                  # "anthropic", or "openai" for any OpenAI-compatible server
+provider = "anthropic"                  # or "openai" for any OpenAI-compatible server (vLLM, LM Studio, ...)
 model = "claude-haiku-5-5"
-api_key_env = "ANTHROPIC_API_KEY"       # teacher is disabled when this variable is unset
-base_url = ""                           # e.g. "http://localhost:11434" for Ollama with provider="openai"
+api_key_env = "ANTHROPIC_API_KEY"       # teacher is off while this variable is unset
+base_url = ""
 anthropic_version = "2023-06-01"
 timeout_s = 30
 max_tokens = 400

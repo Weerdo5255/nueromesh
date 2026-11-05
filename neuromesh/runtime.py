@@ -48,16 +48,20 @@ class System:
         self.rng = random.Random(seed)
 
         self.bus = Bus()
-        self.store = Store(self.state_dir / "neuromesh.db", self.directives.nodes.holdout_percent)
+        tp = self.directives.teachers
+        self.store = Store(self.state_dir / "neuromesh.db", self.directives.nodes.holdout_percent,
+                           priorities=tp.weights)
         self.guardian = Guardian(self.directives, self.store, self.bus, self.state_dir)
         self.encoder = HashingEncoder(self.directives.nodes.input_dim)
         self.registry = NodeRegistry(self.store, self.bus, self.state_dir / "nodes", self.guardian.audit,
                                      self.backend)
         self.tools = ToolRegistry(self.root, self.directives.tools.plugin_dirs, self.store)
         self.sandbox = Sandbox(self.directives.tools.sandbox_cpu_seconds, self.directives.tools.sandbox_memory_mb)
-        tp = self.directives.teachers
-        self.teachers = TeacherPool({"human": HumanTeacher(), "llm": LLMTeacher(tp.llm, self.guardian),
-                                     "heuristic": HeuristicTeacher(seed)}, tp.order, tp.weights)
+        teachers: dict = {"human": HumanTeacher()}
+        for name, cfg in tp.models.items():  # one teacher per [teachers.<name>] table
+            teachers[name] = LLMTeacher(name, cfg, self.guardian, self.bus)
+        teachers["heuristic"] = HeuristicTeacher(seed)
+        self.teachers = TeacherPool(teachers, tp.order, tp.weights)
 
         self.capabilities: dict[str, CapabilitySpec] = {}
         self._load_capabilities(Path(capabilities_path or self.root / "capabilities.toml"))
@@ -80,6 +84,7 @@ class System:
     async def start(self) -> "System":
         self.started_at = time.time()
         self.guardian.check_kill_switch()
+        await self.teachers.refresh(force=True)  # find local model servers before the first order
         explorer = next(a for a in self.agents if isinstance(a, Explorer))
         try:  # vet and activate installed tools before the first order is taken
             await explorer.step()

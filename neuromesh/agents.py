@@ -11,7 +11,8 @@ background, yielding whenever an order is in flight (prime directive P2).
   Curator      - disposes superseded and failed nodes, enforces the node budget
   Explorer     - discovers new tools, routes them through approval, self-tests them,
                  activates them and runs health checks
-  Sentinel     - watches the kill switch and publishes heartbeats with the scorecard
+  Sentinel     - watches the kill switch, re-checks local teacher servers (Ollama) and
+                 publishes heartbeats with the scorecard
 """
 from __future__ import annotations
 
@@ -641,6 +642,8 @@ class Sentinel(Agent):
     async def step(self) -> None:
         s = self.sys
         s.guardian.check_kill_switch()
+        if not s.guardian.halted:
+            await s.teachers.refresh()  # rate-limited per teacher (probe_seconds)
         if time.time() - self.last_beat >= 30:
             self.last_beat = time.time()
             s.bus.publish("system.heartbeat", scorecard=s.scorecard(), live_nodes=len(s.registry.live()),
