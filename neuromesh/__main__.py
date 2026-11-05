@@ -1,6 +1,6 @@
 """Command line entry point.
 
-  python -m neuromesh run      interactive console (orders + operator commands)
+  python -m neuromesh run      live console: network, lessons in progress, activity log, prompt
   python -m neuromesh serve    daemon with an HTTP API on 127.0.0.1:8765
   python -m neuromesh order    send one order to a running daemon
   python -m neuromesh demo     offline, scripted demonstration of the whole life cycle
@@ -21,31 +21,41 @@ import sys
 import urllib.request
 from pathlib import Path
 
-HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely") or a command:
-  /status                         overview + directive scorecard
-  /lineage [capability]           family tree of every node ever built
-  /tools                          tools and their states
-  /approvals                      pending approvals      /approve <id> [note]   /deny <id> [note]
-  /questions                      questions waiting for a human teacher   /answer <qid> <label>
-  /feedback <order-id> <label>    correct an answer (a label, or a route like tool:calculator)
-  /teach <capability> <label> :: <text>
-  /define <name> <label,label,...> [:: description]
-  /rollback <capability>          reinstate the previous champion
-  /retest <tool>                  re-run a tool's self-tests
-  /pause  /unpause  /halt [reason]  /resume
-  /events [n]   /audit [n]   /help   /quit"""
+from .commands import HELP  # noqa: E402,F401  (kept importable from here)
 
 
-def _setup_logging(root: Path, verbose: bool) -> None:
+def _setup_logging(root: Path, verbose: bool, console: bool = True) -> None:
     state = root / "state"
     state.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.DEBUG if verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                         handlers=[logging.FileHandler(state / "neuromesh.log")])
-    if verbose:
-        console = logging.StreamHandler()
-        console.setLevel(logging.WARNING)
-        logging.getLogger().addHandler(console)
+    if verbose and console:
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.WARNING)
+        logging.getLogger().addHandler(handler)
+
+
+def _live_possible(announce: bool = True) -> bool:
+    """The live view needs a real terminal on both ends and the curses module."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return False
+    try:
+        import curses  # noqa: F401,PLC0415
+    except ImportError:
+        if announce:
+            print("live view needs curses (on Windows: pip install windows-curses); using the plain console")
+        return False
+    return True
+
+
+async def _live(args) -> None:
+    from .live import LiveView
+    from .runtime import System
+
+    system = System(args.root, device=args.device, library=args.gpu_library,
+                    overrides=_teacher_overrides(args, args.root))
+    await LiveView(system, ascii=args.ascii).run()
 
 
 def _teacher_overrides(args, root: Path) -> dict | None:
@@ -67,7 +77,9 @@ def _teacher_overrides(args, root: Path) -> dict | None:
 
 
 async def _console(args) -> None:
-    from .report import describe_event, render_lineage, render_status
+    """Plain line-by-line console (used with --plain, or when not attached to a terminal)."""
+    from .commands import execute
+    from .report import describe_event
     from .runtime import System
 
     system = System(args.root, device=args.device, library=args.gpu_library,
@@ -89,86 +101,11 @@ async def _console(args) -> None:
                 line = (await loop.run_in_executor(None, input, "neuromesh> ")).strip()
             except (EOFError, KeyboardInterrupt):
                 break
-            if not line:
-                continue
-            if not line.startswith("/"):
-                res = await system.submit(line)
-                print(f"[{res.order_id}] {res.summary()}")
-                for step in res.trace:
-                    print(f"      . {step}")
-                continue
-            cmd, _, rest = line[1:].partition(" ")
-            rest = rest.strip()
-            g = system.guardian
-            try:
-                if cmd in ("quit", "exit"):
-                    break
-                elif cmd == "help":
-                    print(HELP)
-                elif cmd == "status":
-                    print(render_status(system.status()))
-                elif cmd == "lineage":
-                    print(render_lineage(system.registry.lineage, rest or None))
-                elif cmd == "tools":
-                    for name, t in system.status()["tools"].items():
-                        print(f"  {name:<14} {t['state']:<17} v{t['version']:<7} runs={t['runs']:<4} "
-                              f"perms={t['permissions']}  {t['note']}")
-                elif cmd == "approvals":
-                    for a in g.pending_approvals():
-                        print(f"  {a.id}: {a.kind} '{a.subject}' {a.detail}")
-                    if not g.pending_approvals():
-                        print("  none pending")
-                elif cmd in ("approve", "deny"):
-                    aid, _, note = rest.partition(" ")
-                    a = g.decide(aid, cmd == "approve", by=os.environ.get("USER", "operator"), note=note)
-                    print(f"  {a.id} {a.status}" if a else "  no pending approval with that id")
-                elif cmd == "questions":
-                    for q in system.teachers.human.questions:
-                        print(f"  {q['id']}: [{q['capability']}] {q['text'][:90]!r}  ({q['reason']})")
-                    if not system.teachers.human.questions:
-                        print("  no open questions")
-                elif cmd == "answer":
-                    qid, _, label = rest.partition(" ")
-                    print("  " + system.answer_question(qid, label.strip())[1])
-                elif cmd == "feedback":
-                    oid, _, label = rest.partition(" ")
-                    print("  " + system.feedback(oid, label.strip())[1])
-                elif cmd == "teach":
-                    head, _, text = rest.partition("::")
-                    cap, label = head.split()
-                    system.teach(cap, text.strip(), label)
-                    print("  thanks - added as a human-labelled example")
-                elif cmd == "define":
-                    head, _, desc = rest.partition("::")
-                    name, labels = head.split(None, 1)
-                    spec = system.define_capability(name, [x for x in labels.replace(" ", "").split(",") if x],
-                                                    desc.strip())
-                    print(f"  capability '{spec.name}' labels={spec.labels}. Orders like '{spec.name}: <text>' "
-                          f"are taught by the teachers until a node takes over.")
-                elif cmd == "rollback":
-                    node = system.registry.rollback(rest)
-                    print(f"  {node.id} reinstated" if node else "  nothing to roll back to")
-                elif cmd == "retest":
-                    print("  " + system.retest_tool(rest)[1])
-                elif cmd == "pause":
-                    g.pause_background(True)
-                elif cmd == "unpause":
-                    g.pause_background(False)
-                elif cmd == "halt":
-                    g.halt(rest or "operator command")
-                elif cmd == "resume":
-                    print("  " + g.resume()[1])
-                elif cmd == "events":
-                    for e in system.bus.recent("*", int(rest or 20)):
-                        if e.topic not in ("audit", "order.done", "node.trained"):
-                            print(f"  {e.topic:<24} {json.dumps(e.data, default=str)[:140]}")
-                elif cmd == "audit":
-                    for a in system.store.recent_audit(int(rest or 20)):
-                        print(f"  {a['actor']:<10} {a['kind']:<26} {a['subject']:<22} {json.dumps(a['detail'])[:90]}")
-                else:
-                    print("  unknown command; /help")
-            except Exception as exc:
-                print(f"  error: {exc}")
+            result = await execute(system, line)
+            if result.quit:
+                break
+            for out in result.lines:
+                print(out)
 
 
 async def _serve(args) -> None:
@@ -178,6 +115,12 @@ async def _serve(args) -> None:
 
     system = System(args.root, device=args.device, library=args.gpu_library,
                     overrides=_teacher_overrides(args, args.root))
+    if args.live:
+        from .live import LiveView
+        server = await serve_http(system, args.host, args.port)
+        async with server:
+            await LiveView(system, subtitle=f"HTTP {args.host}:{args.port}", ascii=args.ascii).run()
+        return
     system.bus.listen(lambda ev: (line := describe_event(ev)) and print(line, flush=True))
     async with system:
         server = await serve_http(system, args.host, args.port)
@@ -254,6 +197,10 @@ def main(argv: list[str] | None = None) -> None:
         p.add_argument("--root", type=Path, default=Path("."), help="folder with directives.toml, "
                        "capabilities.toml and plugins/ (default: current folder)")
         p.add_argument("-v", "--verbose", action="store_true")
+    p_run.add_argument("--plain", action="store_true", help="line-by-line console instead of the live view")
+    p_serve.add_argument("--live", action="store_true", help="show the live view (with a prompt) while serving")
+    for p in (p_run, p_serve):
+        p.add_argument("--ascii", action="store_true", help="live view without Unicode line drawing")
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", type=int, default=8765)
     p_order = sub.add_parser("order", help="send an order to a running daemon")
@@ -292,12 +239,19 @@ def main(argv: list[str] | None = None) -> None:
         args.root = args.root.resolve()
         if not (args.root / "directives.toml").exists():
             sys.exit(f"no directives.toml in {args.root}; run from the project folder or pass --root")
+    live = False
+    if args.cmd == "run":
+        live = not args.plain and _live_possible()
+    elif args.cmd == "serve" and args.live:
+        live = _live_possible()
+        if not live:
+            sys.exit("serve --live needs an interactive terminal with curses")
     if args.cmd in ("run", "serve"):
-        _setup_logging(args.root, args.verbose)
+        _setup_logging(args.root, args.verbose, console=not live)
     from .backend import BackendUnavailable
     try:
         if args.cmd == "run":
-            asyncio.run(_console(args))
+            asyncio.run(_live(args) if live else _console(args))
         elif args.cmd == "serve":
             asyncio.run(_serve(args))
         elif args.cmd == "order":

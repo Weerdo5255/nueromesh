@@ -15,46 +15,51 @@ teachers in use: ['human', 'heuristic'] (offline; --ollama MODEL or --llm to add
       positive  [skill:sentiment | conf 0.90 | teachers]
   > can you work out 3 plus 2
       5  [tool:calculator | conf 0.95 | teachers]
-  t+  0.4s [spawn]    dispatch-dbbe5d (seed, 64 lr=0.01) - capability gap: 11 examples and no node
-  t+  0.7s [spawn]    sentiment-300fad (seed, 64 lr=0.01) - capability gap: 13 examples and no node
-  t+  0.7s [promote]  dispatch-dbbe5d now serves 'dispatch' - first node for this capability
-  t+  1.0s [promote]  sentiment-300fad now serves 'sentiment' - first node for this capability
-  t+  1.8s [spawn]    urgency-347a2e (seed, 64 lr=0.01) - capability gap: 10 examples and no node
-  t+  2.2s [promote]  urgency-347a2e now serves 'urgency' - first node for this capability
-  t+  2.8s [spawn]    sentiment-dfcaf7 (widen, 96 lr=0.01) - champion at 0.875 < target 0.97: widen challenger
-  -> 70 orders: 69 correct, served by nodes 28, teachers 38, mixed 4; 2 background lessons during the phase
+  t+  0.3s [spawn]    dispatch-7bb80c (seed, 64 lr=0.01) - capability gap: 10 examples and no node
+  t+  0.6s [promote]  dispatch-7bb80c now serves 'dispatch' - first node for this capability
+  t+  0.7s [spawn]    sentiment-0b34df (seed, 64 lr=0.01) - capability gap: 14 examples and no node
+  t+  1.1s [promote]  sentiment-0b34df now serves 'sentiment' - first node for this capability
+  t+  1.9s [spawn]    urgency-695a9e (seed, 64 lr=0.01) - capability gap: 10 examples and no node
+  t+  2.2s [promote]  urgency-695a9e now serves 'urgency' - first node for this capability
+  t+  2.8s [spawn]    sentiment-00835c (widen, 96 lr=0.01) - champion at 0.889 < target 0.97: widen challenger
+  -> 70 orders: 69 correct, served by nodes 28, teachers 40, mixed 2; 2 background lessons during the phase
   ... 4s with no orders (background agents keep training, evaluating and asking teachers for lessons)
-  t+  3.7s [dispose]  sentiment-dfcaf7 - failed challenger (held-out 0.875 vs champion 0.875)
-  t+  4.8s [spawn]    sentiment-1ec275 (retune, 64 lr=0.02) - champion at 0.750 < target 0.97: retune challenger
-  t+  5.7s [dispose]  sentiment-1ec275 - failed challenger (held-out 0.6154 vs champion 0.6923)
-  t+  6.8s [spawn]    sentiment-ad3fbc (deepen, 64x64 lr=0.01) - champion at 0.714 < target 0.97: deepen challenger
-  t+  7.1s [retire]   sentiment-300fad - superseded by sentiment-ad3fbc
-  t+  7.1s [promote]  sentiment-ad3fbc now serves 'sentiment', replacing sentiment-300fad - beat the champion on held-out data (0.786 vs 0.714, z=1.00)
+  t+  3.8s [dispose]  sentiment-00835c - failed challenger (held-out 0.8889 vs champion 0.8889)
+  t+  4.8s [spawn]    sentiment-222740 (retune, 64 lr=0.02) - champion at 0.889 < target 0.97: retune challenger
+  t+  5.8s [dispose]  sentiment-222740 - failed challenger (held-out 0.9091 vs champion 0.9091)
+  t+  6.8s [spawn]    sentiment-6c4ed3 (deepen, 64x64 lr=0.01) - champion at 0.909 < target 0.97: deepen challenger
   ... idle period done: 6 lessons from teachers, 4 live nodes
 
 == Phase 2 - warm: nodes answer what they are confident about; weak champions face challengers ==
   > urgency: Whenever you get a chance, update the email server docs.
       routine  [skill:urgency | conf 0.95 | teachers]
+  t+  7.2s [spawn]    urgency-ee0cb9 (widen, 96 lr=0.01) - champion at 0.857 < target 0.97: widen challenger
   > give me text stats for: Bring two copies of the signed contract.
-      7 words, 40 characters, 1 sentence(s)  [tool:word_stats | conf 0.99 | nodes]
+      7 words, 40 characters, 1 sentence(s)  [tool:word_stats | conf 0.96 | nodes]
   > sentiment: The concert comes in a grey box.
-      neutral  [skill:sentiment | conf 0.60 | teachers]
-  t+  8.8s [spawn]    sentiment-aa48e2 (fresh, 32 lr=0.01) - champion at 0.812 < target 0.97: fresh challenger
-  t+  9.1s [spawn]    dispatch-398851 (widen, 96 lr=0.01) - champion at 0.889 < target 0.97: widen challenger
-  t+ 10.2s [dispose]  sentiment-300fad - superseded; 3s rollback window elapsed
-  -> 70 orders: 67 correct, served by nodes 48, teachers 15, mixed 7; 2 background lessons during the phase
+      neutral  [skill:sentiment | conf 0.99 | nodes]
+  t+  8.6s [dispose]  sentiment-6c4ed3 - failed challenger (held-out 0.9167 vs champion 0.9167)
+  t+  8.9s [spawn]    sentiment-96799c (fresh, 96x32 lr=0.01) - champion at 0.917 < target 0.97: fresh challenger
+  t+  9.2s [retire]   sentiment-0b34df - superseded by sentiment-96799c
+  t+  9.2s [promote]  sentiment-96799c now serves 'sentiment', replacing sentiment-0b34df - beat the champion on held-out data (0.938 vs 0.812, z=1.00)
+  t+  9.3s [spawn]    urgency-272821 (retune, 64 lr=0.02) - champion at 0.857 < target 0.97: retune challenger
+  t+  9.3s [spawn]    dispatch-546530 (widen, 96 lr=0.01) - champion at 0.917 < target 0.97: widen challenger
+  t+  9.4s [dispose]  urgency-ee0cb9 - failed challenger (held-out 1.0 vs champion 1.0)
+  -> 70 orders: 62 correct, served by nodes 60, teachers 4, mixed 6; 3 background lessons during the phase
   ... 3s with no orders (background improvement continues)
-  t+ 10.7s [dispose]  sentiment-aa48e2 - failed challenger (held-out 0.8125 vs champion 0.8125)
-  t+ 10.8s [dispose]  dispatch-398851 - failed challenger (held-out 0.7273 vs champion 0.8182)
-  t+ 10.9s [spawn]    sentiment-100ae3 (widen, 96x96 lr=0.01) - champion at 0.812 < target 0.97: widen challenger
-  t+ 11.2s [spawn]    dispatch-3e604d (retune, 64 lr=0.005) - champion at 0.818 < target 0.97: retune challenger
-  t+ 12.7s [dispose]  sentiment-100ae3 - failed challenger (held-out 0.619 vs champion 0.7143)
-  t+ 12.8s [dispose]  dispatch-3e604d - failed challenger (held-out 0.7273 vs champion 0.8182)
-  t+ 12.9s [spawn]    sentiment-79e74f (retune, 64x64 lr=0.02) - champion at 0.762 < target 0.97: retune challenger
-  t+ 13.2s [spawn]    dispatch-76ccbd (deepen, 64x64 lr=0.01) - champion at 0.818 < target 0.97: deepen challenger
+  t+ 10.9s [spawn]    sentiment-bab187 (widen, 144x48 lr=0.01) - champion at 0.833 < target 0.97: widen challenger
+  t+ 11.3s [spawn]    dispatch-ffaed3 (retune, 64 lr=0.02) - champion at 0.923 < target 0.97: retune challenger
+  t+ 11.3s [retire]   sentiment-96799c - superseded by sentiment-bab187
+  t+ 11.3s [promote]  sentiment-bab187 now serves 'sentiment', replacing sentiment-96799c - beat the champion on held-out data (0.864 vs 0.682, z=1.63)
+  t+ 12.2s [dispose]  sentiment-0b34df - superseded; 3s rollback window elapsed
+  t+ 12.4s [dispose]  urgency-272821 - failed challenger (held-out 1.0 vs champion 1.0)
+  t+ 12.5s [dispose]  dispatch-546530 - failed challenger (held-out 0.9231 vs champion 0.9231)
+  t+ 12.6s [dispose]  dispatch-ffaed3 - failed challenger (held-out 0.9231 vs champion 0.9231)
+  t+ 12.9s [spawn]    sentiment-ca7831 (retune, 144x48 lr=0.02) - champion at 0.893 < target 0.97: retune challenger
   ... idle period done: 4 lessons from teachers, 5 live nodes
 
 == Phase 3 - four new plugins are dropped into plugins/ ==
+  t+ 13.3s [spawn]    dispatch-29fb55 (deepen, 64x64 lr=0.01) - champion at 0.923 < target 0.97: deepen challenger
   t+ 13.6s [tool]     discovered 'calculator2' v2.0.0 (permissions: none)
   t+ 13.6s [tool]     'calculator2' approved (policy)
   t+ 13.6s [tool]     discovered 'glossary' v1.0.0 (permissions: fs_read)
@@ -63,40 +68,39 @@ teachers in use: ['human', 'heuristic'] (offline; --ollama MODEL or --llm to add
   t+ 13.6s [tool]     'shell_exec' REJECTED - requests forbidden permissions ['fs_write', 'subprocess']
   t+ 13.6s [tool]     discovered 'unit_convert' v1.0.0 (permissions: none)
   t+ 13.6s [tool]     'unit_convert' approved (policy)
-  t+ 13.7s [tool]     'calculator' retired - superseded by calculator2 (13 routing examples relabelled)
+  t+ 13.7s [tool]     'calculator' retired - superseded by calculator2 (29 routing examples relabelled)
   t+ 13.7s [tool]     'calculator2' active - self-tests passed 3/3; 3 routing examples seeded
-  t+ 13.7s [spawn]    dispatch-2f9430 (expand, 64 lr=0.01) - new labels ['tool:calculator2']: growing dispatch-dbbe5d's output layer
-  t+ 13.7s [tool]     'unit_convert' active - self-tests passed 3/3; 3 routing examples seeded
-  t+ 14.1s [retire]   dispatch-dbbe5d - superseded by dispatch-2f9430
-  t+ 14.1s [promote]  dispatch-2f9430 now serves 'dispatch', replacing dispatch-dbbe5d - adds ['tool:calculator2'] with no held-out regression (0.615 vs 0.538)
-  t+ 14.1s [spawn]    dispatch-8b3f8f (expand, 64 lr=0.01) - new labels ['tool:unit_convert']: growing dispatch-2f9430's output layer
-  t+ 14.5s [retire]   dispatch-2f9430 - superseded by dispatch-8b3f8f
-  t+ 14.5s [promote]  dispatch-8b3f8f now serves 'dispatch', replacing dispatch-2f9430 - beat the champion on held-out data (0.846 vs 0.615, z=1.73)
+  t+ 13.8s [spawn]    dispatch-57999b (expand, 64 lr=0.01) - new labels ['tool:calculator2']: growing dispatch-7bb80c's output layer
+  t+ 13.8s [tool]     'unit_convert' active - self-tests passed 3/3; 3 routing examples seeded
+  t+ 14.1s [retire]   dispatch-7bb80c - superseded by dispatch-57999b
+  t+ 14.1s [promote]  dispatch-57999b now serves 'dispatch', replacing dispatch-7bb80c - beat the champion on held-out data (0.846 vs 0.615, z=1.34)
+  t+ 14.2s [spawn]    dispatch-b64b24 (expand, 64 lr=0.01) - new labels ['tool:unit_convert']: growing dispatch-57999b's output layer
+  t+ 14.4s [dispose]  sentiment-96799c - superseded; 3s rollback window elapsed
+  t+ 14.5s [retire]   dispatch-57999b - superseded by dispatch-b64b24
+  t+ 14.5s [promote]  dispatch-b64b24 now serves 'dispatch', replacing dispatch-57999b - adds ['tool:unit_convert'] with no held-out regression (0.733 vs 0.733)
   operator reviews apv-1 (glossary, permissions ['fs_read']) and approves it
   t+ 14.8s [approval] apv-1 approved by demo-operator
-  t+ 15.0s [spawn]    sentiment-fcc125 (deepen, 64x64x64 lr=0.01) - champion at 0.739 < target 0.97: deepen challenger
-  t+ 15.3s [retire]   sentiment-ad3fbc - superseded by sentiment-fcc125
-  t+ 15.3s [promote]  sentiment-fcc125 now serves 'sentiment', replacing sentiment-ad3fbc - beat the champion on held-out data (0.826 vs 0.739, z=1.00)
-  t+ 15.3s [tool]     'glossary' approved (demo-operator)
-  t+ 15.4s [tool]     'glossary' active - self-tests passed 2/2; 2 routing examples seeded
+  t+ 14.9s [tool]     'glossary' approved (demo-operator)
+  t+ 14.9s [tool]     'glossary' active - self-tests passed 2/2; 2 routing examples seeded
+  t+ 15.0s [spawn]    sentiment-66cdec (deepen, 144x48x48 lr=0.01) - champion at 0.862 < target 0.97: deepen challenger
+  t+ 15.0s [spawn]    dispatch-3c8a02 (expand, 64 lr=0.01) - new labels ['tool:glossary']: growing dispatch-b64b24's output layer
   ... no orders; the architect grows the routing node and the trainer drills it on the new tools
-  t+ 15.5s [spawn]    dispatch-3f3153 (expand, 64 lr=0.01) - new labels ['tool:glossary']: growing dispatch-8b3f8f's output layer
-  t+ 16.0s [retire]   dispatch-8b3f8f - superseded by dispatch-3f3153
-  t+ 16.0s [promote]  dispatch-3f3153 now serves 'dispatch', replacing dispatch-8b3f8f - adds ['tool:glossary'] with no held-out regression (0.786 vs 0.786)
+  t+ 15.7s [retire]   dispatch-b64b24 - superseded by dispatch-3c8a02
+  t+ 15.7s [promote]  dispatch-3c8a02 now serves 'dispatch', replacing dispatch-b64b24 - beat the champion on held-out data (0.882 vs 0.647, z=1.63)
   ... 4s with no orders (rollback window for the superseded router, then disposal)
-  t+ 16.3s [dispose]  sentiment-79e74f - failed challenger (held-out 0.7826 vs champion 0.8261)
-  t+ 16.4s [dispose]  dispatch-76ccbd - failed challenger (held-out 0.4286 vs champion 0.7857)
-  t+ 17.0s [spawn]    sentiment-91d4bd (fresh, 128 lr=0.01) - champion at 0.826 < target 0.97: fresh challenger
-  t+ 17.1s [dispose]  dispatch-dbbe5d - superseded; 3s rollback window elapsed
-  t+ 17.4s [retire]   sentiment-fcc125 - superseded by sentiment-91d4bd
-  t+ 17.4s [promote]  sentiment-91d4bd now serves 'sentiment', replacing sentiment-fcc125 - beat the champion on held-out data (0.875 vs 0.833, z=1.00)
-  t+ 17.5s [spawn]    dispatch-aea159 (fresh, 32 lr=0.01) - champion at 0.812 < target 0.97: fresh challenger
-  t+ 17.5s [dispose]  dispatch-2f9430 - superseded; 3s rollback window elapsed
-  t+ 18.3s [dispose]  sentiment-ad3fbc - superseded; 3s rollback window elapsed
-  t+ 18.4s [dispose]  dispatch-aea159 - failed challenger (held-out 0.8125 vs champion 0.8125)
-  t+ 19.0s [spawn]    sentiment-73d00e (widen, 192 lr=0.01) - champion at 0.880 < target 0.97: widen challenger
-  t+ 19.0s [dispose]  dispatch-8b3f8f - superseded; 3s rollback window elapsed
-  t+ 19.5s [spawn]    dispatch-28bf7c (widen, 96 lr=0.01) - champion at 0.812 < target 0.97: widen challenger
+  t+ 16.8s [dispose]  sentiment-ca7831 - failed challenger (held-out 0.7667 vs champion 0.8333)
+  t+ 16.9s [dispose]  dispatch-29fb55 - failed challenger (held-out 0.4706 vs champion 0.8824)
+  t+ 17.0s [spawn]    sentiment-6f37ac (fresh, 96x32 lr=0.01) - champion at 0.806 < target 0.97: fresh challenger
+  t+ 17.0s [spawn]    dispatch-7e926b (fresh, 96x32 lr=0.01) - champion at 0.882 < target 0.97: fresh challenger
+  t+ 17.2s [dispose]  dispatch-7bb80c - superseded; 3s rollback window elapsed
+  t+ 17.5s [dispose]  dispatch-57999b - superseded; 3s rollback window elapsed
+  t+ 17.6s [dispose]  sentiment-66cdec - failed challenger (held-out 0.8182 vs champion 0.8182)
+  t+ 18.1s [retire]   sentiment-bab187 - superseded by sentiment-6f37ac
+  t+ 18.1s [promote]  sentiment-6f37ac now serves 'sentiment', replacing sentiment-bab187 - beat the champion on held-out data (0.909 vs 0.818, z=1.13)
+  t+ 18.6s [dispose]  dispatch-7e926b - failed challenger (held-out 0.8824 vs champion 0.8824)
+  t+ 18.8s [dispose]  dispatch-b64b24 - superseded; 3s rollback window elapsed
+  t+ 19.1s [spawn]    sentiment-7ec744 (widen, 144x48 lr=0.01) - champion at 0.914 < target 0.97: widen challenger
+  t+ 19.1s [spawn]    dispatch-92699b (widen, 96 lr=0.01) - champion at 0.882 < target 0.97: widen challenger
   ... idle period done: 5 lessons from teachers, 6 live nodes
 
 == Phase 4 - orders that need the new tools ==
@@ -106,121 +110,123 @@ teachers in use: ['human', 'heuristic'] (offline; --ollama MODEL or --llm to add
       routine  [skill:urgency | conf 0.95 | mixed]
   > what is the square root of 81
       9  [tool:calculator2 | conf 0.99 | nodes]
-  t+ 20.2s [retire]   sentiment-91d4bd - superseded by sentiment-73d00e
-  t+ 20.2s [promote]  sentiment-73d00e now serves 'sentiment', replacing sentiment-91d4bd - beat the champion on held-out data (0.963 vs 0.889, z=1.41)
-  t+ 20.4s [retire]   dispatch-3f3153 - superseded by dispatch-28bf7c
-  t+ 20.4s [promote]  dispatch-28bf7c now serves 'dispatch', replacing dispatch-3f3153 - beat the champion on held-out data (0.875 vs 0.812, z=1.00)
-  t+ 20.4s [dispose]  sentiment-fcc125 - superseded; 3s rollback window elapsed
-  t+ 21.1s [spawn]    sentiment-2735dd (retune, 192 lr=0.005) - champion at 0.963 < target 0.97: retune challenger
-  t+ 21.6s [spawn]    dispatch-758761 (retune, 96 lr=0.02) - champion at 0.875 < target 0.97: retune challenger
-  t+ 23.1s [spawn]    sentiment-9e8b2d (deepen, 192x192 lr=0.01) - champion at 0.966 < target 0.97: deepen challenger
-  t+ 23.3s [dispose]  sentiment-91d4bd - superseded; 3s rollback window elapsed
-  t+ 23.4s [dispose]  dispatch-3f3153 - superseded; 3s rollback window elapsed
-  t+ 23.6s [spawn]    dispatch-34f650 (deepen, 96x96 lr=0.01) - champion at 0.882 < target 0.97: deepen challenger
-  -> 80 orders: 80 correct, served by nodes 79, teachers 0, mixed 1; 4 background lessons during the phase
+  t+ 19.9s [retire]   dispatch-3c8a02 - superseded by dispatch-92699b
+  t+ 19.9s [promote]  dispatch-92699b now serves 'dispatch', replacing dispatch-3c8a02 - beat the champion on held-out data (0.941 vs 0.882, z=1.00)
+  t+ 20.6s [dispose]  sentiment-7ec744 - failed challenger (held-out 0.9143 vs champion 0.9143)
+  t+ 21.1s [spawn]    sentiment-c3849d (retune, 96x32 lr=0.02) - champion at 0.914 < target 0.97: retune challenger
+  t+ 21.1s [spawn]    dispatch-e00dcc (retune, 96 lr=0.02) - champion at 0.950 < target 0.97: retune challenger
+  t+ 21.2s [dispose]  sentiment-bab187 - superseded; 3s rollback window elapsed
+  t+ 21.9s [retire]   dispatch-92699b - superseded by dispatch-e00dcc
+  t+ 21.9s [promote]  dispatch-e00dcc now serves 'dispatch', replacing dispatch-92699b - beat the champion on held-out data (1.000 vs 0.957, z=1.00)
+  t+ 22.6s [retire]   sentiment-6f37ac - superseded by sentiment-c3849d
+  t+ 22.6s [promote]  sentiment-c3849d now serves 'sentiment', replacing sentiment-6f37ac - beat the champion on held-out data (0.921 vs 0.868, z=1.00)
+  t+ 22.9s [dispose]  dispatch-3c8a02 - superseded; 3s rollback window elapsed
+  t+ 23.1s [spawn]    sentiment-ea02e9 (deepen, 96x32x32 lr=0.02) - champion at 0.923 < target 0.97: deepen challenger
+  t+ 23.6s [retire]   sentiment-c3849d - superseded by sentiment-ea02e9
+  t+ 23.6s [promote]  sentiment-ea02e9 now serves 'sentiment', replacing sentiment-c3849d - beat the champion on held-out data (0.951 vs 0.927, z=1.00)
+  -> 80 orders: 78 correct, served by nodes 77, teachers 1, mixed 2; 6 background lessons during the phase
 
 == Human feedback - an operator reviews answers ==
-  no mistakes in phase 4; the operator confirms one answer instead (confirmations teach too)
-  t+ 24.4s [lesson]   human taught 1 x urgency=routine (human teaching)
-  ord-48eab925 'what priority is this: Whenever you get a chance, update t'
-      system said 'routine' via skill:urgency; operator confirms routine: learned: urgency('Whenever you get a chance, update the database docs.') = routine
+  t+ 23.7s [lesson]   human taught 1 x dispatch=skill:urgency (human teaching)
+  ord-c678dcf3 'what priority is this: Reminder: database review next week'
+      system said 'neutral' via skill:sentiment; operator corrects it to skill:urgency: learned: dispatch('what priority is this: Reminder: database review next week.') = skill:urgency
+  t+ 23.7s [lesson]   human taught 1 x sentiment=neutral (human teaching)
+  ord-8d3b03bf 'sentiment: The pizza is grey.'
+      system said 'negative' via skill:sentiment; operator corrects it to neutral: learned: sentiment('The pizza is grey.') = neutral
   ... 3s with no orders (human examples are weighted 3x and folded into training)
-  t+ 25.6s [retire]   sentiment-73d00e - superseded by sentiment-2735dd
-  t+ 25.6s [promote]  sentiment-2735dd now serves 'sentiment', replacing sentiment-73d00e - beat the champion on held-out data (1.000 vs 0.970, z=1.00)
-  t+ 25.8s [dispose]  dispatch-758761 - failed challenger (held-out 0.8824 vs champion 0.8824)
-  t+ 25.9s [spawn]    dispatch-b6c0ec (fresh, 96x32 lr=0.01) - champion at 0.882 < target 0.97: fresh challenger
-  t+ 26.0s [dispose]  sentiment-9e8b2d - failed challenger (held-out 0.9394 vs champion 1.0)
-  t+ 26.9s [dispose]  dispatch-34f650 - failed challenger (held-out 0.8235 vs champion 0.8824)
-  t+ 27.0s [dispose]  dispatch-b6c0ec - failed challenger (held-out 0.8824 vs champion 0.8824)
-  ... idle period done: 1 lessons from teachers, 4 live nodes
+  t+ 24.9s [dispose]  dispatch-92699b - superseded; 3s rollback window elapsed
+  t+ 25.2s [spawn]    sentiment-4b9190 (fresh, 64 lr=0.02) - champion at 0.954 < target 0.97: fresh challenger
+  t+ 25.7s [dispose]  sentiment-6f37ac - superseded; 3s rollback window elapsed
+  t+ 26.3s [dispose]  sentiment-4b9190 - failed challenger (held-out 0.9318 vs champion 0.9545)
+  t+ 26.6s [dispose]  sentiment-c3849d - superseded; 3s rollback window elapsed
+  ... idle period done: 4 lessons from teachers, 3 live nodes
 
 == Phase 5 - steady state ==
   > meaning of pragmatic
       pragmatic: dealing with things sensibly and realistically  [tool:glossary | conf 1.00 | nodes]
   > how does this review sound: Our coffee turned out dreadful.
-      negative  [skill:sentiment | conf 0.87 | nodes]
+      negative  [skill:sentiment | conf 0.96 | nodes]
   > urgency: Whenever you get a chance, update the checkout page docs.
       routine  [skill:urgency | conf 1.00 | nodes]
-  t+ 27.9s [spawn]    dispatch-005e19 (widen, 144 lr=0.01) - champion at 0.882 < target 0.97: widen challenger
-  t+ 28.6s [dispose]  sentiment-73d00e - superseded; 3s rollback window elapsed
-  t+ 29.1s [retire]   dispatch-28bf7c - superseded by dispatch-005e19
-  t+ 29.1s [promote]  dispatch-005e19 now serves 'dispatch', replacing dispatch-28bf7c - beat the champion on held-out data (0.889 vs 0.833, z=1.00)
-  t+ 30.0s [spawn]    dispatch-1c0217 (retune, 144 lr=0.02) - champion at 0.895 < target 0.97: retune challenger
-  -> 60 orders: 58 correct, served by nodes 58, teachers 1, mixed 1; 0 background lessons during the phase
+  t+ 27.2s [spawn]    sentiment-839680 (widen, 144x48x48 lr=0.02) - champion at 0.956 < target 0.97: widen challenger
+  t+ 28.7s [dispose]  sentiment-839680 - failed challenger (held-out 0.8913 vs champion 0.9565)
+  t+ 29.3s [spawn]    sentiment-99ffe6 (retune, 96x32x32 lr=0.04) - champion at 0.958 < target 0.97: retune challenger
+  -> 60 orders: 58 correct, served by nodes 59, teachers 1, mixed 0; 5 background lessons during the phase
   ... 2s with no orders ()
-  t+ 31.3s [dispose]  dispatch-1c0217 - failed challenger (held-out 0.9 vs champion 0.9)
-  t+ 32.0s [spawn]    dispatch-467468 (deepen, 144x144 lr=0.01) - champion at 0.900 < target 0.97: deepen challenger
-  t+ 32.1s [dispose]  dispatch-28bf7c - superseded; 3s rollback window elapsed
-  ... idle period done: 0 lessons from teachers, 4 live nodes
+  t+ 30.7s [dispose]  sentiment-99ffe6 - failed challenger (held-out 0.902 vs champion 0.9412)
+  t+ 31.3s [spawn]    sentiment-35ca32 (fresh, 128 lr=0.02) - champion at 0.943 < target 0.97: fresh challenger
+  t+ 32.0s [retire]   sentiment-ea02e9 - superseded by sentiment-35ca32
+  t+ 32.0s [promote]  sentiment-35ca32 now serves 'sentiment', replacing sentiment-ea02e9 - beat the champion on held-out data (1.000 vs 0.981, z=1.00)
+  ... idle period done: 2 lessons from teachers, 4 live nodes
 
 == Results ==
 phase          orders  correct  by nodes  by teachers  mixed  avg ms
-1 cold start       70      99%       40%          54%     6%    14.4
-2 warm             70      96%       69%          21%    10%    11.4
-4 new tools        80     100%       99%           0%     1%    22.4
-5 steady           60      97%       97%           2%     2%    27.1
+1 cold start       70      99%       40%          57%     3%    13.8
+2 warm             70      89%       86%           6%     9%    11.8
+4 new tools        80      98%       96%           1%     2%    18.7
+5 steady           60      97%       98%           2%     0%    24.3
 
-node life cycle: 28 built, 13 promoted, 10 retired, 24 disposed; 4 live now. 26 background lessons taken.
+node life cycle: 29 built, 14 promoted, 11 retired, 25 disposed; 4 live now. 40 background lessons taken.
 
-NeuroMesh  up 33s  orders=280  inflight=0  background duty=14%
+NeuroMesh  up 32s  orders=280  inflight=0  background duty=15%
 compute: numpy 2.5.3 on cpu
-nodes: 4 live, 28 ever built, 24 disposed   recent orders served by: {'nodes': 98, 'mixed': 1, 'teachers': 1}
+nodes: 4 live, 29 ever built, 25 disposed   recent orders served by: {'nodes': 98, 'mixed': 1, 'teachers': 1}
 
 capability   examples  champion                 arch             held-out  candidates
-sentiment         188  sentiment-2735dd         192 lr=0.005        1.000  -
-urgency            41  urgency-347a2e           64 lr=0.01          1.000  -
-dispatch           91  dispatch-005e19          144 lr=0.01         0.900  dispatch-467468(0.850)
+sentiment         259  sentiment-35ca32         128 lr=0.02         1.000  -
+urgency            40  urgency-695a9e           64 lr=0.01          1.000  -
+dispatch          129  dispatch-e00dcc          96 lr=0.02          1.000  -
 
 tools: calculator=retired, calculator2=active, glossary=active, shell_exec=rejected, unit_convert=active, word_stats=active
 teachers (in order asked):
   human                                      ready; 0 lessons
-  heuristic                                  ready; 117 lessons
+  heuristic                                  ready; 111 lessons
   ollama     ollama:auto                     off (not listed in teachers.order); 0 lessons
   llm        anthropic:claude-haiku-5-5      off (not listed in teachers.order); 0 lessons
 
 directive scorecard:
-  [open] G1-competence    min_capability_accuracy = 0.9  (target >= 0.95)
+  [met ] G1-competence    min_capability_accuracy = 1.0  (target >= 0.95)
   [met ] G2-autonomy      node_coverage = 0.98  (target >= 0.8)
   [met ] G3-tool-fluency  tool_integration = 1.0  (target >= 1.0)
   [met ] G4-economy       live_nodes = 4  (target <= 20)
 
 node lineage (every node ever built):
 dispatch:
-  `-- dispatch-dbbe5d  [disposed]  seed [64] lr=0.01  held-out=0.538  steps=13  labels=4
-      |-- dispatch-398851  [disposed]  widen [96] lr=0.01  held-out=0.727  steps=8  labels=4
-      |-- dispatch-3e604d  [disposed]  retune [64] lr=0.005  held-out=0.727  steps=8  labels=4
-      |-- dispatch-76ccbd  [disposed]  deepen [64, 64] lr=0.01  held-out=0.429  steps=8  labels=4
-      `-- dispatch-2f9430  [disposed]  expand [64] lr=0.01  held-out=0.615  steps=3  labels=5
-          `-- dispatch-8b3f8f  [disposed]  expand [64] lr=0.01  held-out=0.786  steps=3  labels=6
-              `-- dispatch-3f3153  [disposed]  expand [64] lr=0.01  held-out=0.812  steps=6  labels=7
-                  |-- dispatch-aea159  [disposed]  fresh [32] lr=0.01  held-out=0.812  steps=8  labels=6
-                  `-- dispatch-28bf7c  [disposed]  widen [96] lr=0.01  held-out=0.833  steps=7  labels=7
-                      |-- dispatch-758761  [disposed]  retune [96] lr=0.02  held-out=0.882  steps=8  labels=7
-                      |-- dispatch-34f650  [disposed]  deepen [96, 96] lr=0.01  held-out=0.824  steps=8  labels=7
-                      |-- dispatch-b6c0ec  [disposed]  fresh [96, 32] lr=0.01  held-out=0.882  steps=8  labels=6
-                      `-- dispatch-005e19  [CHAMPION]  widen [144] lr=0.01  held-out=0.900  steps=9  labels=7
-                          |-- dispatch-1c0217  [disposed]  retune [144] lr=0.02  held-out=0.900  steps=8  labels=7
-                          `-- dispatch-467468  [candidate]  deepen [144, 144] lr=0.01  held-out=0.850  steps=6  labels=7
+  `-- dispatch-7bb80c  [disposed]  seed [64] lr=0.01  held-out=0.615  steps=15  labels=4
+      |-- dispatch-546530  [disposed]  widen [96] lr=0.01  held-out=0.923  steps=8  labels=4
+      |-- dispatch-ffaed3  [disposed]  retune [64] lr=0.02  held-out=0.923  steps=8  labels=4
+      |-- dispatch-29fb55  [disposed]  deepen [64, 64] lr=0.01  held-out=0.471  steps=8  labels=4
+      `-- dispatch-57999b  [disposed]  expand [64] lr=0.01  held-out=0.733  steps=3  labels=5
+          `-- dispatch-b64b24  [disposed]  expand [64] lr=0.01  held-out=0.647  steps=3  labels=6
+              `-- dispatch-3c8a02  [disposed]  expand [64] lr=0.01  held-out=0.882  steps=3  labels=7
+                  |-- dispatch-7e926b  [disposed]  fresh [96, 32] lr=0.01  held-out=0.882  steps=8  labels=6
+                  `-- dispatch-92699b  [disposed]  widen [96] lr=0.01  held-out=0.957  steps=3  labels=7
+                      `-- dispatch-e00dcc  [CHAMPION]  retune [96] lr=0.02  held-out=1.000  steps=4  labels=7
 sentiment:
-  `-- sentiment-300fad  [disposed]  seed [64] lr=0.01  held-out=0.714  steps=6  labels=3
-      |-- sentiment-dfcaf7  [disposed]  widen [96] lr=0.01  held-out=0.875  steps=8  labels=3
-      |-- sentiment-1ec275  [disposed]  retune [64] lr=0.02  held-out=0.615  steps=8  labels=3
-      `-- sentiment-ad3fbc  [disposed]  deepen [64, 64] lr=0.01  held-out=0.739  steps=8  labels=3
-          |-- sentiment-aa48e2  [disposed]  fresh [32] lr=0.01  held-out=0.812  steps=8  labels=3
-          |-- sentiment-100ae3  [disposed]  widen [96, 96] lr=0.01  held-out=0.619  steps=8  labels=3
-          |-- sentiment-79e74f  [disposed]  retune [64, 64] lr=0.02  held-out=0.783  steps=8  labels=3
-          `-- sentiment-fcc125  [disposed]  deepen [64, 64, 64] lr=0.01  held-out=0.833  steps=3  labels=3
-              `-- sentiment-91d4bd  [disposed]  fresh [128] lr=0.01  held-out=0.889  steps=4  labels=3
-                  `-- sentiment-73d00e  [disposed]  widen [192] lr=0.01  held-out=0.970  steps=5  labels=3
-                      |-- sentiment-2735dd  [CHAMPION]  retune [192] lr=0.005  held-out=1.000  steps=9  labels=3
-                      `-- sentiment-9e8b2d  [disposed]  deepen [192, 192] lr=0.01  held-out=0.939  steps=8  labels=3
+  `-- sentiment-0b34df  [disposed]  seed [64] lr=0.01  held-out=0.812  steps=5  labels=3
+      |-- sentiment-00835c  [disposed]  widen [96] lr=0.01  held-out=0.889  steps=8  labels=3
+      |-- sentiment-222740  [disposed]  retune [64] lr=0.02  held-out=0.909  steps=8  labels=3
+      |-- sentiment-6c4ed3  [disposed]  deepen [64, 64] lr=0.01  held-out=0.917  steps=8  labels=3
+      `-- sentiment-96799c  [disposed]  fresh [96, 32] lr=0.01  held-out=0.682  steps=3  labels=3
+          `-- sentiment-bab187  [disposed]  widen [144, 48] lr=0.01  held-out=0.818  steps=3  labels=3
+              |-- sentiment-ca7831  [disposed]  retune [144, 48] lr=0.02  held-out=0.767  steps=8  labels=3
+              |-- sentiment-66cdec  [disposed]  deepen [144, 48, 48] lr=0.01  held-out=0.818  steps=8  labels=3
+              `-- sentiment-6f37ac  [disposed]  fresh [96, 32] lr=0.01  held-out=0.868  steps=7  labels=3
+                  |-- sentiment-7ec744  [disposed]  widen [144, 48] lr=0.01  held-out=0.914  steps=8  labels=3
+                  `-- sentiment-c3849d  [disposed]  retune [96, 32] lr=0.02  held-out=0.927  steps=8  labels=3
+                      `-- sentiment-ea02e9  [retired]  deepen [96, 32, 32] lr=0.02  held-out=0.982  steps=6  labels=3
+                          |-- sentiment-4b9190  [disposed]  fresh [64] lr=0.02  held-out=0.932  steps=8  labels=3
+                          |-- sentiment-839680  [disposed]  widen [144, 48, 48] lr=0.02  held-out=0.891  steps=8  labels=3
+                          |-- sentiment-99ffe6  [disposed]  retune [96, 32, 32] lr=0.04  held-out=0.902  steps=8  labels=3
+                          `-- sentiment-35ca32  [CHAMPION]  fresh [128] lr=0.02  held-out=1.000  steps=4  labels=3
 urgency:
-  `-- urgency-347a2e  [CHAMPION]  seed [64] lr=0.01  held-out=1.000  steps=11  labels=2
+  `-- urgency-695a9e  [CHAMPION]  seed [64] lr=0.01  held-out=1.000  steps=9  labels=2
+      |-- urgency-ee0cb9  [disposed]  widen [96] lr=0.01  held-out=1.000  steps=8  labels=2
+      `-- urgency-272821  [disposed]  retune [64] lr=0.02  held-out=1.000  steps=8  labels=2
 
 == Kill switch - the operator creates state/STOP ==
-  t+ 33.1s [dispose]  dispatch-467468 - failed challenger (held-out 0.85 vs champion 0.9)
-  t+ 33.1s [HALT]     kill switch file present (STOP) (by kill-switch)
+  t+ 32.1s [HALT]     kill switch file present (STOP) (by kill-switch)
   > what is 2 + 2
       (not fulfilled) system halted by operator: kill switch file present (STOP)  [- | conf 0.00 | none]
 
-audit log: 101 entries, e.g. node.spawned=28, node.disposed=25, node.promoted=13, node.retired=10, update.rejected=9, tool.active=5, allow.tool=4, approval.approved=1
+audit log: 116 entries, e.g. node.spawned=29, node.disposed=25, update.rejected=20, node.promoted=14, node.retired=11, tool.active=5, allow.tool=4, teach=2

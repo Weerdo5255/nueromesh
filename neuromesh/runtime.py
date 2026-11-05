@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .activity import ActivityLog, ActivityTracker
 from .agents import Architect, Curator, Evaluator, Explorer, Orchestrator, Sentinel, Trainer
 from .backend import select_backend
 from .bus import Bus
@@ -48,6 +49,9 @@ class System:
         self.rng = random.Random(seed)
 
         self.bus = Bus()
+        self.activity = ActivityTracker()                               # work in flight, for live views
+        self.log = ActivityLog(self.state_dir / "activity.log")         # one line per thing that happened
+        self.bus.listen(self.log.on_event)
         tp = self.directives.teachers
         self.store = Store(self.state_dir / "neuromesh.db", self.directives.nodes.holdout_percent,
                            priorities=tp.weights)
@@ -62,6 +66,7 @@ class System:
             teachers[name] = LLMTeacher(name, cfg, self.guardian, self.bus)
         teachers["heuristic"] = HeuristicTeacher(seed)
         self.teachers = TeacherPool(teachers, tp.order, tp.weights)
+        self.teachers.activity, self.teachers.bus = self.activity, self.bus
 
         self.capabilities: dict[str, CapabilitySpec] = {}
         self._load_capabilities(Path(capabilities_path or self.root / "capabilities.toml"))
@@ -129,7 +134,8 @@ class System:
         self.served.append(result.served_by)
         self.store.save_order(result.order_id, result.text, result.to_dict())
         self.bus.publish("order.done", order=result.order_id, route=result.route, ok=result.ok,
-                         served_by=result.served_by, latency_ms=result.latency_ms)
+                         served_by=result.served_by, latency_ms=result.latency_ms,
+                         text=result.text[:200], output=str(result.output)[:200], note=result.note)
 
     # -------------------------------------------------------------- encoding
     def encode(self, text: str) -> np.ndarray:

@@ -91,7 +91,8 @@ class Orchestrator(Agent):
     async def _handle(self, order, sem) -> None:
         t0 = time.perf_counter()
         try:
-            result = await self.fulfil(order)
+            with self.sys.activity.track("order", order.source, " ".join(order.text.split())[:100]):
+                result = await self.fulfil(order)
         except Exception as exc:
             self.log.exception("order %s failed", order.id)
             result = Result(order.id, order.text, None, None, 0.0, ok=False, note=f"internal error: {exc}")
@@ -308,6 +309,13 @@ class Trainer(Agent):
             node.examples_seen = count
             node.train_steps += 1
             return
+        with s.activity.track("training", "trainer", f"{node.id} [{node.status}, {node.arch.describe()}] "
+                              f"slice {node.train_steps + 1} on {len(train)} examples", node=node.id):
+            await self._train_slice(node, train, count)
+
+    async def _train_slice(self, node: NeuralNode, train: list, count: int) -> None:
+        s = self.sys
+        cap = node.capability
         X = await self.bg(s.encode_many, [e.text for e in train])
         y = node.label_indices([e.label for e in train])
         w = np.array([e.weight for e in train], dtype=np.float32)
@@ -422,13 +430,17 @@ class Evaluator(Agent):
             labels = [e.label for e in hold]
             oks: dict[str, np.ndarray] = {}
             if hold:
-                X = await self.bg(s.encode_many, [e.text for e in hold])
-                for n in nodes:
-                    ok = await self.bg(n.correct, X, labels)
-                    oks[n.id] = ok
-                    n.metrics["holdout_acc"] = round(float(ok.mean()), 4)
-                    n.metrics["holdout_n"] = len(labels)
-                    n.metrics["per_label_recall"] = _per_label_recall(ok, labels)
+                with s.activity.track("evaluation", "evaluator",
+                                      f"{cap}: {len(nodes)} node(s) on {len(hold)} held-out examples"):
+                    X = await self.bg(s.encode_many, [e.text for e in hold])
+                    for n in nodes:
+                        ok = await self.bg(n.correct, X, labels)
+                        oks[n.id] = ok
+                        n.metrics["holdout_acc"] = round(float(ok.mean()), 4)
+                        n.metrics["holdout_n"] = len(labels)
+                        n.metrics["per_label_recall"] = _per_label_recall(ok, labels)
+                s.bus.publish("node.evaluated", capability=cap, holdout=len(hold),
+                              results={n.id: n.metrics["holdout_acc"] for n in nodes})
             for n in nodes:
                 n.metrics["evaluated_steps"] = n.train_steps
                 s.registry.persist(n)
@@ -599,13 +611,15 @@ class Explorer(Agent):
             return
         timeout = tool.manifest.timeout_s or s.directives.tools.default_timeout_s
         passed, failures = 0, []
-        for ex in examples:
-            run = await s.sandbox.run(tool, ex["input"], timeout)
-            if run.ok and outputs_match(run.output, ex.get("expect")):
-                passed += 1
-            else:
-                failures.append({"input": ex["input"], "expected": ex.get("expect"),
-                                 "got": run.output, "error": run.error})
+        with s.activity.track("self-test", "explorer", f"{tool.name} v{tool.manifest.version}: "
+                              f"{len(examples)} sandboxed self-tests"):
+            for ex in examples:
+                run = await s.sandbox.run(tool, ex["input"], timeout)
+                if run.ok and outputs_match(run.output, ex.get("expect")):
+                    passed += 1
+                else:
+                    failures.append({"input": ex["input"], "expected": ex.get("expect"),
+                                     "got": run.output, "error": run.error})
         rate = passed / len(examples)
         if rate >= s.directives.tools.self_test_pass_rate:
             s.activate_tool(tool, f"self-tests passed {passed}/{len(examples)}")

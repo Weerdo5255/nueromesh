@@ -12,6 +12,7 @@ The TeacherPool asks them in the order set by the directives.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -467,6 +468,8 @@ class TeacherPool:
         self.order = list(order)
         self.weights = weights
         self.lessons: dict[str, int] = defaultdict(int)
+        self.activity = None  # an ActivityTracker, so a live view can show lessons in flight
+        self.bus = None
 
     @property
     def human(self) -> HumanTeacher:
@@ -478,24 +481,36 @@ class TeacherPool:
     def weight(self, source: str) -> float:
         return float(self.weights.get(source, 1.0))
 
+    def _track(self, teacher: Teacher, text: str):
+        if self.activity is None or not isinstance(teacher, LLMTeacher):
+            return contextlib.nullcontext()  # instant teachers are not worth showing in flight
+        return self.activity.track("lesson", teacher.name, text, model=getattr(teacher, "model", ""))
+
     async def label(self, spec: CapabilitySpec, text: str) -> Lesson | None:
         for teacher in self.ranked():
-            lesson = await teacher.label(spec, text)
+            t0 = time.time()
+            with self._track(teacher, f"labelling {spec.name}: {' '.join(text.split())[:80]}"):
+                lesson = await teacher.label(spec, text)
             if lesson and lesson.label:
                 self.lessons[teacher.name] += 1
+                if self.bus is not None:
+                    self.bus.publish("lesson.label", teacher=teacher.name, capability=spec.name,
+                                     text=text[:200], label=lesson.label, seconds=round(time.time() - t0, 3))
                 return lesson
         return None
 
     async def generate(self, spec: CapabilitySpec, label: str, n: int) -> tuple[list[str], str]:
         for teacher in self.ranked():
-            texts = await teacher.generate(spec, label, n)
+            with self._track(teacher, f"writing {n} examples of {spec.name}={label}"):
+                texts = await teacher.generate(spec, label, n)
             if texts:
                 return texts, teacher.name
         return [], ""
 
     async def answer(self, text: str) -> tuple[str, str] | None:
         for teacher in self.ranked():
-            reply = await teacher.answer(text)
+            with self._track(teacher, f"answering: {' '.join(text.split())[:80]}"):
+                reply = await teacher.answer(text)
             if reply:
                 return reply, teacher.name
         return None

@@ -12,7 +12,7 @@ a Guardian enforces in code.
 
 ```
 python -m neuromesh demo      # 30-second offline demo of the whole life cycle
-python -m neuromesh run       # interactive console
+python -m neuromesh run       # live console: node network, lessons in progress, activity log
 python -m neuromesh serve     # daemon + HTTP API on 127.0.0.1:8765
 python -m neuromesh bench     # CPU vs GPU speed for node training and inference
 python -m neuromesh teachers  # which teachers are available (Ollama, Claude); --test for a live lesson
@@ -106,17 +106,76 @@ Everything else in the file is tunable policy.
 
 ## Using it
 
-### Console
+### Live console
+`python -m neuromesh run` opens a live view in the terminal:
+
 ```
-neuromesh> what is 12 * 7
-[ord-3f2a91c0] 84  [tool:calculator | conf 0.97 | nodes]
-neuromesh> sentiment: the hotel was lovely but the staff were rude
-neuromesh> /status          /lineage          /tools
-neuromesh> /approvals       /approve apv-1    /deny apv-2
-neuromesh> /feedback ord-3f2a91c0 tool:calculator
-neuromesh> /define language english,french,spanish :: Which language a sentence is in
-neuromesh> /questions       /answer q1 french
-neuromesh> /rollback sentiment     /pause   /halt   /resume
+ NeuroMesh │ numpy 2.5.3 on cpu │ up 15s │ orders 30 │ nodes 6 live / 15 built │ background 3% │ RUNNING
+─ network: how orders reach nodes and tools ──────────────────────────│─ activity log [all] ──────────────────────────
+ orders                                                               │ 12:58:43 eval     sentiment on 16 held-out:
+  └─▶ router ★ dispatch-22b4ef 64 lr=0.01 · held-out 1.000 · 15 serve │                   sentiment-d32e0a=0.5,
+       ↳ challenger dispatch-7fd432 expand 64 lr=0.01 · slice 7/8 · h │                   sentiment-f7d077=0.5625
+     ├─▶ skill:sentiment ⇒ ★ sentiment-f7d077 64 lr=0.01 · held-out 0 │ 12:58:43 retire   sentiment-d32e0a -
+     │                     ↳ retired sentiment-a607e3 · held-out 0.30 │                   superseded by
+     │                     ↳ retired sentiment-d32e0a · held-out 0.50 │                   sentiment-f7d077
+     ├─▶ skill:urgency   ⇒ ★ urgency-6fdfc0 64 lr=0.01 · held-out 1.0 │ 12:58:43 promote  sentiment-f7d077 now serves
+     ├─▶ tool:calculator ⇒ calculator v1.0.0 [active] 10 runs         │                   'sentiment', replacing
+     ├─▶ tool:word_stats ⇒ word_stats v1.0.0 [active] 4 runs          │                   sentiment-d32e0a - beat the
+     └─▶ answer:direct   ⇒ teachers: none available (queued for a hum │                   champion on held-out data
+ nodes: 6 live · 15 built · 9 disposed                                │                   (0.562 vs 0.500, z=1.00)
+                                                                      │ 12:58:43 train    dispatch-7fd432 slice 6 on
+                                                                      │                   34 examples loss 0.001
+─ lessons and work in progress ───────────────────────────────────────│ 12:58:43 eval     sentiment on 16 held-out:
+ ✓ evaluation evaluator dispatch: 2 node(s) on 6 held-out examples x7 │                   sentiment-f7d077=0.5625
+ ✓ evaluation evaluator sentiment: 1 node(s) on 18 held-out examples  │ 12:58:43 eval     dispatch on 6 held-out:
+ ✓ training   trainer   dispatch-7fd432 [candidate, 64 lr=0.01] slice │                   dispatch-22b4ef=1.0,
+ ✓ evaluation evaluator sentiment: 1 node(s) on 16 held-out examples  │                   dispatch-7fd432=1.0
+ ✓ training   trainer   dispatch-7fd432 [candidate, 64 lr=0.01] slice │ 12:58:43 lesson   heuristic taught 8 x
+ ✓ evaluation evaluator sentiment: 2 node(s) on 16 held-out examples  │                   sentiment=negative (lowest
+ lessons given so far: heuristic 23                                   │                   recall 0.00 on 'negative')
+ teachers: human ✓ · ollama:auto ✗ · llm:claude-haiku-5-5 ✗ · heurist │ 12:58:43 train    dispatch-7fd432 slice 7 on
+ goals:    G1:0.556 >=0.95 ✗ · G2:0.4 >=0.8 ✗ · G3:1 >=1 ✓ · G4:6 <=2 │                   34 examples loss 0.001
+─ result ─────────────────────────────────────────────────────────────│ 12:58:43 eval     sentiment on 18 held-out:
+ [ord-54f083cb] positive  [skill:sentiment | conf 0.95 | teachers]    │                   sentiment-f7d077=0.5556
+    . explicit route skill:sentiment                                  │ 12:58:43 eval     dispatch on 6 held-out:
+    . sentiment -> positive via teacher:heuristic (0.95)              │                   dispatch-22b4ef=1.0,
+neuromesh>                                                            │                   dispatch-7fd432=1.0
+```
+
+- **Network** (top left): how orders reach the nodes. Orders go to the router node, which
+  routes to each skill node or tool. Every champion is marked with a star; its challengers
+  (how they were derived, training progress, held-out score) and retired nodes (with the
+  countdown to disposal) hang underneath it. Pending, rejected and quarantined tools are listed too.
+- **Lessons and work in progress**: lessons teachers are giving right now (an Ollama call
+  shows with a spinner and a timer), training slices, evaluations, tool self-tests and
+  orders in flight, then the work that just finished.
+- **Teachers and goals**: which teachers are up, and the directive scorecard.
+- **Activity log** (right): everything that happens, one line each: orders, lessons,
+  training, evaluations, node births, promotions, retirements and disposals, tool vetting,
+  approvals and Guardian denials. Also written to `state/activity.log`.
+- **Prompt** (bottom left): orders and `/commands` as before; the result appears just above it.
+
+Keys: **Enter** send, **Up/Down** history, **Left/Right/Home/End**, **Ctrl-U** clear the line,
+**Ctrl-W** delete a word, **Tab** switch the left panel between the network and the output of
+the last command, **PgUp/PgDn** scroll the log, **Ctrl-C** or `/quit` stop. `/log important`
+hides routine lines (training, evaluations, single lessons); `/log all` brings them back.
+
+- `run --plain` gives the old line-by-line console; it is also used automatically when input
+  is piped or there is no terminal.
+- `run --ascii` (or `NEUROMESH_ASCII=1`) draws without Unicode, for terminals that need it.
+- `serve --live` shows the same view, prompt included, while serving the HTTP API.
+- Uses Python's built-in `curses`: nothing to install on macOS or Linux. On Windows, run
+  `pip install windows-curses` (without it, the plain console is used).
+
+Commands:
+```
+what is 12 * 7                      sentiment: the hotel was lovely but the staff were rude
+/status    /lineage    /tools    /teachers
+/approvals    /approve apv-1    /deny apv-2
+/feedback ord-3f2a91c0 tool:calculator
+/define language english,french,spanish :: Which language a sentence is in
+/questions    /answer q1 french
+/rollback sentiment    /pause    /halt    /resume
 ```
 
 ### HTTP API (`serve`)
@@ -285,6 +344,9 @@ plugins/                 installed tools (calculator, word_stats)
 examples/incoming_plugins/  tools the demo installs at runtime
 neuromesh/
   runtime.py             System: wiring, cascade, learning, tool activation, status
+  live.py                live console (curses): network, work in progress, activity log, prompt
+  activity.py            work-in-flight tracker and the activity log
+  commands.py            orders and /commands shared by the live and plain consoles
   agents.py              the seven agents
   nodes.py               NeuralNode + derivations (expand / widen / deepen / retune / fresh)
   backend.py             compute backends: numpy (CPU), PyTorch (CUDA / ROCm / MPS), CuPy
@@ -295,9 +357,9 @@ neuromesh/
   tools.py               manifests, sandbox, discovery
   store.py               SQLite: experience, lineage, tools, orders, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   50 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
-                         full system, compute backends (4 GPU parity tests run where PyTorch or
-                         CuPy is installed)
+tests/                   56 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+                         full system, live console (incl. a pseudo-terminal run), compute
+                         backends (4 GPU parity tests run where PyTorch or CuPy is installed)
 ```
 
 State lives in `state/` (SQLite database, node weights, log). Delete it to start fresh.
