@@ -32,6 +32,8 @@ class CapabilitySpec:
     label_templates: dict[str, list[str]] = field(default_factory=dict)
     fillers: dict[str, list[str]] = field(default_factory=dict)
     kind: str = "classify"
+    internal: bool = False   # used by the mesh itself (emotional engines): never a route for orders
+    teachers: list[str] = field(default_factory=list)  # only these teachers, in this order ([] = all)
     created_at: float = field(default_factory=time.time)
 
     def active_labels(self) -> list[str]:
@@ -94,9 +96,17 @@ class Result:
     note: str = ""
     latency_ms: float = 0.0
     knowledge: str = ""      # "recalled" (answered from retained knowledge) | "researched" | ""
+    disposition: str = ""    # what the temperament did to the answer ("" = nothing; see temperament.py)
+    original: Any = None     # the unchanged answer when the temperament changed or held it (operator-only)
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    def public_dict(self) -> dict:
+        """What a user may see: everything but the unchanged answer of a held or withheld reply."""
+        d = self.to_dict()
+        d.pop("original", None)
+        return d
 
     def summary(self) -> str:
         out = self.output if self.ok else f"(not fulfilled) {self.note}"

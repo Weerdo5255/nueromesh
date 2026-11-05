@@ -29,6 +29,10 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, system.store.recent_audit(int(query.get("n", 50)))
         if path == "/questions":
             return 200, list(system.teachers.human.questions)
+        if path == "/temperament":
+            return 200, system.affect.status()
+        if path == "/why":
+            return 200, {"order": query.get("order", ""), "lines": system.affect.explain(query.get("order", ""))}
         if path == "/knowledge":
             q = query.get("q", "")
             if q:
@@ -41,13 +45,18 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
     if method == "POST":
         if path == "/order":
             result = await system.submit(body["text"], source=body.get("source", "api"))
-            return 200, result.to_dict()
+            return 200, result.public_dict()  # a held answer is only shown through /release
         if path == "/research":
             doc, note = await system.research(body["topic"], reason=body.get("reason", "api request"))
             if doc is None:
                 return 400, {"ok": False, "message": note}
             return 200, {"ok": True, "title": doc.title, "url": doc.url, "summary": doc.summary,
                          "passages": doc.passages}
+        if path == "/release":
+            ok, msg, output = system.affect.release(body["order_id"], by=body.get("by", "api-user"))
+            return (200 if ok else 400), {"ok": ok, "message": msg, "output": output if ok else None}
+        if path == "/calm":
+            return 200, system.affect.calm(by=body.get("by", "api-operator"))
         if path == "/feedback":
             ok, msg = system.feedback(body["order_id"], body["label"])
             return (200 if ok else 400), {"ok": ok, "message": msg}

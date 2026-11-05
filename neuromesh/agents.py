@@ -97,6 +97,10 @@ class Orchestrator(Agent):
         try:
             with self.sys.activity.track("order", order.source, " ".join(order.text.split())[:100]):
                 result = await self.fulfil(order)
+                try:  # the emotional engines see every answer before the user does (P8 limits them)
+                    await self.sys.affect.process(order, result)
+                except Exception:
+                    self.log.exception("temperament could not process %s; the answer passes unchanged", order.id)
         except Exception as exc:
             self.log.exception("order %s failed", order.id)
             result = Result(order.id, order.text, None, None, 0.0, ok=False, note=f"internal error: {exc}")
@@ -785,5 +789,6 @@ class Sentinel(Agent):
             await s.teachers.refresh()  # rate-limited per teacher (probe_seconds)
         if time.time() - self.last_beat >= 30:
             self.last_beat = time.time()
+            s.affect.tick()  # feelings settle towards the baseline; the mood is persisted
             s.bus.publish("system.heartbeat", scorecard=s.scorecard(), live_nodes=len(s.registry.live()),
                           duty_cycle=round(s.guardian.duty_cycle(), 3))

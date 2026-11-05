@@ -1,5 +1,5 @@
 """Durable state: experience (labelled examples), capabilities, node lineage, tools,
-orders and the audit log, all in one SQLite file."""
+orders, small key/value state (the temperament) and the audit log, all in one SQLite file."""
 from __future__ import annotations
 
 import json
@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS capabilities(name TEXT PRIMARY KEY, spec TEXT, update
 CREATE TABLE IF NOT EXISTS nodes(id TEXT PRIMARY KEY, capability TEXT, status TEXT, meta TEXT, updated_at REAL);
 CREATE TABLE IF NOT EXISTS tools(name TEXT PRIMARY KEY, state TEXT, digest TEXT, meta TEXT, updated_at REAL);
 CREATE TABLE IF NOT EXISTS orders(id TEXT PRIMARY KEY, ts REAL, text TEXT, result TEXT, feedback TEXT);
+CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT, updated_at REAL);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, ts REAL, actor TEXT, kind TEXT, subject TEXT, detail TEXT);
 """
 
@@ -135,6 +136,14 @@ class Store:
 
     def set_feedback(self, order_id: str, feedback: str) -> None:
         self.db.execute("UPDATE orders SET feedback=? WHERE id=?", (feedback, order_id))
+
+    # ------------------------------------------------------------ small state
+    def get_kv(self, key: str) -> str | None:
+        row = self.db.execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_kv(self, key: str, value: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO kv VALUES(?,?,?)", (key, value, time.time()))
 
     # ----------------------------------------------------------------- audit
     def audit(self, actor: str, kind: str, subject: str, detail: dict) -> None:

@@ -51,6 +51,13 @@ def describe_event(ev: Event) -> str | None:
         return f"[forget]   '{d['title']}' - {d['reason']}"
     if t == "knowledge.failed":
         return f"[research] {d['tool']} could not look up '{d['topic'][:60]}': {d['error']}"
+    if t == "temperament.shift":
+        return (f"[mood]     {d['previous']} -> {d['mood']} after {d['cause']} (valence {d['valence']:+.2f}, "
+                f"trust {d['trust']:.2f}, patience {d['patience']:.2f})")
+    if t == "output.shaped":
+        return f"[temper]   {d['order']} {d['action']}: {d['reason']} (message {d['tone']}, mood {d['mood']})"
+    if t == "output.released":
+        return f"[release]  {d['order']} released to {d['by']} (was {d['action']})"
     if t == "teacher.status":
         verb = "ready" if d["state"] == "ready" else f"unavailable ({d['state']})"
         return f"[teacher]  {d['teacher']} {verb}: {d['detail']}"
@@ -101,6 +108,14 @@ def render_status(st: dict) -> str:
         lines.append(f"knowledge: {k['documents']} articles / {k['passages']} passages retained; "
                      f"{k['recalled']} recalled, {k['researched']} researched this run; research "
                      f"{r['last_hour']}/{r['limit']} this hour; tool: {k['tool'] or 'none active'}")
+    tm = st.get("temperament")
+    if tm and tm["enabled"]:
+        decided = ", ".join(f"{k} {v}" for k, v in sorted(tm["decisions"].items(), key=lambda kv: -kv[1]))
+        lines.append(f"temperament: {tm['mood']} (valence {tm['valence']:+.2f}, arousal {tm['arousal']:.2f}, "
+                     f"confidence {tm['confidence']:.2f}, trust {tm['trust']:.2f}, patience {tm['patience']:.2f}); "
+                     f"decisions: {decided or 'none yet'}" + (f"; {len(tm['held'])} held" if tm["held"] else ""))
+    elif tm:
+        lines.append("temperament: off")
     lines.append("")
     lines.append("directive scorecard:")
     for g in st["scorecard"]:

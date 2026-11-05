@@ -151,7 +151,7 @@ PROVIDER_DEFAULTS: dict[str, dict] = {
 class TeacherPolicy:
     order: tuple = ("human", "ollama", "llm", "heuristic")
     weights: dict = field(default_factory=lambda: {
-        "human": 3.0, "tool-manifest": 2.0, "llm": 1.5, "ollama": 1.2, "heuristic": 1.0})
+        "human": 3.0, "tool-manifest": 2.0, "llm": 1.5, "ollama": 1.2, "heuristic": 1.0, "temperament": 1.0})
     models: dict = field(default_factory=dict)  # teacher name -> LLMConfig, from [teachers.<name>]
 
     @property
@@ -197,6 +197,21 @@ class ResearchPolicy:
 
 
 @dataclass
+class TemperamentPolicy:
+    """The emotional engines (P8): how the mesh feels, and how far that may shape answers."""
+    enabled: bool = True
+    # the personality the mood relaxes back to (valence -1..1, the rest 0..1)
+    baseline: dict = field(default_factory=lambda: {
+        "valence": 0.2, "arousal": 0.3, "confidence": 0.6, "trust": 0.6, "patience": 0.7})
+    half_life_seconds: float = 600.0    # how fast feelings fade back to the baseline
+    sensitivity: float = 1.0            # scales every emotional reaction (0 = unflappable)
+    low_confidence: float = 0.6         # answers below this confidence count as uncertain
+    long_answer_chars: int = 400        # answers this long count as long
+    brief_chars: int = 220              # how much of a long answer "brief" shows
+    defer_seconds: float = 20.0         # how long a deferred answer waits before /release works
+
+
+@dataclass
 class ComputePolicy:
     device: str = "cpu"     # "cpu" | "auto" | "cuda" | "cuda:N" | "mps"
     library: str = "auto"   # "auto" | "numpy" | "torch" | "cupy"
@@ -215,6 +230,7 @@ class Directives:
     background: BackgroundPolicy = field(default_factory=BackgroundPolicy)
     teachers: TeacherPolicy = field(default_factory=TeacherPolicy)
     tools: ToolPolicy = field(default_factory=ToolPolicy)
+    temperament: TemperamentPolicy = field(default_factory=TemperamentPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -231,6 +247,7 @@ class Directives:
             background=build(BackgroundPolicy, d.get("background")),
             teachers=TeacherPolicy.from_dict(d.get("teachers")),
             tools=build(ToolPolicy, d.get("tools")),
+            temperament=build(TemperamentPolicy, d.get("temperament")),
         )
 
     @classmethod

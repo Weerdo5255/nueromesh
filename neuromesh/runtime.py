@@ -25,12 +25,13 @@ from .registry import NodeRegistry
 from .store import Store
 from .tasks import DIRECT, DISPATCH, CapabilitySpec, Inference, Order, Result
 from .teachers import HeuristicTeacher, HumanTeacher, LLMTeacher, TeacherPool
+from .temperament import Affect, TemperamentTeacher
 from .tools import ACTIVE, APPROVED, QUARANTINED, RETIRED, Sandbox, Tool, ToolRegistry, ToolRun
 
 log = logging.getLogger("neuromesh")
 
 OFFLINE_FIELDS = ("lexicon", "negation", "templates", "label_templates", "fillers", "triggers",
-                  "default_label", "open_labels", "label_descriptions")
+                  "default_label", "open_labels", "label_descriptions", "internal", "teachers")
 
 
 class System:
@@ -67,12 +68,15 @@ class System:
         for name, cfg in tp.models.items():  # one teacher per [teachers.<name>] table
             teachers[name] = LLMTeacher(name, cfg, self.guardian, self.bus)
         teachers["heuristic"] = HeuristicTeacher(seed)
+        teachers["temperament"] = TemperamentTeacher(seed)  # specialist: teaches only the disposition engine
         self.teachers = TeacherPool(teachers, tp.order, tp.weights)
         self.teachers.activity, self.teachers.bus = self.activity, self.bus
 
         self.capabilities: dict[str, CapabilitySpec] = {}
         self._load_capabilities(Path(capabilities_path or self.root / "capabilities.toml"))
         self.registry.load(self.directives.nodes.input_dim)
+        self.affect = Affect(self)  # the temperament and the emotional engines (P8 honesty guard)
+        self.bus.listen(self.affect.on_event)
 
         self.orders: asyncio.Queue = asyncio.Queue()
         self.inflight = 0
@@ -112,6 +116,7 @@ class System:
         await asyncio.gather(*self._tasks, *self._bg_tasks, return_exceptions=True)
         for node in self.registry.live():
             self.registry.persist(node, weights=True)
+        self.affect.save()
         self.guardian.audit("system", "system.stop")
         self.store.close()
 
@@ -228,7 +233,7 @@ class System:
             self.guardian.audit(by, "capability.label_added", cap, label=label)
             self.bus.publish("capability.labels_changed", capability=cap, label=label, by=by)
 
-    def teach(self, cap: str, text: str, label: str) -> None:
+    def teach(self, cap: str, text: str, label: str, reason: str = "human teaching") -> None:
         """A human-provided example: highest trust, used for training and evaluation."""
         spec = self.capabilities.get(cap)
         if spec is None:
@@ -240,29 +245,49 @@ class System:
         self.learn(cap, text, label, "human")
         self.guardian.audit("human", "teach", cap, text=text[:200], label=label)
         self.bus.publish("teacher.lesson", capability=cap, label=label, source="human", examples=1,
-                         reason="human teaching")
+                         reason=reason)
 
     def feedback(self, order_id: str, correct: str) -> tuple[bool, str]:
+        """Correct one step of an order: its route (tool:x / skill:x / answer:direct), the label
+        a skill gave, or - qualified as affect=<tone> / disposition=<action> - how the emotional
+        engines read the message and what they decided. Unqualified labels go to the order's
+        skill step first, then to the engines."""
         record = self.store.get_order(order_id)
         if record is None:
             return False, f"unknown order {order_id}"
-        steps = record["result"].get("steps", [])
+        steps = [st for st in record["result"].get("steps", []) if st.get("capability") in self.capabilities]
+        correct = correct.strip()
         if correct.startswith(("tool:", "skill:")) or correct == DIRECT:
             if correct not in self.dispatch.labels:
                 return False, f"unknown route '{correct}'"
             step = next((st for st in steps if st["capability"] == DISPATCH), None)
             cap, text = DISPATCH, (step["input"] if step else record["text"])
         else:
-            step = next((st for st in reversed(steps) if st["capability"] != DISPATCH), None)
-            if step is None:
-                return False, "that order had no skill step; correct its route instead (e.g. tool:calculator)"
+            named, eq, label = correct.partition("=")
+            if eq:
+                step = next((st for st in reversed(steps) if st["capability"] == named.strip()), None)
+                if step is None:
+                    return False, f"that order had no {named.strip()} step"
+                correct = label.strip()
+            else:
+                skills = [st for st in reversed(steps) if st["capability"] != DISPATCH
+                          and not self.capabilities[st["capability"]].internal]
+                engines = [st for st in reversed(steps) if self.capabilities[st["capability"]].internal]
+                fits = lambda st: correct in self.capabilities[st["capability"]].labels  # noqa: E731
+                step = (next((st for st in skills if fits(st)), None) or next((st for st in engines if fits(st)), None)
+                        or next((st for st in skills if self.capabilities[st["capability"]].open_labels), None)
+                        or (skills[0] if skills else None))
+                if step is None:
+                    hint = " (or teach the emotional engines: affect=<tone>, disposition=<action>)" if engines else ""
+                    return False, ("that order had no skill step; correct its route instead (e.g. tool:calculator)"
+                                   + hint)
             cap, text = step["capability"], step["input"]
             spec = self.capabilities[cap]
             if correct not in spec.labels and not spec.open_labels:
                 return False, (f"'{correct}' is not a {cap} label {spec.active_labels()}. If the order went "
                                f"to the wrong place, correct the route instead (e.g. skill:<name> or tool:<name>)")
-        self.teach(cap, text, correct)
-        self.store.set_feedback(order_id, correct)
+        self.teach(cap, text, correct, reason="correction")
+        self.store.set_feedback(order_id, f"{cap}={correct}")
         return True, f"learned: {cap}('{text[:60]}') = {correct}"
 
     def answer_question(self, qid: str, label: str) -> tuple[bool, str]:
@@ -301,7 +326,7 @@ class System:
                 label_descriptions={DIRECT: "No tool or skill fits; answer the request directly."})
         self.capabilities = caps
         for name, spec in caps.items():
-            if name != DISPATCH:
+            if name != DISPATCH and not spec.internal:  # the emotional engines are not order routes
                 self._register_skill_route(spec)
         for spec in caps.values():
             self.save_capability(spec)
@@ -316,6 +341,8 @@ class System:
         name = name.strip().lower()
         if name == DISPATCH or not re.fullmatch(r"[a-z][a-z0-9_]*", name):
             raise ValueError("capability names are lowercase identifiers and 'dispatch' is reserved")
+        if name in self.capabilities and self.capabilities[name].internal:
+            raise ValueError(f"'{name}' is one of the mesh's internal engines; teach it with /teach or /feedback")
         spec = self.capabilities.get(name) or CapabilitySpec(name)
         spec.description = description or spec.description
         for lab in labels:
@@ -500,6 +527,7 @@ class System:
             "knowledge": {**vars(self.knowledge.stats()), "research": self.guardian.research_usage(),
                           "queued": len(self.researcher.queue),
                           "tool": (self.knowledge_tool().name if self.knowledge_tool() else None)},
+            "temperament": self.affect.status(),
             "scorecard": self.scorecard(),
             "agents": {a.name: dict(a.stats) for a in self.agents},
         }

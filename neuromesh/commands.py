@@ -17,7 +17,11 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /forget <article title>         drop a retained article
   /approvals                      pending approvals      /approve <id> [note]   /deny <id> [note]
   /questions                      questions waiting for a human teacher   /answer <qid> <label>
-  /feedback <order-id> <label>    correct an answer (a label, or a route like tool:calculator)
+  /feedback <order-id> <label>    correct an answer: a label, a route like tool:calculator, or the
+                                  emotional engines with affect=<tone> / disposition=<action>
+  /temperament                    the mesh's mood, its emotional engines and what they decided
+  /why <order-id>                 why an answer was passed, changed, held or withheld
+  /release <order-id>             show an answer the temperament held back     /calm   reset the mood
   /teach <capability> <label> :: <text>
   /define <name> <label,label,...> [:: description]
   /rollback <capability>          reinstate the previous champion
@@ -49,6 +53,47 @@ def teacher_lines(system) -> list[str]:
         used = usage.get(name)
         extra = f"  {used['calls_last_hour']} calls this hour" if used else ""
         lines.append(f"  {name:<10} {state:<5} {model:<32} {info['lessons']} lessons{extra}  {info.get('detail') or ''}")
+    return lines
+
+
+def _bar(value: float, lo: float, hi: float, width: int = 12) -> str:
+    filled = round((value - lo) / (hi - lo) * width)
+    return "#" * filled + "." * (width - filled)
+
+
+def temperament_lines(system) -> list[str]:
+    from .temperament import DIMENSIONS, RANGES
+    a = system.affect
+    st = a.status()
+    if not st["enabled"]:
+        return ["temperament: off ([temperament] enabled = false in the directives); answers pass unchanged"]
+    lines = [f"temperament: {st['mood']}  (feelings fade to the baseline with a "
+             f"{a.pol.half_life_seconds:.0f}s half-life; sensitivity {a.pol.sensitivity:g})"]
+    for d in DIMENSIONS:
+        lo, hi = RANGES[d]
+        v, b = st[d], st["baseline"][d]
+        shown = f"{v:+.2f}" if d == "valence" else f"{v:.2f}"
+        lines.append(f"  {d:<11} {_bar(v, lo, hi)} {shown:>6}   baseline {b:+.2f}" if d == "valence"
+                     else f"  {d:<11} {_bar(v, lo, hi)} {shown:>6}   baseline {b:.2f}")
+    decisions = ", ".join(f"{k} {v}" for k, v in sorted(st["decisions"].items(), key=lambda kv: -kv[1]))
+    lines.append(f"decisions this run: {decisions or 'none yet'}"
+                 + (f"; honesty guard restored {st['restored_by_guard']}" if st["restored_by_guard"] else ""))
+    for cap in ("affect", "disposition"):
+        champ = system.registry.champion(cap)
+        if champ is None:
+            n = system.store.count(cap)
+            who = "the temperament policy" if cap == "disposition" else "the teachers"
+            lines.append(f"  {cap:<11} no node yet ({n}/{system.directives.nodes.min_examples_to_spawn} examples); "
+                         f"{who} decide")
+        else:
+            acc = champ.metrics.get("holdout_acc")
+            trusted = acc is not None and acc >= system.directives.nodes.serve_min_accuracy
+            who = "" if trusted else (" - not trusted yet, so " + ("the temperament policy decides" if cap == "disposition"
+                                                                   else "the teachers read the tone"))
+            lines.append(f"  {cap:<11} node {champ.id} {champ.arch.describe()} held-out "
+                         f"{'-' if acc is None else f'{acc:.3f}'}{who}")
+    if st["held"]:
+        lines.append("held answers (/release <id>): " + ", ".join(st["held"]))
     return lines
 
 
@@ -113,6 +158,16 @@ async def execute(system, line: str) -> Output:
                 out = [f"  learned '{doc.title}' ({doc.passages} passages) {doc.url}", f"  {doc.summary}"]
                 if doc.links:
                     out.append(f"  linked articles queued for background reading: {', '.join(doc.links[:system.directives.research.follow_links])}")
+        elif cmd == "temperament":
+            out = temperament_lines(system)
+        elif cmd == "why":
+            out = system.affect.explain(rest) if rest else ["  usage: /why <order-id>"]
+        elif cmd == "release":
+            ok, msg, output = system.affect.release(rest, by=os.environ.get("USER", "human"))
+            out = [f"  [{rest}] {msg}"] + ([f"   {ln}" for ln in str(output).splitlines()] if ok else [])
+        elif cmd == "calm":
+            st = system.affect.calm(by=os.environ.get("USER", "operator"))
+            out = [f"  temperament reset to its baseline: {st['mood']}"]
         elif cmd == "knowledge":
             out = knowledge_lines(system, rest)
         elif cmd == "forget":

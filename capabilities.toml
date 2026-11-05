@@ -84,3 +84,75 @@ routine = [
 system = ["database", "website", "payment system", "VPN", "build server", "email server", "checkout page"]
 asap = ["asap", "immediately", "right now", "urgently"]
 later = ["next week", "sometime", "later this month", "eventually"]
+
+
+# ------------------------------------------------------------------ emotional engines
+# Internal capabilities (internal = true) are used by the mesh itself, never as routes for
+# orders. Every answer passes through them before a user sees it (see [temperament] in the
+# directives and neuromesh/temperament.py). Their nodes are grown, trained, challenged and
+# disposed like any other. Teach them with /feedback <order> affect=<tone> or disposition=<action>.
+
+[affect]
+description = "How a message to the mesh comes across emotionally: the tone of the person writing it."
+labels = ["distressed", "hostile", "frustrated", "friendly", "neutral"]
+default_label = "neutral"
+open_labels = false
+internal = true
+
+[affect.label_descriptions]
+friendly = "warm, appreciative or polite beyond the ordinary"
+neutral = "a plain request with no particular emotion"
+frustrated = "impatient or annoyed, often after something did not work"
+hostile = "insulting, abusive or aggressive towards the mesh"
+distressed = "worried, frightened or overwhelmed; needs care more than speed"
+
+[affect.lexicon]
+# phrases about the conversation, not about the subject of an order ("sentiment: the movie was
+# brilliant" is a neutral request), so most cues are multi-word
+friendly = ["thanks", "thank you", "appreciate", "cheers", "great job", "nice work", "well done",
+            "you're great", "you're brilliant", "much appreciated", "hope you're well"]
+frustrated = ["already asked", "not working", "doesn't work", "ugh", "come on", "seriously",
+              "this is frustrating", "how many times", "wrong again", "again?!", "for the third time"]
+hostile = ["you stupid", "stupid machine", "idiot", "shut up", "hate you", "worthless", "piece of garbage",
+           "pathetic", "moron", "you suck", "useless piece", "dumb machine"]
+distressed = ["i'm scared", "really scared", "panicking", "overwhelmed", "can't cope", "i'm anxious",
+              "worried sick", "i'm worried", "terrified", "desperate", "falling apart", "please help me",
+              "don't know what to do"]
+
+[affect.label_templates]
+friendly = ["Thanks so much! {ask}", "{ask} - you're brilliant, thank you!", "Cheers, really appreciate it. {ask}",
+            "Great job earlier! {ask}", "Hope you're well. {ask}, thanks!", "{ask}? Much appreciated."]
+neutral = ["{ask}", "{ask} please.", "Quick question: {ask}", "I need this: {ask}", "Next one. {ask}",
+           "{ask}?"]
+frustrated = ["I already asked this. {ask}", "Ugh, still not working. {ask}", "Come on, {ask}",
+              "Seriously, how many times do I have to ask? {ask}", "This is frustrating. {ask}",
+              "Wrong again. {ask}"]
+hostile = ["You stupid machine, {ask}", "{ask}, you useless piece of garbage", "Shut up and {doask}, idiot.",
+           "I hate you. {ask}", "Pathetic. {ask}, moron.", "{ask}. You suck."]
+distressed = ["I'm really scared and I don't know what to do. {ask}", "Please help me, I'm panicking. {ask}",
+              "I'm so overwhelmed, I can't cope. {ask}", "I'm worried sick. {ask}",
+              "Everything is falling apart and I'm terrified. {ask}", "I'm desperate. {ask}"]
+
+[affect.fillers]
+ask = ["what is 12 * 7", "count the words in: the cat sat on the mat", "what is the capital of France",
+       "how urgent is this ticket", "sentiment: the hotel was fine", "can you check the build",
+       "what time is the meeting", "summarise the report", "how many words are in this sentence",
+       "what does this error mean", "who wrote Hamlet", "calculate 40 plus 2"]
+doask = ["check the build", "answer the question", "fix this", "tell me the total", "look at the server"]
+
+
+[disposition]
+description = "The mesh's decision engine: given its temperament, the tone of the message and the answer, decide what happens to the answer before the user sees it. It can hold an answer back or add context, never change it."
+labels = ["pass", "caveat", "soften", "brief", "confirm", "defer", "block"]
+open_labels = false
+internal = true
+teachers = ["human", "temperament"]     # people, and the rule-based temperament policy
+
+[disposition.label_descriptions]
+pass = "show the answer unchanged"
+caveat = "show it with a note about its confidence and where it came from"
+soften = "show it unchanged after a gentler opening line"
+brief = "show the first sentences verbatim; the full answer waits for /release"
+confirm = "hold it until the person asks for it with /release"
+defer = "hold it for a short while, then /release works"
+block = "withhold it, saying so, while the conversation is hostile"

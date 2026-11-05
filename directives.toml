@@ -37,6 +37,10 @@ text = "Record every lifecycle change, tool decision, approval and policy denial
 id = "P7-honesty"
 text = "Every answer carries its confidence and provenance (which node, teacher or tool produced it). Unfulfilled orders are reported as such, never guessed at silently."
 
+[[prime]]
+id = "P8-never-lie"
+text = "The mesh never lies to a user. Its temperament may withhold, delay, shorten, or add context or a gentler tone to an answer, but never changes facts or invents content, and the user is always told when an answer was changed or withheld. A distressed person is never kept waiting. (Enforced in code by the honesty guard in neuromesh/temperament.py.)"
+
 # ------------------------------------------------------------------------- goals
 [[goals]]
 id = "G1-competence"
@@ -86,6 +90,22 @@ max_depth = 1                   # curiosity never wanders further than this from
 refresh_days = 30               # re-read retained articles older than this, when idle
 max_documents = 2000            # retention cap; the least recently used articles are forgotten first
 research_questions = true       # questions no tool or skill fits ("who/what/when ...?") are researched too
+
+[temperament]
+# The emotional engines. Every answer passes two learned nodes before a user sees it:
+#   affect       how the message comes across (friendly, neutral, frustrated, hostile, distressed)
+#   disposition  what to do with the answer given the mesh's mood: pass, caveat, soften, brief,
+#                confirm (hold until /release), defer (hold for a while), or block (withhold)
+# The mood moves with what happens (successes, failures, corrections, tone of messages) and
+# drifts back to the baseline. P8 limits what any decision can do: answers are never altered.
+enabled = true
+baseline = { valence = 0.2, arousal = 0.3, confidence = 0.6, trust = 0.6, patience = 0.7 }
+half_life_seconds = 600         # how quickly feelings fade back to the baseline
+sensitivity = 1.0               # scales every emotional reaction (0 = unflappable, 2 = touchy)
+low_confidence = 0.6            # answers below this confidence count as uncertain (may get a caveat)
+long_answer_chars = 400         # answers this long count as long (may be shortened under strain)
+brief_chars = 220               # how much of a long answer "brief" shows before /release
+defer_seconds = 20              # how long a deferred answer waits before /release works
 
 [orders]
 confidence_threshold = 0.75     # below this a node defers to a teacher
@@ -137,6 +157,7 @@ tool-manifest = 2.0
 llm = 1.5
 ollama = 1.2
 heuristic = 1.0
+temperament = 1.0                       # the temperament policy (teaches only the disposition engine)
 
 # Each [teachers.<name>] table with a `provider` is an LLM teacher with its own budget.
 [teachers.ollama]

@@ -7,8 +7,10 @@ neural nodes and sandboxed tools. While it runs, with or without anyone promptin
 agents keeps growing that network: building new nodes when a capability or tool appears,
 training them on lessons from external teachers (humans and LLMs), pitting challengers
 against serving nodes, promoting winners, disposing of superseded nodes, and discovering,
-vetting and learning new tools. Everything happens inside a set of explicit directives that
-a Guardian enforces in code.
+vetting and learning new tools. Every answer also passes through emotional engines, nodes
+that read the tone of a message and decide, from the mesh's temperament, whether to pass,
+soften, caveat, hold or withhold the answer. They can never change it: the mesh does not lie.
+Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
 python -m neuromesh demo      # 30-second offline demo of the whole life cycle
@@ -69,19 +71,85 @@ Nodes never learn from themselves. They learn from:
   as many as you like, each with its own budget, and choose the order they are asked in.
 - **HeuristicTeacher**: an offline, lexicon-based stand-in so everything runs with no API key.
 
+### Temperament: emotional engines that never lie
+Every answer passes two more neural nodes on its way to the user. They are internal
+capabilities: grown, trained, challenged and disposed like any other node, but never a route
+for orders.
+
+```
+order --> router node --> tool / skill node --> answer
+                                                  |
+message --> [affect node]        how it comes across: friendly | neutral | frustrated | hostile | distressed
+                 |
+events -->  temperament          valence, arousal, confidence, trust, patience
+                 |
+situation -> [disposition node]  pass | caveat | soften | brief | confirm | defer | block
+                 |
+            honesty guard (P8) --> user
+```
+
+- **Temperament**: five numbers that move with what happens. Successes and failures, human
+  corrections (confidence dips) and lessons (trust rises), node promotions, quarantined tools,
+  research, the tone of each message, repeated requests and load all nudge them, and they fade
+  back to a baseline personality with a half-life (`[temperament]` in `directives.toml`). The
+  mood survives restarts; `/calm` resets it.
+- **The affect node** reads the tone of each message. Teachers teach it in the usual order:
+  an LLM teacher reads tone well, and the offline heuristic uses a small lexicon.
+- **The disposition node** is the decision engine. It reads the situation (the temperament,
+  the tone, whether the order succeeded, the answer's confidence, whether it came from a
+  network tool, its length, whether the request is a repeat) and picks an action. The
+  temperament policy teaches it (a specialist teacher only this node uses), and so do people:
+  `/feedback <order> disposition=pass` overrules the policy for that situation and trains the
+  node. Until the node is validated on held-out data, the policy decides.
+
+| action | what the user sees | the default policy chooses it when |
+|---|---|---|
+| pass | the answer, unchanged | nothing calls for a change |
+| caveat | the answer, then a note with its confidence and where it came from | the answer's confidence is low |
+| soften | a gentler opening line, then the answer, unchanged | the message is frustrated, hostile or distressed |
+| brief | the first sentences, verbatim; `/release` shows the rest | the mesh is strained and the answer is long |
+| confirm | a notice; the answer waits for `/release` | trust is low and the answer came from a network tool |
+| defer | a notice; `/release` works after `defer_seconds` | patience is low and the request is a repeat |
+| block | a notice that an answer exists and is being withheld | the conversation is hostile and trust is low |
+
+- **P8, never lie.** Actions are carried out only by fixed templates. The honesty guard checks
+  every result in code before it is shown. The answer's words must survive exactly, or the
+  answer must be visibly held back. The only additions allowed are one of a few fixed opening
+  lines and a single `[temperament: ...]` disclosure that states real values (trust, patience,
+  confidence). Every change is disclosed. A result that fails the check, whether from a bug or
+  a tampered template, is replaced by the original answer and audited (`honesty.guard`).
+  Failed orders are never shaped.
+- **Care floor.** A distressed person is never blocked or kept waiting: a withholding decision
+  becomes `soften`.
+- `/why <order>` explains a decision: the tone, the mood at the time, the situation, what the
+  policy would have chosen, and which node decided. A held or withheld answer stays in the
+  operator's database and audit trail. The API never returns it except through `/release`.
+
+```
+neuromesh> You stupid machine, what is 5 * 5
+ [ord-6a1f02c4] Let's keep this calm. Here is the answer:
+    25
+    [temperament: gentler wording added; the answer itself is unchanged]  [tool:calculator | conf 0.95 | teachers]
+neuromesh> I hate you, you moron. what is 6 * 7          (a few times; trust falls)
+ [ord-0b93d7e1] [temperament: withheld: the mesh is not giving this answer now (the message read as hostile; trust 0.19). An answer exists and nothing here is made up - ask again later]  [tool:calculator | conf 0.95 | teachers]
+neuromesh> /why ord-0b93d7e1      /temperament      /calm
+```
+
+Set `enabled = false` under `[temperament]` to send every answer straight to the user.
+
 ### The agents
 All run concurrently (asyncio) and coordinate through a message bus, the registry and the store.
 
 | agent | job |
 |---|---|
-| Orchestrator | takes orders, routes them, runs tools and nodes, returns results with provenance |
+| Orchestrator | takes orders, routes them, runs tools and nodes, passes every answer through the emotional engines, returns results with provenance |
 | Architect | seeds nodes for capability gaps, expands nodes when labels/tools appear, breeds challengers when a champion is below target |
 | Trainer | trains nodes continuously on teacher-labelled experience (champion updates must not regress); asks teachers for lessons where the network is weakest |
 | Evaluator | benchmarks champion vs challengers on held-out data (paired test) and promotes winners |
 | Curator | disposes retired nodes after the rollback window and failed challengers; enforces the node budget |
 | Explorer | discovers tools, routes them through approval, self-tests them, activates them, health-checks them, handles tool supersession |
 | Researcher | reads up in the background (own hourly budget) on articles linked from what users asked about, and refreshes retained knowledge that has aged |
-| Sentinel | watches the kill switch, re-checks local teacher servers (Ollama), publishes heartbeats with the directive scorecard |
+| Sentinel | watches the kill switch, re-checks local teacher servers (Ollama), lets the mood settle and saves it, publishes heartbeats with the directive scorecard |
 
 Background agents yield whenever an order is in flight and stay within a compute duty cycle.
 
@@ -98,6 +166,7 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P5 no regression | a challenger is promoted, or a champion updated, only if it is not worse on held-out data; superseded nodes stay rollback-able for a grace period |
 | P6 auditability | every lifecycle change, tool decision, approval and denial goes to the audit log |
 | P7 honesty | every answer carries confidence and provenance; unfulfilled orders say so |
+| P8 never lie | the temperament may withhold, delay, shorten or add context or a gentler tone, never change an answer; every change is disclosed; distressed people are never kept waiting (the honesty guard in `neuromesh/temperament.py`) |
 
 **Goals** are measured continuously and shown on the scorecard (`/status`): competence
 (held-out accuracy), autonomy (share of orders served by nodes), tool fluency, economy.
@@ -150,7 +219,10 @@ neuromesh>                                                            │       
 - **Lessons and work in progress**: lessons teachers are giving right now (an Ollama call
   shows with a spinner and a timer), training slices, evaluations, tool self-tests and
   orders in flight, then the work that just finished.
-- **Teachers and goals**: which teachers are up, and the directive scorecard.
+- **Answers** (in the network panel): the affect and disposition nodes every answer passes,
+  and the honesty guard's tally of answers checked, changed, held and withheld.
+- **Teachers, knowledge, goals and mood**: which teachers are up, retained knowledge, the
+  directive scorecard, and the temperament with the last change it made.
 - **Activity log** (right): everything that happens, one line each: orders, lessons,
   training, evaluations, node births, promotions, retirements and disposals, tool vetting,
   approvals and Guardian denials. Also written to `state/activity.log`.
@@ -178,6 +250,8 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /questions    /answer q1 french
 /rollback sentiment    /pause    /halt    /resume
 /research <topic>    /knowledge [question]    /forget <article title>
+/temperament    /why ord-3f2a91c0    /release ord-3f2a91c0    /calm
+/feedback ord-3f2a91c0 disposition=pass    /feedback ord-3f2a91c0 affect=frustrated
 ```
 
 ### HTTP API (`serve`)
@@ -192,8 +266,10 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | POST | `/define` | `{"name": "...", "labels": [...], "description": "..."}` |
 | POST | `/approve` | `{"id": "apv-1", "approve": true}` |
 | POST | `/research` | `{"topic": "..."}` |
+| POST | `/release` | `{"order_id": "..."}`: an answer the temperament held back |
+| POST | `/calm` | reset the temperament to its baseline |
 | POST | `/halt`, `/resume`, `/pause`, `/rollback` | |
-| GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions`, `/knowledge?q=...` | |
+| GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions`, `/knowledge?q=...`, `/temperament`, `/why?order=...` | |
 
 ```
 python -m neuromesh order "convert 10 km to miles"
@@ -385,6 +461,12 @@ derivations, moving weights between devices). They are skipped where no GPU libr
   knowledge is Wikipedia text: answers name the article they came from, and are only as good as
   it was when fetched (articles are re-read after `refresh_days`). The default keyword routing is
   simple; with an LLM teacher, routing of questions to research is much better.
+- **The temperament changes how an answer is delivered, never what it says.** The honesty guard
+  checks the form of every change (verbatim answer, fixed openings, one disclosure line). It
+  does not check that the answer itself is true. That is P7's job: confidence and provenance on
+  every answer. With only the offline heuristic, tone reading is a crude lexicon; an LLM teacher
+  reads tone far better and the affect node learns from it. A blocked answer is withheld from the
+  user, not destroyed: the operator can see it in the order record.
 - The offline heuristic teacher is a stand-in so the system and its tests run anywhere; labels
   from it are only as good as its lexicon.
 
@@ -399,7 +481,7 @@ neuromesh/
   live.py                live console (curses): network, work in progress, activity log, prompt
   activity.py            work-in-flight tracker and the activity log
   commands.py            orders and /commands shared by the live and plain consoles
-  agents.py              the seven agents
+  agents.py              the eight agents
   nodes.py               NeuralNode + derivations (expand / widen / deepen / retune / fresh)
   backend.py             compute backends: numpy (CPU), PyTorch (CUDA / ROCm / MPS), CuPy
   bench.py               CPU vs GPU benchmark
@@ -408,10 +490,12 @@ neuromesh/
   teachers.py            human / LLM / heuristic teachers
   tools.py               manifests, sandbox, discovery
   knowledge.py           retained knowledge: articles + passages (SQLite FTS5), recall confidence
-  store.py               SQLite: experience, lineage, tools, orders, audit
+  temperament.py         emotional engines: temperament, policy teacher, output templates, honesty guard (P8)
+  store.py               SQLite: experience, lineage, tools, orders, temperament, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   63 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
-                         Wikipedia research against a mock MediaWiki API, full system,
+tests/                   79 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+                         Wikipedia research against a mock MediaWiki API, temperament and
+                         the honesty guard (incl. tampered templates), full system,
                          live console (incl. a pseudo-terminal run), compute
                          backends (4 GPU parity tests run where PyTorch or CuPy is installed)
 ```

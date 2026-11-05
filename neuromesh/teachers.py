@@ -494,8 +494,15 @@ class TeacherPool:
     def human(self) -> HumanTeacher:
         return self.teachers["human"]  # type: ignore[return-value]
 
-    def ranked(self) -> list[Teacher]:
-        return [self.teachers[n] for n in self.order if n in self.teachers and self.teachers[n].available()]
+    def ranked(self, spec: CapabilitySpec | None = None) -> list[Teacher]:
+        """Available teachers in the directives' order. A capability that lists its own `teachers`
+        gets only those, in its order: ones from the global order, plus specialist teachers
+        (like the temperament policy) that are never asked otherwise."""
+        names = self.order
+        if spec is not None and spec.teachers:
+            names = [n for n in spec.teachers
+                     if n in self.order or getattr(self.teachers.get(n), "specialist", False)]
+        return [self.teachers[n] for n in names if n in self.teachers and self.teachers[n].available()]
 
     def weight(self, source: str) -> float:
         return float(self.weights.get(source, 1.0))
@@ -506,7 +513,7 @@ class TeacherPool:
         return self.activity.track("lesson", teacher.name, text, model=getattr(teacher, "model", ""))
 
     async def label(self, spec: CapabilitySpec, text: str) -> Lesson | None:
-        for teacher in self.ranked():
+        for teacher in self.ranked(spec):
             t0 = time.time()
             with self._track(teacher, f"labelling {spec.name}: {' '.join(text.split())[:80]}"):
                 lesson = await teacher.label(spec, text)
@@ -519,7 +526,7 @@ class TeacherPool:
         return None
 
     async def generate(self, spec: CapabilitySpec, label: str, n: int) -> tuple[list[str], str]:
-        for teacher in self.ranked():
+        for teacher in self.ranked(spec):
             with self._track(teacher, f"writing {n} examples of {spec.name}={label}"):
                 texts = await teacher.generate(spec, label, n)
             if texts:
@@ -556,10 +563,12 @@ class TeacherPool:
         for name in names:
             t = self.teachers[name]
             listed = name in self.order
-            info = {"available": listed and t.available(), "in_order": listed, "lessons": self.lessons.get(name, 0)}
+            specialist = getattr(t, "specialist", False)
+            info = {"available": (listed or specialist) and t.available(), "in_order": listed,
+                    "lessons": self.lessons.get(name, 0)}
             if hasattr(t, "status"):
                 info.update(t.status())
-            if not listed:
+            if not listed and not specialist:
                 info["detail"] = "not listed in teachers.order"
             out[name] = info
         return out

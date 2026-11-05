@@ -4,7 +4,8 @@
     | NETWORK: orders -> router node -> routes -> skill nodes / tools,  | ACTIVITY LOG  |
     |   with challengers and retired nodes under each champion          | (every event, |
     | WORK IN PROGRESS: lessons from teachers, training, evaluations... |  newest last, |
-    | TEACHERS / GOALS                                                  |  scrollable)  |
+    | ANSWERS: affect node -> disposition node -> honesty guard -> user |  scrollable)  |
+    | TEACHERS / KNOWLEDGE / GOALS / MOOD                               |               |
     | last result                                                       |               |
     | neuromesh> prompt                                                 |               |
     +-------------------------------------------------------------------+---------------+
@@ -152,11 +153,54 @@ def network_lines(system, g: dict) -> list[Line]:
         style = "bad" if t.state in ("rejected", "quarantined") else "warn"
         note = f" ({t.note})" if t.note else ""
         lines.append((f"    {g['dot']} tool {t.name} [{t.state}]{note}", style))
+    lines += engine_lines(s, g)
     lineage = s.registry.lineage.values()
     disposed = sum(1 for m in lineage if m["status"] == "disposed")
     lines.append((f"nodes: {len(s.registry.live())} live {g['dot']} {len(s.registry.lineage)} built "
                   f"{g['dot']} {disposed} disposed", "dim"))
     return lines
+
+
+def engine_lines(system, g: dict) -> list[Line]:
+    """The emotional engines every answer passes through on its way to the user."""
+    s = system
+    a = s.affect
+    if not a.enabled:
+        return [("answers -> user directly (temperament off)", "dim")]
+    lines: list[Line] = [("answers", "title")]
+    engines = [c for c, spec in s.capabilities.items() if spec.internal]
+    what = {"affect": "reads the tone", "disposition": "decides"}
+    for cap in engines:
+        champ = s.registry.champion(cap)
+        if champ is None:
+            n = s.store.count(cap)
+            who = "temperament policy" if cap == "disposition" else "teachers"
+            target, style = f"no node yet ({n}/{s.directives.nodes.min_examples_to_spawn} examples); {who} decide", "warn"
+        else:
+            target, style = f"{g['star']} {_node_detail(s, champ, g)}", "champ"
+        lines.append((f" {g['tee']}{g['arrow']} {cap:<11} {what.get(cap, ''):<14} {g['to']} {target}", style))
+        lines += _family_lines(s, cap, f" {g['pipe']}" + " " * 18, g)
+    d = a.decisions
+    changed = sum(v for k, v in d.items() if k != "pass")
+    held = len(a.held)
+    guard = (f"honesty guard (P8) {g['to']} {sum(d.values())} checked {g['dot']} {changed} changed "
+             f"{g['dot']} {held} held {g['dot']} {d.get('block', 0)} withheld"
+             + (f" {g['dot']} {a.restored} restored" if a.restored else ""))
+    lines.append((f" {g['end']}{g['arrow']} {guard} {g['arrow']} user", "bad" if a.restored else "good"))
+    return lines
+
+
+def temperament_line(system, g: dict) -> Line:
+    a = system.affect
+    if not a.enabled:
+        return ("mood:     temperament off", "dim")
+    t = a.snapshot()
+    last = f" (last change: {a.last[1]} {a.last[0]})" if a.last else ""
+    style = {"wary": "bad", "tense": "bad", "alert": "warn", "subdued": "warn"}.get(t["mood"], "good")
+    # most telling first, so a narrow panel cuts the least important
+    return (f"mood:     {t['mood']}{last} {g['dot']} valence {t['valence']:+.2f} {g['dot']} trust {t['trust']:.2f} "
+            f"{g['dot']} patience {t['patience']:.2f} {g['dot']} arousal {t['arousal']:.2f} {g['dot']} "
+            f"confidence {t['confidence']:.2f}", style)
 
 
 def _took(seconds: float) -> str:
@@ -221,7 +265,8 @@ def teacher_goal_lines(system, g: dict) -> list[Line]:
                  + ("" if tool else f" {g['dot']} no research tool active"))
     return [("teachers: " + f" {g['dot']} ".join(parts), "teacher"),
             (knowledge, "good" if tool else "dim"),
-            ("goals:    " + f" {g['dot']} ".join(goals), "info")]
+            ("goals:    " + f" {g['dot']} ".join(goals), "info"),
+            temperament_line(s, g)]
 
 
 def wrap_log(entries, width: int, g: dict) -> list[list[tuple[str, str]]]:
@@ -463,6 +508,7 @@ class LiveView:
             self.quit = True
         elif out.is_order:
             self.result = out.lines
+            self.output = [f"> {line}"] + out.lines  # Tab shows the whole result and its trace
         else:
             self.output = [f"> {line}"] + out.lines
             self.result = out.lines[:1] if len(out.lines) == 1 else [f"> {line}: {len(out.lines)} lines (Tab shows them)"]
@@ -516,7 +562,9 @@ class LiveView:
         self._draw_log(1, left_w + 1, log_w, H - 1)
 
         prompt_y = H - 1
-        result = self.result[-4:]
+        result = self.result  # the answer first; the trace as far as it fits
+        if len(result) > 4:
+            result = result[:3] + [f"   ... {len(result) - 3} more lines (Tab shows them)"]
         result_top = prompt_y - len(result)
         self._rule(result_top - 1, 0, left_w, "result", "frame")
         for i, line in enumerate(result):

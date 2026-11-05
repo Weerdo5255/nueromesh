@@ -37,6 +37,7 @@ DEMO_OVERRIDES = {
     "background": {"tick_seconds": 0.1, "max_duty_cycle": 0.9, "synthesis_cooldown_seconds": 0.6,
                    "synthesis_batch": 8, "health_check_seconds": 3600},
     "tools": {"scan_seconds": 0.5},
+    "temperament": {"enabled": False},  # scored on raw answers; the temperament has its own tests
 }
 
 IMPLICIT = {"sentiment": ["how does this review sound: ", "what's the tone of this review: ", "review check: "],

@@ -20,6 +20,7 @@ FAST = {
     "background": {"tick_seconds": 0.05, "max_duty_cycle": 0.95, "synthesis_cooldown_seconds": 0.3},
     "tools": {"scan_seconds": 0.2},
     "teachers": {"order": ["human", "heuristic"]},
+    "temperament": {"enabled": False},  # answers unshaped, so tests can compare outputs (see test_temperament)
 }
 
 

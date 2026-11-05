@@ -107,6 +107,9 @@ def format_event(ev: Event) -> LogEntry | None:
                         f"{d['teacher']} says {d['teacher_label']}", "warn", t)
     if t == "audit":
         kind = d.get("kind", "")
+        if kind == "honesty.guard":
+            return LogEntry(ev.ts, "guard", f"honesty guard: a '{d.get('detail', {}).get('action')}' shaping of "
+                            f"{d.get('subject', '')} failed the check; the original answer was shown", "bad", t)
         if kind.startswith("deny.") or kind == "update.rejected":
             reason = d.get("detail", {}).get("reason", "")
             return LogEntry(ev.ts, "guard", f"{kind}: {d.get('subject', '')} - {reason}", "bad", t)
@@ -119,7 +122,10 @@ def format_event(ev: Event) -> LogEntry | None:
     level = {"spawn": "info", "promote": "good", "retire": "warn", "dispose": "bad", "tool": "tool",
              "approval": "warn", "label": "info", "skill": "info", "lesson": "lesson",
              "teacher": "teacher", "halt": "bad", "resume": "good", "learn": "good", "recall": "lesson",
-             "forget": "warn", "research": "warn"}.get(tag, "info")
+             "forget": "warn", "research": "warn", "mood": "teacher", "temper": "lesson",
+             "release": "good"}.get(tag, "info")
+    if t == "output.shaped" and d.get("action") in ("confirm", "defer", "block"):
+        level = "warn"
     if tag == "tool" and ("REJECTED" in text or "quarantined" in text):
         level = "bad"
     if tag == "teacher" and "unavailable" in text:
