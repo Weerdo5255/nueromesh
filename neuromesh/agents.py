@@ -31,9 +31,9 @@ import numpy as np
 from .guardian import Verdict
 from .knowledge import Hit
 from .nodes import Architecture, NeuralNode
-from .tasks import DIRECT, DISPATCH, Result, imagine_prompt, parse_order, skill_payload
+from .tasks import DIRECT, DISPATCH, Order, Result, imagine_prompt, parse_order, skill_payload
 from .evolution import judge as evolution_judge
-from .tools import ACTIVE, APPROVED, PENDING, QUARANTINED, REJECTED, Tool, outputs_match
+from .tools import ACTIVE, APPROVED, PENDING, QUARANTINED, REJECTED, Tool, ToolRun, outputs_match
 from . import voice
 
 
@@ -133,19 +133,25 @@ class Orchestrator(Agent):
         reviews it. The reply leads with the result in the mesh's own words (voice.py)."""
         plan = await self.sys.directors.intake(order)
         res = await self._fulfil(order)
+        res = await self.sys.directors.persist(order, res)  # not answered? it tries other ways, up to max_attempts
         res.trace.insert(0, plan.line)
         voice.finish(res)
         if review:
             await self.sys.directors.review(order, res)
         return res
 
-    async def _fulfil(self, order) -> Result:
+    async def _fulfil(self, order, route: str | None = None) -> Result:
+        """Fulfil an order. route: a director chose the route (a retry); routing is skipped."""
         s = self.sys
         res = Result(order.id, order.text, None, None, 0.0)
         if s.guardian.halted:
             res.ok, res.note = False, f"system halted by operator: {s.guardian.halt_reason}"
             res.trace.append("refused (P1-human-authority)")
             return res
+        if route is not None:
+            payload = skill_payload(order.text) if route.startswith("skill:") else order.text
+            res.trace.append(f"a director sent it to {route}")
+            return await self._serve(order, res, route, payload, [], 1.0)
         if not order.background:  # "keep learning about X", "every 10m: ..." set a background task
             made = s.tasks.from_order(order.text, by=order.source)
             if made is not None:
@@ -188,8 +194,12 @@ class Orchestrator(Agent):
                 payload = skill_payload(order.text)
         else:
             res.trace.append(f"explicit route {route}")
-        res.route = route
+        return await self._serve(order, res, route, payload, kinds, conf)
 
+    async def _serve(self, order, res: Result, route: str, payload: str, kinds: list, conf: float) -> Result:
+        """Run the chosen route: a tool, a skill node, or the direct answer (memory, knowledge, teachers)."""
+        s = self.sys
+        res.route = route
         if route.startswith("tool:"):
             tool = s.tools.tools.get(route[5:])
             decision = s.guardian.authorize_tool_run(tool)
@@ -199,7 +209,7 @@ class Orchestrator(Agent):
                 await self.knowledge_order(res, payload, tool, background=order.background, learn=order.learn)
             else:
                 timeout = tool.manifest.timeout_s or s.directives.tools.default_timeout_s
-                run = await s.sandbox.run(tool, payload, timeout, s.tool_config(tool))
+                run = await self.run_tool(order, res, tool, payload, timeout)
                 s.record_tool_run(tool, run)
                 res.trace.append(f"{route} {'ok' if run.ok else 'failed'} in {run.ms:.0f} ms")
                 if run.ok:
@@ -268,6 +278,84 @@ class Orchestrator(Agent):
             res.served_by = "mixed"
         return res
 
+
+    # ------------------------------------------------------------- tools
+    async def run_tool(self, order, res: Result, tool: Tool, payload: str, timeout: float):
+        """Run a tool; when it asks a director for context, a director answers and it runs again."""
+        s = self.sys
+        context: list[dict] = []
+        run = await s.sandbox.run(tool, payload, timeout, s.tool_config(tool))
+        for _ in range(max(0, int(s.directives.directors.tool_queries))):
+            if run.query is None or any(c["ask"] == run.query["ask"] for c in context):
+                break
+            context.append(await s.directors.answer_query(tool.name, run.query, order, res))
+            run = await s.sandbox.run(tool, payload, timeout, s.tool_config(tool), context=context)
+        if run.query is not None:
+            run = ToolRun(False, error=f"it needed to know '{run.query['ask']}' and no director could tell it",
+                          ms=run.ms, not_found=True)
+        if run.ok:
+            for c in context:
+                if c.get("answer"):
+                    res.sources.append(f"{c.get('about') or c['ask']}: {c['source']} (a director told {tool.name})")
+        return run
+
+    async def attempt(self, order, method: str) -> Result:
+        """One more way to fulfil an order, chosen by a director: a route, the memory nodes (less sure
+        answers too), retained knowledge, research, a teacher, or the order rephrased."""
+        s = self.sys
+        if method.startswith(("tool:", "skill:")) or method == DIRECT:
+            return await self._fulfil(order, route=method)
+        res = Result(order.id, order.text, None, None, 0.0)
+        pol = s.directives.research
+        if method == "rephrase":
+            plain = rephrase(order.text)
+            again = Order(text=plain, source=order.source, id=order.id, background=order.background, learn=order.learn)
+            res = await self._fulfil(again)
+            res.text = order.text
+            res.trace.insert(0, f"rephrased as '{plain}'")
+            return res
+        res.route, res.served_by = DIRECT, "nodes"
+        if method == "memory":
+            rec = s.memory.recall(order.text, threshold=s.directives.directors.second_opinion_threshold)
+            if rec is not None:
+                self.answer_from_memory_node(res, rec)
+                res.confidence = round(rec.confidence, 3)
+                res.trace.append(f"less sure than usual ({rec.confidence:.0%}), but it is what memory holds")
+                return res
+            res.ok, res.note = False, "no memory node holds an answer, even a less sure one"
+            return res
+        if method == "knowledge":
+            need = max(s.directives.directors.second_opinion_threshold, pol.recall_threshold - 0.2)
+            hits, conf = s.knowledge.recall(order.text, need)
+            if hits and conf >= need:
+                await self.answer_from_retained(res, order.text, hits, conf, learn=order.learn)
+                res.confidence = round(conf, 3)
+                return res
+            res.ok, res.note = False, "nothing it has retained covers this"
+            return res
+        if method == "research":
+            tool = s.knowledge_tool()
+            if tool is None:
+                res.ok, res.note = False, "no research tool is active"
+                return res
+            res.served_by = "explicit"
+            await self.knowledge_order(res, order.text, tool, background=order.background, learn=order.learn)
+            return res
+        if method == "teacher":
+            reply = await s.teachers.answer(order.text)
+            if not reply:
+                res.ok, res.note = False, "no teacher could answer"
+                return res
+            res.output, res.answer, res.served_by = reply[0], voice.lead_first(reply[0]), "teachers"
+            res.confidence = 0.6
+            res.sources.append(f"the {reply[1]} teacher (a language model; not checked against a source)")
+            res.trace.append(f"answered directly by the {reply[1]} teacher")
+            if order.learn and is_question(order.text):
+                s.directors.remember(order.id, order.text, res.answer, f"the {reply[1]} teacher (a language model)",
+                                     by=reply[1], kind="teachers")
+            return res
+        res.ok, res.note = False, f"unknown method {method}"
+        return res
 
     # ------------------------------------------------------------- imagining
     def imagine(self, res: Result, prompt: str) -> None:
@@ -357,6 +445,20 @@ class Orchestrator(Agent):
 
 _QUESTION = re.compile(r"^\s*(who|what|when|where|why|how|which|tell me about|explain|describe|"
                        r"what's|whats|who's)\b|\?\s*$", re.I)
+
+
+_POLITE = re.compile(r"^\s*(?:(?:hey|hi|hello|ok|okay|so|um|well)\b[\s,]*)*(?:(?:please|kindly)\s+)?"
+                     r"(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:(?:tell|show|give)\s+me\s+|"
+                     r"i\s*(?:'d|would)\s+like\s+to\s+know\s+|i\s+(?:want|need)\s+to\s+know\s+|do\s+you\s+know\s+)?", re.I)
+
+
+def rephrase(text: str) -> str:
+    """The order without its politeness and padding ("could you please tell me what 3 plus 4 is" ->
+    "what 3 plus 4 is"), so a director can try it again in plainer words."""
+    t = _POLITE.sub("", text.strip(), count=1)
+    t = re.sub(r"[\s,]*(?:please|thanks|thank you|cheers)[\s.!?]*$", "", t, flags=re.I)
+    t = re.sub(r"^what\s+(.+?)\s+(?:is|are)\s*\??$", r"what is \1", t, flags=re.I)
+    return " ".join(t.split()) or text
 
 
 def is_question(text: str) -> bool:

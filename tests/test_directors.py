@@ -13,7 +13,7 @@ from neuromesh.config import DirectorsPolicy
 from neuromesh.directors import PRIMARY, agrees, stance
 from neuromesh.runtime import System
 from neuromesh.server import _route
-from neuromesh.tasks import DIRECT, Order, Result
+from neuromesh.tasks import DIRECT, Inference, Order, Result
 from neuromesh.web import mesh
 
 from test_system import FAST, ROOT, make_root, wait_for
@@ -224,6 +224,106 @@ class DirectorTests(unittest.IsolatedAsyncioTestCase):
         m = mesh(s)["directors"]
         self.assertEqual((m["nodes"][0]["id"], m["mood"]), (PRIMARY, "steady"))
         self.assertIn("directors:", "\n".join((await execute(s, "/status")).lines))
+
+
+ASKER = """
+import json, sys
+req = json.load(sys.stdin)
+if req["input"].strip().endswith("plain"):
+    print(json.dumps({"output": "plain"}))
+elif not req.get("context"):
+    print(json.dumps({"query": {"ask": "What is the capital of Zubrowka?", "about": "capital of Zubrowka"}}))
+else:
+    told = req["context"][0]
+    print(json.dumps({"output": f"the capital is {told['answer']}"} if told["answer"] else {"error": "nobody knew"}))
+"""
+
+
+class LoopBackAndRetryTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = make_root(Path(self.tmp.name))
+        asker = self.root / "plugins" / "asker"  # any tool can loop back to a director
+        asker.mkdir()
+        (asker / "tool.py").write_text(ASKER)
+        (asker / "manifest.toml").write_text('name = "asker"\nversion = "1.0.0"\ndescription = "Asks a director."\n'
+                                             'keywords = ["zubrowka"]\n[[examples]]\ninput = "plain"\nexpect = "plain"\n')
+        self.system = System(self.root, overrides=DIRECTORS, seed=9)
+        await self.system.start()
+        self.assertTrue(await wait_for(lambda: self.system.tools.tools.get("asker") is not None
+                                       and self.system.tools.tools["asker"].state == "active", timeout=10))
+        self.system.memory.learn("What is the capital of Zubrowka?", "Lutz is the capital of Zubrowka.", "the operator")
+        self.system.memory.learn("What is the speed of light?", "Light travels at about 299,792 kilometres per second.",
+                                 "the operator")
+        mem = self.system.memory
+        self.assertTrue(await wait_for(lambda: mem.nodes and all(not n.dirty for n in mem.nodes.values()), timeout=30))
+
+    async def asyncTearDown(self):
+        if not self.system.stopping:
+            await self.system.stop()
+        self.tmp.cleanup()
+
+    async def test_any_tool_can_ask_a_director(self):
+        s = self.system
+        res = await s.submit("tool asker: go")
+        self.assertEqual((res.ok, res.output), (True, "the capital is Lutz is the capital of Zubrowka."))
+        self.assertTrue(any(t.startswith("asker asked director-") and "memory node" in t for t in res.trace), res.trace)
+        self.assertTrue(any(src.startswith("capital of Zubrowka: memory node") for src in res.sources), res.sources)
+        self.assertTrue(any(e.data["tool"] == "asker" and e.data["answered"] for e in s.bus.recent("director.queried", 10)))
+        # the calculator asks for the quantities it does not know
+        res = await s.submit("tool calculator: the speed of light times 3")
+        self.assertEqual((res.ok, res.output), (True, 899376))
+        self.assertIn("from memory node", res.answer)
+        # wary: it gives tools only what the mesh already holds (no research, no teachers)
+        feel(s, trust=0.2)
+        asked = []
+
+        async def teacher(text):
+            asked.append(text)
+            return "Pi is about 3.14159.", "mock"
+        s.teachers.answer = teacher
+        res = await s.submit("tool calculator: the circumference constant of Zorbia times 2")
+        self.assertFalse(res.ok)
+        self.assertEqual(asked, [], "a wary director does not ask a teacher for a tool")
+        self.assertTrue(any("wary: it gives tools only what it already holds" in t for t in res.trace), res.trace)
+
+    async def test_an_unanswered_order_is_tried_other_ways_until_it_gives_up(self):
+        s, pool = self.system, self.system.directors
+        pick = "what is 12 squared"
+        real = s.infer
+
+        async def misroute(cap, text, **kw):  # the router sends it to the sentiment skill
+            if cap == "dispatch" and text == pick:
+                return Inference("skill:sentiment", 0.9, "teacher:heuristic", None, "teacher")
+            return await real(cap, text, **kw)
+        s.infer = misroute
+        res = await s.submit(pick)
+        self.assertEqual((res.ok, res.route, res.output, res.attempts), (True, "tool:calculator", 144, 2), res.trace)
+        self.assertTrue(any("deemed it not answered (a maths question, but skill:sentiment answered it" in t
+                            for t in res.trace), res.trace)
+        rows = s.store.db.execute("SELECT label, source FROM examples WHERE capability='dispatch' AND text=?", (pick,)).fetchall()
+        self.assertIn(("tool:calculator", "director"), rows)  # the router learns the route that worked
+        s.infer = real
+        # an order nothing can answer: it tries max_attempts ways, then gives up and says so
+        res = await s.submit("what is the airspeed velocity of an unladen swallow?")
+        self.assertFalse(res.ok)
+        self.assertEqual(res.attempts, 3)
+        self.assertIn("a director tried 3 ways", res.note)
+        self.assertIn("and gave up", res.note)
+        self.assertTrue(any(e.data["attempts"] == 3 for e in s.bus.recent("director.gave_up", 5)))
+        # adjustable: /directors attempts, POST /directors, and an impatient mood gives up one sooner
+        self.assertIn("up to 2 ways", (await execute(s, "/directors attempts 2")).lines[0])
+        res = await s.submit("what is the airspeed velocity of a laden swallow?")
+        self.assertEqual(res.attempts, 2)
+        code, body = await _route(s, "POST", "/directors", {}, {"attempts": 1})
+        self.assertEqual(code, 200)
+        res = await s.submit("what is the airspeed velocity of a tired swallow?")
+        self.assertEqual(res.attempts, 1)
+        await _route(s, "POST", "/directors", {}, {"attempts": 3})
+        feel(s, patience=0.1)
+        res = await s.submit("what is the airspeed velocity of a sleepy swallow?")
+        self.assertEqual(res.attempts, 2)
+        self.assertIn("tried again", "\n".join(pool.lines()))
 
 
 class InitiativeTests(unittest.IsolatedAsyncioTestCase):

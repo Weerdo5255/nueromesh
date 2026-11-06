@@ -18,7 +18,9 @@ of behaviour fit into well under a minute:
                       on waking it checks them and evolves its dream nodes; then it imagines
  8. directors       - a director takes every order and reviews every result before the person sees
                       it or memory keeps it; it duplicates itself for second opinions and when work
-                      waits; its mood shapes how carefully it works
+                      waits; its mood shapes how carefully it works. The calculator solves
+                      equations and calculus, and asks a director for what it does not know; an
+                      order a director deems unanswered is tried other ways, up to max_attempts
  9. kill switch     - the operator halts everything with a STOP file
 """
 from __future__ import annotations
@@ -345,6 +347,14 @@ async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7,
               f"{len(pool.nodes)} directors running, up to {pool.most} at once")
         system.affect.calm(by="demo-operator")
         print(f"  the operator calms it: stance {pool.stance().line()}")
+        print(f"  maths, tools that ask a director, and orders tried other ways (up to {pool.pol.max_attempts}):")
+        for q in ("solve x^2 - 5x + 6 = 0", "what is the derivative of x^3 * sin(x)", "integrate x^2 from 0 to 3",
+                  "what is the speed of light times 3", "what is the airspeed velocity of an unladen swallow?"):
+            res = await system.submit(q)
+            print(f"  > {q}\n      " + res.summary().replace("\n", "\n      "))
+            for t in res.trace:
+                if " asked director" in t or "attempt " in t or "gave up" in t or "router learns" in t:
+                    print(f"      . {t[:200]}")
 
         demo.say("Results")
         print(f"{'phase':<14} {'orders':>6} {'correct':>8} {'by nodes':>9} {'by teachers':>12} {'mixed':>6} {'avg ms':>7}")

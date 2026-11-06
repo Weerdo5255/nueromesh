@@ -157,6 +157,15 @@ def describe_event(ev: Event) -> str | None:
         return f"[director] {d['asked']} asked {d['by']} for a second opinion on '{d.get('text', '')[:50]}' ({d['why']}): {what} - {d['source']}"
     if t == "director.reviewed":
         return f"[director] {d['director']} reviewed {d['order']}: {d['verdict']} ({d['mood']})"
+    if t == "director.queried":
+        got = f"told it, from {d['source']}" if d.get("answered") else d.get("source", "nobody could say")
+        return f"[director] {d['tool']} asked {d['director']} '{d['ask'][:70]}': {got}"
+    if t == "director.retried":
+        how = d["method"] if d["method"].startswith(("tool:", "skill:", "answer:")) else d["method"]
+        return (f"[director] {d['director']} tried '{d['text'][:50]}' again (attempt {d['attempt']} of {d['limit']}, "
+                f"{how}): " + ("answered" if d["answered"] else d["why"][:80]))
+    if t == "director.gave_up":
+        return f"[director] {d['director']} gave up on '{d['text'][:50]}' after {d['attempts']} attempts: {d['why'][:80]}"
     if t == "director.memory":
         return f"[director] {d['director']} did not store '{d['ask'][:60]}' in memory: {d['why']}"
     if t == "dream.sleep":

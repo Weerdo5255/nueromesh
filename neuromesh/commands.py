@@ -39,6 +39,7 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /directors                      the director nodes at both ends of every order: who is doing what, the
                                   stance its mood gives them, recent reviews, what memory was not given
   /directors spawn | retire <id>  add a duplicate director now, or retire one (never director-0)
+  /directors attempts <n>         how many ways a director tries an unanswered order before it gives up
   /dreams                         sleep and dreams: the dream nodes, last night's dreams, what checked out
   /sleep    /wake                 send it to sleep (dreaming) now, or wake it
   /imagine <prompt>               its dream nodes imagine something (also: "imagine ...", "what if ...")
@@ -320,6 +321,10 @@ def directors_command(system, rest: str) -> list[str]:
     if sub == "retire":
         ok, msg = pool.retire(arg.strip(), f"retired by {by}", by=by)
         return [f"  {msg}"]
+    if sub == "attempts":
+        if not arg.strip().isdigit():
+            return [f"  usage: /directors attempts <1-10> (now {int(pool.pol.max_attempts)})"]
+        return [f"  {pool.set_attempts(int(arg), by)}"]
     return pool.lines()
 
 

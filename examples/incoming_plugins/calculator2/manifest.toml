@@ -1,16 +1,26 @@
 name = "calculator2"
-version = "2.0.0"
-description = "Arithmetic plus percentages ('15% of 80') and square roots. Replaces calculator v1."
+version = "2.1.0"
+description = "Everything calculator v1.1 does (equations, calculus, primes, statistics, matrices; asks a director for quantities it does not know), trained on percentages and square roots too. Replaces calculator v1."
 entrypoint = "tool.py"
 permissions = []
 supersedes = "calculator"      # when this activates, v1 is retired and its routing data is relabelled
-keywords = ['re:\d\s*([-+*/x]|\*\*)\s*\d', "calculate", "compute", "plus", "minus", "times", "multiplied",
-            "divided", "+", "*", "/", "=", "work out", "sum of", "percent", "%", "square root", "sqrt"]
-timeout_s = 5
+keywords = ['re:\d\s*([-+*/x^]|\*\*)\s*\d', "calculate", "compute", "plus", "minus", "times", "multiplied",
+            "divided", "+", "*", "/", "=", "work out", "sum of", "power of", "cubed", "squared", "square root", "sqrt", "percent", "%",
+            're:\bsolve\b', 're:\bequation', 're:\bderivative\b', 're:\bdifferentiate\b', 're:\bintegra(l|te)\b',
+            're:\blimit of\b', 're:\bfactori[sz]e\b|\bprime factors?\b|\bfactor\s+(\d|[a-z]\s*\^|\()', 're:\bis \d+ (a )?prime\b',
+            're:\b(gcd|lcm|greatest common|least common)\b', 're:\d\s*!', 're:\bfactorial\b',
+            're:\b(sin|cos|tan|ln|log|sqrt|exp)\s*\(', 're:\b(mean|median|average|standard deviation|variance) of\s+-?\d',
+            're:\bdeterminant\b|\binverse of \[', 're:\d+\s+choose\s+\d+', 're:[a-z]\s*\^\s*\d', 're:\d[a-z]\b\s*[-+=]',
+            're:\b(expand|simplify)\s*\(', 're:\bfibonacci\b', 're:\d+(st|nd|rd|th) prime\b', 're:\bin (binary|hex|octal)\b']
+timeout_s = 10
 
 templates = ["what is {a} {op} {b}", "calculate {a} {op} {b}", "{a} {op} {b} = ?", "what's {a} {op} {b}",
              "what is {p}% of {b}", "{p} percent of {b}", "calculate {p}% of {a}",
-             "square root of {sq}", "what is the square root of {sq}", "sqrt {sq}"]
+             "square root of {sq}", "what is the square root of {sq}", "sqrt {sq}",
+             "solve {eq}", "solve for x: {eq}", "find x if {eq}", "what is the derivative of {fx}", "differentiate {fx}",
+             "integrate {fx}", "integral of {fx} from 0 to {b}", "is {n} prime", "factor {n}", "prime factors of {n}",
+             "gcd of {g} and {b}", "{b} choose {k}", "mean of {list}", "what is sqrt({b}) + {a}",
+             "limit of {fx} as x approaches {k}", "expand {poly}", "factor {poly}"]
 
 [fillers]
 a = ["3", "7", "12", "19", "25", "42", "64", "99", "128", "250", "1000"]
@@ -18,6 +28,14 @@ b = ["2", "4", "6", "8", "11", "20", "36", "75", "80", "120"]
 op = ["+", "*", "/", "plus", "minus", "times", "divided by", "multiplied by"]
 p = ["5", "10", "12.5", "15", "20", "25", "50", "75"]
 sq = ["4", "9", "16", "81", "144", "169", "225", "1024"]
+eq = ["2x + 3 = 11", "x^2 - 5x + 6 = 0", "3x - 7 = 2x + 4", "x^2 = 49", "5y - 2 = 13", "x/4 + 1 = 3",
+      "2x + y = 7, x - y = 2", "x^3 - 8 = 0"]
+fx = ["x^2", "3x^3 - 2x", "sin(x)", "e^x", "x^2 + 4x + 4", "ln(x)", "cos(2x)", "1/x"]
+n = ["97", "360", "1001", "221", "7919", "4096", "1234567"]
+k = ["2", "3", "4", "0", "1"]
+g = ["12", "18", "24", "30", "45", "100"]
+list = ["3, 5, 7, 9", "2, 4, 4, 4, 5, 5, 7, 9", "10, 20, 30", "1.5, 2.5, 3.5"]
+poly = ["(x + 1)^2", "(x - 2)(x + 3)", "x^2 - 9", "x^2 + 5x + 6", "(2x + 1)^3"]
 
 [[examples]]
 input = "what is 15% of 80"
@@ -30,3 +48,8 @@ expect = "12"
 [[examples]]
 input = "what is 12 * 7"
 expect = "84"
+
+[[examples]]
+input = "solve 2x + 3 = 11"
+expect = "4"
+route = false

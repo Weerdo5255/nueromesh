@@ -451,6 +451,24 @@ class HeuristicTeacher(Teacher):
     def __init__(self, seed: int | None = None):
         self.rng = random.Random(seed)
 
+    def scores(self, spec: CapabilitySpec, text: str) -> dict[str, float]:
+        """How strongly each label's cues appear in the text (a director ranks other routes by this)."""
+        lowered = " " + text.lower() + " "
+        words = _WORD_RE.findall(text.lower())
+        scores: dict[str, float] = defaultdict(float)
+        for lab, terms in spec.lexicon.items():
+            if lab in spec.inactive_labels or lab not in spec.labels:
+                continue
+            for term in terms:
+                if term.startswith("re:"):
+                    if re.search(term[3:], text, re.I):
+                        scores[lab] += 2.0
+                elif re.fullmatch(r"[a-z']+", term.lower()):
+                    scores[lab] += sum(1.0 for w in words if w == term.lower())
+                elif term.lower() in lowered:
+                    scores[lab] += 1.0
+        return dict(scores)
+
     def label_sync(self, spec: CapabilitySpec, text: str) -> Lesson | None:
         lowered = " " + text.lower() + " "
         words = _WORD_RE.findall(text.lower())

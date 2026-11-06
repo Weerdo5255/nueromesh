@@ -1,53 +1,41 @@
-"""Calculator v2: arithmetic, percentages and square roots (AST-evaluated, no eval())."""
-import ast
+"""Calculator v2: arithmetic, equations, calculus, number theory, statistics and matrices
+(mathsolver.py: pure Python, no eval()). When an order names a quantity it does not know ("the speed
+of light times 3"), it asks a director ({"query": ...}) and is run again with the answer as context."""
 import json
-import operator
+import os
 import re
 import sys
 
-OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv,
-       ast.Pow: operator.pow, ast.Mod: operator.mod, ast.FloorDiv: operator.floordiv}
-NUM = r"(\d+(?:\.\d+)?)"
-REWRITES = [
-    (NUM + r"\s*(?:%|percent)\s*of\s*" + NUM, r"(\1/100*\2)"),
-    (r"(?:the\s+)?(?:square root of|sqrt)\s*" + NUM, r"(\1**0.5)"),
-    (r"\bmultiplied by\b", "*"), (r"\bdivided by\b", "/"), (r"\btimes\b", "*"), (r"\bplus\b", "+"),
-    (r"\bminus\b", "-"), (r"\bover\b", "/"), (r"\bsquared\b", "**2"), (r"(?<=\d)\s*x\s*(?=\d)", "*"),
-]
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mathsolver import MathError, NeedToKnow, answer, evaluate, Context, out  # noqa: E402
 
 
-def evaluate(node):
-    if isinstance(node, ast.Expression):
-        return evaluate(node.body)
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-        return node.value
-    if isinstance(node, ast.BinOp) and type(node.op) in OPS:
-        left, right = evaluate(node.left), evaluate(node.right)
-        if isinstance(node.op, ast.Pow) and abs(right) > 100:
-            raise ValueError("exponent too large")
-        return OPS[type(node.op)](left, right)
-    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
-        value = evaluate(node.operand)
-        return -value if isinstance(node.op, ast.USub) else value
-    raise ValueError("unsupported expression")
-
-
-def extract(text):
+def legacy(text):
+    """The first calculator's way: the longest run of digits and operators (it must contain an operator)."""
     t = text.lower()
-    for pattern, repl in REWRITES:
+    for pattern, repl in [(r"\bmultiplied by\b", "*"), (r"\bdivided by\b", "/"), (r"\btimes\b", "*"), (r"\bplus\b", "+"),
+                          (r"\bminus\b", "-"), (r"\bover\b", "/"), (r"(?<=\d)\s*x\s*(?=\d)", "*")]:
         t = re.sub(pattern, repl, t)
-    found = [c.strip() for c in re.findall(r"[\d.\s+\-*/()]+", t) if re.search(r"\d", c)]
+    found = [c.strip() for c in re.findall(r"[\d.\s+\-*/()^]+", t) if re.search(r"\d\s*[-+*/^]\s*[\d(]", c)]
     if not found:
-        raise ValueError("no arithmetic expression found")
-    return max(found, key=len)
+        return None
+    return evaluate(max(found, key=len), Context(), text)
 
 
 def main():
-    expr = extract(json.load(sys.stdin)["input"])
-    value = evaluate(ast.parse(expr, mode="eval"))
-    if isinstance(value, float):
-        value = int(value) if value.is_integer() else round(value, 6)
-    print(json.dumps({"output": value, "expression": expr}))
+    request = json.load(sys.stdin)
+    text = request["input"]
+    try:
+        result = answer(text, request.get("context") or [])
+    except NeedToKnow as need:
+        print(json.dumps({"query": {"ask": need.ask, "about": need.phrase,
+                                    "why": f"to calculate with {need.phrase}"}}))
+        return
+    except MathError as exc:
+        result = legacy(text)
+        if result is None:
+            raise exc
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":

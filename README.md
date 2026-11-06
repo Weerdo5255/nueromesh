@@ -27,7 +27,10 @@ sits at both ends of every order: it takes the order before anything else touche
 reviews the result after the tools and nodes, before you see it or anything goes into long-term
 memory. There is always at least one director running. It makes copies of itself to work
 alongside when it needs a second opinion, when work waits, or when it has two things worth doing
-at once, and its mood shapes how carefully it works.
+at once, and its mood shapes how carefully it works. Any tool can ask a director for facts it
+needs before it answers. When a director decides an order was not answered, it tries other ways,
+up to a limit you set. The calculator does real mathematics: equations, calculus, primes,
+statistics and matrices.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
@@ -356,12 +359,68 @@ mesh's baseline personality:
 | tense, low or wary | its initiative checks what it already holds instead of reaching out |
 
 The agency node reads the mood as part of its situation, so it learns mood-dependent choices
-too. `mood_influence = 0` switches all of this off. The mood changes how carefully the directors
+too.
+
+**Tools ask, directors answer.** Any tool can loop back to a director before it answers. Instead of
+a result it prints `{"query": {"ask": "What is the speed of light?"}}`. A director answers from what
+the mesh holds: its memory nodes, then its retained knowledge. Within the research and teacher
+budgets (and never while wary) it may also research the question or ask a teacher. The tool then
+runs again with `"context": [{"ask", "answer", "source"}]` in its input. One run may ask up to
+`tool_queries` times. Every question and answer goes in the trace, and the answer's source goes in
+the reply's sources:
+
+```
+> what is the speed of light times 3
+  the speed of light * 3 = 899376 (speed of light = 299792, from memory node mem-0005)
+  Source: speed of light: memory node mem-0005 (a director told calculator2)
+```
+
+**Trying again, other ways.** After the tools and nodes, a director checks whether the order was
+actually answered. It is not answered if it failed, came back empty, said "I don't know", or
+answered a maths question without the maths tool. Then the director tries a different way. The
+ways, in its order of preference:
+
+| way | when |
+|---|---|
+| a maths tool | the order is maths ("12 squared", "solve ...", "integrate ...") |
+| another route whose cues appear in the order | always |
+| the direct answer (memory nodes, retained knowledge, research, teachers) | a question |
+| the memory nodes' less sure answers, retained knowledge at a looser match | a question |
+| research | a question, a research tool is active, and it is not wary |
+| a teacher | an LLM teacher is available |
+| the order in plainer words ("could you please tell me what 7 plus 8 is" -> "what is 7 plus 8") | it has padding to drop |
+
+It gives up after `max_attempts` ways in all (the first try counts), one fewer when it is
+impatient, and the reply says what it tried. A route that worked teaches the router (source
+`director`), so the same kind of order goes there first next time. A route you name yourself
+(`sentiment: ...`) is never second-guessed. `/directors attempts 5` (or
+`POST /directors {"attempts": 5}`) changes the limit. `mood_influence = 0` switches all of this off. The mood changes how carefully the directors
 work, never what is true.
 
 `/directors` shows each director node and what it is doing, the stance its mood gives them,
-recent reviews and what was kept out of memory. `/directors spawn` adds a duplicate and
-`/directors retire director-1` retires one (never director-0).
+recent reviews, retries and tool questions, and what was kept out of memory. `/directors spawn`
+adds a duplicate and `/directors retire director-1` retires one (never director-0).
+
+### The calculator: mathematics
+The calculator (`plugins/calculator`, and `calculator2` in the demo) is a small computer-algebra
+system in pure Python (`mathsolver.py`, no third-party packages, no `eval`). It keeps numbers
+exact where it can (fractions, big integers, surds):
+
+| | examples |
+|---|---|
+| arithmetic | `what is 1/3 + 1/6` -> 1/2; `2^100`; `sin(30 degrees)`; `log base 2 of 8`; `10!`; `e^(i*pi)` -> -1 |
+| equations | `solve x^2 - 2 = 0` -> x = ±√2; `solve x^2 + 2x + 5 = 0` -> x = -1 ± 2i; `solve x^5 - x - 1 = 0` (numerically); `solve sin(x) = 0.5` -> π/6, 5π/6, ... |
+| systems, inequalities, rearranging | `solve 2x + y = 5, x - y = 1`; `solve x^2 + y^2 = 25 and x - y = 1`; `solve x^2 - 4 < 0` -> -2 < x < 2; `solve y = 2x + 3 for x` |
+| algebra | `expand (x+1)^3`; `factor 2x^2 + 5x - 3` -> (x + 3)(2x - 1) |
+| calculus | `derivative of ln(x^2+1)` -> 2x/(x^2 + 1); `second derivative of x^4`; `integrate x*sin(x)` (by parts); `integral of e^(-x^2) from -inf to inf` -> √π; `limit of sin(x)/x as x -> 0` |
+| sums | `sum of n^2 for n from 1 to 10` -> 385 |
+| number theory | `is 91 prime` -> 7 × 13; `prime factors of 600851475143`; `the 1000th prime`; `lcm of 4, 6 and 10`; `10 choose 3`; `255 in binary` |
+| statistics | `mean of 3, 5, 7, 10`; `standard deviation of 2, 4, 4, 4, 5, 5, 7, 9` (population and sample) |
+| matrices | `determinant of [[1,2],[3,4]]`; `inverse of [[1,2],[3,4]]` -> [[-2, 1], [3/2, -1/2]] |
+
+A quantity it does not know ("the number of bones in the human body times 2") becomes a question
+for a director. Word problems ("Sam has 23 apples and gives away 9") are not its job: a director
+sends those to the direct answer, so a teacher that can read them answers them.
 
 ### Sleep and dreams: dream nodes, and imagination
 When no one has given it an order for a while (`sleep_after_idle_seconds`), the mesh has a chance
@@ -725,7 +784,7 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P10 human-adopted growth | the mesh proposes skills, labels and tools and asks questions; only a human adopts a proposal or approves a tool |
 | P11 tested memory | knowledge lives in a memory node checked by its external test file; a smaller node is accepted only if all its answers still match; a merged node only if it passes at least 90% of both nodes' tests, and the ones it fails are never served and are relearned; people's edits to the tests are retrained to |
 | P12 accountable initiative | the mesh takes initiative only when idle and within its own budget; every decision is audited and logged; the tasks it sets itself can be paused or removed; people can pin its mode or turn it off; it never adds capabilities or approves tools |
-| P14 directed orders | there is always at least one director node (director-0 never retires, and is restarted if it stops); every order passes a director on the way in and on the way out; nothing enters long-term memory without a director's review; duplicates stay within `max_directors`; a director only adds disclosed notes (P8), always keeps a person's word (P1), never stores imagination (P13) |
+| P14 directed orders | there is always at least one director node (director-0 never retires, and is restarted if it stops); every order passes a director on the way in and on the way out; nothing enters long-term memory without a director's review; duplicates stay within `max_directors`; a director only adds disclosed notes (P8), always keeps a person's word (P1), never stores imagination (P13); an unanswered order is tried other ways at most `max_attempts` times, and a reply that gives up says what was tried (P7) |
 | P13 dreams are not facts | dreaming uses only what the mesh already holds, never a research tool or a teacher; an imagined response always says so and names the dream node it came from; imagination is never stored as a fact or used to answer an ordinary question |
 
 **Goals** are measured continuously and shown on the scorecard (`/status`): competence
@@ -749,7 +808,7 @@ Everything else in the file is tunable policy.
      │                     ↳ retired sentiment-a607e3 · held-out 0.30 │                   superseded by
      │                     ↳ retired sentiment-d32e0a · held-out 0.50 │                   sentiment-f7d077
      ├─▶ skill:urgency   ⇒ ★ urgency-6fdfc0 64 lr=0.01 · held-out 1.0 │ 12:58:43 promote  sentiment-f7d077 now serves
-     ├─▶ tool:calculator ⇒ calculator v1.0.0 [active] 10 runs         │                   'sentiment', replacing
+     ├─▶ tool:calculator ⇒ calculator v1.1.0 [active] 10 runs         │                   'sentiment', replacing
      ├─▶ tool:word_stats ⇒ word_stats v1.0.0 [active] 4 runs          │                   sentiment-d32e0a - beat the
      └─▶ answer:direct   ⇒ teachers: none available (queued for a hum │                   champion on held-out data
  nodes: 6 live · 15 built · 9 disposed                                │                   (0.562 vs 0.500, z=1.00)
@@ -820,7 +879,8 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /evolution    /evolution sentiment
 /director    /director mode examine    /director mode auto    /director now    /director off
 /dreams    /sleep    /wake    /imagine a city on Mars    what if Ada Lovelace painted the Mona Lisa
-/directors    /directors spawn    /directors retire director-1
+/directors    /directors spawn    /directors retire director-1    /directors attempts 5
+solve x^2 - 5x + 6 = 0    derivative of ln(x^2+1)    integrate x^2 from 0 to 3    is 91 prime
 /memorize What is the capital of Australia? :: Canberra is the capital of Australia.    /memory    /memory mem-0001    /memory test    /memory merge    /memory forget <question>
 what do you think of the calculator tool?    are you hiding anything?    what do you know about me?
 /feedback ord-3f2a91c0 disposition=pass    /feedback ord-3f2a91c0 affect=frustrated
@@ -895,7 +955,7 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | GET | `/director` | its initiative: mode, the agency node, what has paid off, the tasks it set itself, recent decisions |
 | POST | `/director` | `{"mode": "auto" \| "research" \| ..., "enabled": true \| false, "decide": true}` |
 | GET | `/directors` | the director nodes, their stance, recent reviews, what was kept out of memory |
-| POST | `/directors` | `{"action": "spawn"}` or `{"action": "retire", "id": "director-1"}` |
+| POST | `/directors` | `{"action": "spawn"}`, `{"action": "retire", "id": "director-1"}`, or `{"attempts": 5}` |
 | GET | `/dreams` | asleep or awake, the dream nodes and their fitness, last night, recent dreams |
 | POST | `/dreams` | `{"action": "sleep" \| "wake"}` |
 | POST | `/imagine` | `{"prompt": "a city on Mars"}`: an imagined response (labelled, never stored) |
@@ -1037,6 +1097,8 @@ Drop a folder into `plugins/`. The Explorer finds it within seconds.
 ```
 plugins/my_tool/manifest.toml
 plugins/my_tool/tool.py        # reads {"input": "..."} on stdin, prints {"output": ...} or {"error": "..."}
+                               # or {"query": {"ask": "..."}} to ask a director first: it is run again
+                               # with "context": [{"ask", "answer", "source"}] in its input
 ```
 ```toml
 name = "my_tool"
@@ -1152,7 +1214,7 @@ derivations, moving weights between devices). They are skipped where no GPU libr
 ```
 directives.toml          constitution: prime directives, goals, policy
 capabilities.toml        seed skills
-plugins/                 installed tools (calculator, word_stats, wikipedia, kiwix)
+plugins/                 installed tools (calculator with mathsolver.py, word_stats, wikipedia, kiwix)
 challenges/              challenge suites (small samples; fetched benchmarks go to state/challenges/)
 memory_tests/            the memory nodes' test files (written by the mesh, editable by people)
 examples/incoming_plugins/  tools the demo installs at runtime
@@ -1183,7 +1245,7 @@ neuromesh/
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   162 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   174 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -1195,7 +1257,8 @@ tests/                   162 tests: nodes, guardian, LLM wire formats and a mock
                          agency (the drive policy, outcomes teaching the agency node, people in charge),
                          sleep and dreams (no outside calls, waking checks and evolution, orders wake it,
                          imagination labelled and never stored), directors (always one, both ends of
-                         every order, the memory gate, disclosed disagreements, duplicates, the mood),
+                         every order, the memory gate, disclosed disagreements, duplicates, the mood,
+                         tools asking directors, retries up to max_attempts), the calculator's mathematics,
                          temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,
                          questions, proposals, investigations), background tasks, full system,

@@ -152,7 +152,7 @@ class TeacherPolicy:
     order: tuple = ("human", "challenge", "ollama", "llm", "heuristic")
     weights: dict = field(default_factory=lambda: {
         "human": 3.0, "challenge": 2.5, "tool-manifest": 2.0, "outcome": 2.0, "llm": 1.5, "ollama": 1.2,
-        "heuristic": 1.0, "temperament": 1.0, "agency": 1.0})
+        "heuristic": 1.0, "temperament": 1.0, "agency": 1.0, "director": 1.8})
     models: dict = field(default_factory=dict)  # teacher name -> LLMConfig, from [teachers.<name>]
 
     @property
@@ -398,6 +398,9 @@ class DirectorsPolicy:
     mood_influence: float = 1.0             # how much the mood shapes the directors (0 = not at all)
     collaborate: bool = True                # a duplicate may take a second mode of initiative alongside director-0
     second_mode_min: float = 0.55           # the drive a second mode needs
+    max_attempts: int = 3                   # ways a director tries an unanswered order before it gives up (1 = no retries)
+    tool_queries: int = 3                   # times one tool run may ask a director for context
+    query_outside: bool = True              # a director may research or ask a teacher to answer a tool (within budgets)
 
 
 @dataclass

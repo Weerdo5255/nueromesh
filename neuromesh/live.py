@@ -206,7 +206,7 @@ def engine_lines(system, g: dict) -> list[Line]:
     s = system
     a = s.affect
     if not a.enabled:
-        return [("answers -> user directly (temperament off)", "dim")]
+        return [("answers -> a director reviews -> user (temperament off)", "dim")]
     lines: list[Line] = [("answers", "title")]
     engines = [c for c, spec in s.capabilities.items() if spec.internal and spec.kind != "agency"]
     what = {"affect": "reads the tone", "disposition": "decides"}
@@ -226,7 +226,8 @@ def engine_lines(system, g: dict) -> list[Line]:
     guard = (f"honesty guard (P8) {g['to']} {sum(d.values())} checked {g['dot']} {changed} changed "
              f"{g['dot']} {held} held {g['dot']} {d.get('block', 0)} withheld"
              + (f" {g['dot']} {a.restored} restored" if a.restored else ""))
-    lines.append((f" {g['end']}{g['arrow']} {guard} {g['arrow']} user", "bad" if a.restored else "good"))
+    lines.append((f" {g['end']}{g['arrow']} {guard} {g['arrow']} a director reviews {g['arrow']} user",
+                  "bad" if a.restored else "good"))
     return lines
 
 

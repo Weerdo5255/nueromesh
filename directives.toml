@@ -63,7 +63,7 @@ text = "Dreams use only what the mesh already holds: its memory nodes and retain
 
 [[prime]]
 id = "P14-directed-orders"
-text = "There is always at least one director node running: director-0 never retires and is restarted if it stops. Every order passes a director on the way in, and again on the way out after the tools and nodes have done their work; nothing enters long-term memory without a director's review. A director may duplicate itself within [directors] max_directors (P4); duplicates retire when idle. A director never changes an answer's words (P8): it may only add a disclosed note. It always keeps what a person tells it (P1) and never stores an imagined answer (P13). Its mood shapes how carefully it works, never what is true. (Enforced in code by neuromesh/directors.py.)"
+text = "There is always at least one director node running: director-0 never retires and is restarted if it stops. Every order passes a director on the way in, and again on the way out after the tools and nodes have done their work; nothing enters long-term memory without a director's review. A director may duplicate itself within [directors] max_directors (P4); duplicates retire when idle. A director never changes an answer's words (P8): it may only add a disclosed note. It always keeps what a person tells it (P1) and never stores an imagined answer (P13). When a director deems an order unanswered it tries other ways, at most [directors] max_attempts in all, and when it gives up the reply says what it tried (P7). A tool may ask a director for context; the answer's source goes with the reply. Its mood shapes how carefully it works, never what is true. (Enforced in code by neuromesh/directors.py.)"
 
 # ------------------------------------------------------------------------- goals
 [[goals]]
@@ -339,6 +339,7 @@ ollama = 1.2
 heuristic = 1.0
 temperament = 1.0                       # the temperament policy (teaches only the disposition engine)
 challenge = 2.5                         # gold labels from benchmark suites (curated, so trusted)
+director = 1.8                          # a route a director found answered an order the router had misrouted
 
 # Each [teachers.<name>] table with a `provider` is an LLM teacher with its own budget.
 [teachers.ollama]
@@ -408,3 +409,8 @@ impatient_patience = 0.25               # below this patience it skips second op
 mood_influence = 1.0                    # how much the mood shapes the directors (0 = not at all)
 collaborate = true                      # a duplicate may take a second mode of initiative alongside director-0
 second_mode_min = 0.55                  # the drive a second mode needs
+max_attempts = 3                        # ways a director tries an order it deems unanswered before it gives up
+                                        # (1 = no retries; an impatient mood gives up one attempt sooner)
+tool_queries = 3                        # times one tool run may ask a director for context ("what is the speed of light?")
+query_outside = true                    # to answer a tool, a director may research or ask a teacher (within budgets;
+                                        # never while wary: then only what the mesh already holds)

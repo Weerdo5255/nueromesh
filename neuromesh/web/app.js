@@ -796,10 +796,14 @@
       h("p", {}, `“${m.ask}”`), h("p", { class: "why" }, `${m.director}: ${m.why}`)));
     return h("div", { class: "section" }, h("h2", {}, "Directors"),
       h("p", { class: "lede" }, `A director takes every order before anything else touches it, and reviews the result before you see it or anything goes into long-term memory. ` +
-        `There is always at least one. It duplicates itself when work waits, when it wants a second opinion, and to take a second mode of initiative; idle duplicates retire. ` +
+        `There is always at least one. It duplicates itself when work waits, when it wants a second opinion, and to take a second mode of initiative; idle duplicates retire. Tools can ask it for facts they need, and when it decides an order was not answered it tries other ways, up to the limit below. ` +
         `${ds.nodes.length} running of at most ${ds.limit}; ${c.review || 0} reviewed, ${c.consult || 0} second opinions, ${c["memory.declined"] || 0} facts kept out of memory.`),
       h("div", { class: "row" },
-        h("button", { type: "button", disabled: full, title: full ? `At most ${ds.limit} directors ([directors] max_directors)` : "", onclick: e => act(e.target, () => api("/directors", { action: "spawn", by: "web" }), r => `${r.director} is running`) }, "Add a duplicate")),
+        h("button", { type: "button", disabled: full, title: full ? `At most ${ds.limit} directors ([directors] max_directors)` : "", onclick: e => act(e.target, () => api("/directors", { action: "spawn", by: "web" }), r => `${r.director} is running`) }, "Add a duplicate"),
+        h("label", { class: "row small" }, "Ways to try an unanswered order",
+          h("select", { "aria-label": "Ways a director tries an unanswered order before it gives up", onchange: e => act(e.target, () => api("/directors", { attempts: Number(e.target.value), by: "web" }), r => r.message) },
+            [1, 2, 3, 4, 5, 6, 8, 10].map(n => h("option", { value: n, selected: n === ds.max_attempts }, n === 1 ? "1 (no retries)" : String(n)))))),
+      h("p", { class: "small dim" }, `Unanswered orders tried again ${c.retries || 0} times, ${c.rescued || 0} answered that way, ${c.gave_up || 0} given up; tools asked ${c.queries || 0} questions.`),
       h("div", { class: "cols", style: "margin-top:14px" },
         h("div", {},
           h("h3", {}, `How its mood shapes them: ${st.mood}`),

@@ -1,9 +1,16 @@
 """Tools: plugins the system discovers, vets, tests, learns to route to, and retires.
 
 A tool is a folder containing manifest.toml plus an entrypoint script. The script
-reads {"input": "<order text>"} as JSON on stdin and prints {"output": ...} or
+reads {"input": "<order text>", "config": {...}} as JSON on stdin and prints {"output": ...} or
 {"error": "..."} on stdout. Tools run in a subprocess with CPU/memory limits, a clean
 environment (no API keys), and their own folder as working directory.
+
+Any tool can loop back to a director: instead of an answer it prints
+{"query": {"ask": "What is the speed of light?", "about": "speed of light", "why": "..."}}.
+A director answers from what the mesh holds (and, within budgets, its research tools or teachers),
+and the tool is run again with "context": [{"ask", "answer", "source"}, ...] in its input, so it
+can use the answer (or see that no one could give one). A run may ask a few times
+([directors] tool_queries); every question and answer is in the order's trace.
 
 Note: this sandbox limits resources and environment, not syscalls. For untrusted
 third-party tools run the system inside a container/VM (see README).
@@ -101,6 +108,7 @@ class ToolRun:
     extra: dict = field(default_factory=dict)   # everything else the tool returned (e.g. "knowledge")
     transient: bool = False                     # e.g. network down: does not count towards quarantine
     not_found: bool = False                     # the tool works but has no answer (e.g. no such article)
+    query: dict | None = None                   # the tool asks a director for context before it can answer
 
 
 _LAUNCHER = """
@@ -126,7 +134,8 @@ class Sandbox:
     NETWORK_ENV = ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
                    "SSL_CERT_FILE", "SSL_CERT_DIR")
 
-    async def run(self, tool: Tool, text: str, timeout: float, config: dict | None = None) -> ToolRun:
+    async def run(self, tool: Tool, text: str, timeout: float, config: dict | None = None,
+                  context: list | None = None) -> ToolRun:
         m = tool.manifest
         entry = (m.path / m.entrypoint).resolve()
         if m.path.resolve() not in entry.parents:
@@ -142,6 +151,8 @@ class Sandbox:
             cwd=str(m.path), env=env)
         try:
             request = {"input": text, "config": config if config is not None else dict(m.config)}
+            if context:
+                request["context"] = context
             out, err = await asyncio.wait_for(proc.communicate(json.dumps(request).encode()), timeout)
         except asyncio.TimeoutError:
             proc.kill()
@@ -158,6 +169,12 @@ class Sandbox:
         if "error" in data:
             return ToolRun(False, error=str(data["error"]), ms=ms, transient=bool(data.get("transient")),
                            not_found=bool(data.get("not_found")))
+        if data.get("query"):  # it asks a director for context (see the module docstring)
+            q = data["query"] if isinstance(data["query"], dict) else {"ask": str(data["query"])}
+            q = {k: str(v)[:300] for k, v in q.items() if k in ("ask", "about", "why")}
+            if not q.get("ask"):
+                return ToolRun(False, error="tool asked an empty question", ms=ms)
+            return ToolRun(False, error=f"it needs to know: {q['ask']}", ms=ms, query=q, transient=True)
         extra = {k: v for k, v in data.items() if k != "output"}
         return ToolRun(True, output=data.get("output"), ms=ms, extra=extra)
 

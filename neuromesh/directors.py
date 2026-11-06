@@ -22,6 +22,14 @@ collaborate with it: one takes the next order while another reviews, one gives a
 from what the mesh already holds (memory nodes, retained knowledge, a challenger node; never a
 teacher or the web), one takes a second mode of initiative. They retire once idle for a while.
 
+Directors also answer tools. Any tool can loop back to a director with a question it needs answered
+first ("What is the speed of light?"); a director answers from what the mesh holds (and, within
+budgets and unless it is wary, research or a teacher), and the tool runs again with that context.
+And when a director deems an order not answered (it failed, said nothing, said it does not know, or
+answered a maths question without maths), it tries a different way - another route, the memory
+nodes' less sure answers, retained knowledge, research, a teacher, the order rephrased - and gives up
+after [directors] max_attempts ways. A route that works teaches the router.
+
 The mood shapes the directors (their stance), measured against the mesh's baseline personality:
   caution   low confidence or trust, or a low mood: second opinions on more answers, and a higher
             bar for what is stored in memory; good spirits lower that bar a little
@@ -48,7 +56,18 @@ from .knowledge import restate
 from .temperament import DIMENSIONS, WITHHOLDING, Temperament
 
 PRIMARY = "director-0"
-ORDER_WORK = ("intake", "review", "consult")
+ORDER_WORK = ("intake", "review", "consult", "query", "retry")
+REFUSAL = re.compile(r"\b(?:i\s+(?:don't|do\s+not|can't|cannot|couldn't)\s+(?:know|tell|say|answer|find)|no\s+idea|"
+                     r"i'm\s+not\s+sure|i\s+am\s+not\s+sure|unable\s+to\s+(?:answer|help|find)|"
+                     r"i\s+have\s+no\s+(?:answer|information|idea))\b", re.I)
+MATHY = re.compile(r"\d\s*(?:[-+*/^x×÷]|\*\*)\s*\(?\d|\b(?:solve|equation|derivative|differentiate|integra(?:l|te)|limit\s+of|"
+                   r"factori[sz]e|factor\s+\d+|prime\s+factors?|is\s+\d+\s+(?:a\s+)?prime|gcd|lcm|square\s+root|sqrt|log(?:arithm)?\s*(?:\(|of)|"
+                   r"(?:sin|cos|tan)\s*\(|(?:mean|median|average|variance)\s+of\s+-?\d|percent\s+of|\d+\s*%\s+of|"
+                   r"\d+\s+choose\s+\d+|squared|cubed|to\s+the\s+power)\b|[a-z]\s*\^\s*\d|\b\d[a-z]\b\s*[-+=]|"
+                   r"\d\s+(?:times|plus|minus|divided\s+by|multiplied\s+by)\s|\s(?:times|plus|minus|divided\s+by|multiplied\s+by)\s+\d",
+                   re.I)
+METHOD_WORDS = {"memory": "its memory nodes, less sure answers too", "knowledge": "its retained knowledge",
+                "research": "research", "teacher": "a teacher", "rephrase": "the order in plainer words"}
 TAG = "[director:"
 
 
@@ -401,6 +420,8 @@ class DirectorPool(Agent):
                     why = None
                     if kind == "consult":
                         why = f"a second opinion ({_snip(what, 60)})"
+                    elif kind == "query":
+                        why = f"a tool's question ({_snip(what, 60)})"
                     elif kind == "initiative":
                         why = f"a second mode of initiative ({what})"
                     elif self.waiting >= self.stance().spawn_waiting:
@@ -604,6 +625,200 @@ class DirectorPool(Agent):
             self.sys.bus.publish("director.reviewed", order=res.order_id, director=d.id, intake=plan.director,
                                  verdict=verdict, mood=st.mood, consulted=second["by"] if second else "")
 
+    # ------------------------------------------------------- tools ask, it answers
+    async def answer_query(self, tool: str, query: dict, order, res) -> dict:
+        """A tool asks for context before it can answer: a director answers from what the mesh holds,
+        then (within budgets, never while wary) research or a teacher."""
+        s = self.sys
+        ask = str(query.get("ask", "")).strip()
+        entry = {"ask": ask, "about": query.get("about", ""), "answer": None,
+                 "source": "nothing the mesh holds answers this"}
+        async with self.working("query", f"{tool} asks: {ask}", wait=1.0) as d:
+            who = d.id if d is not None else "a busy director"  # every director busy: the asking one answers itself
+            st = self.stance()
+            entry["by"] = who
+            rec = s.memory.recall(ask) or s.memory.recall(ask, quiet=True, threshold=self.pol.second_opinion_threshold)
+            pol = s.directives.research
+            hits, conf = ([], 0.0) if rec else s.knowledge.recall(ask, pol.recall_threshold)
+            if rec is not None:
+                entry.update(answer=rec.answer, source=f"memory node {rec.node.id}")
+            elif hits and conf >= pol.recall_threshold:
+                entry.update(answer=restate(ask, hits)[0], source=f"retained knowledge '{hits[0].doc.title}'")
+            elif self.pol.query_outside and not st.wary:
+                kt = s.knowledge_tool()
+                if kt is not None and kt.name != tool:
+                    doc, _ = await s.research(ask, reason=f"{tool} asked {who}", tool=kt, background=order.background)
+                    if doc is not None:
+                        found = s.knowledge.search(ask, doc_id=doc.id)
+                        if found:
+                            entry.update(answer=restate(ask, found)[0], source=f"{doc.source} '{doc.title}'")
+                if entry["answer"] is None:
+                    reply = await s.teachers.answer(ask)
+                    if reply:
+                        entry.update(answer=reply[0], source=f"the {reply[1]} teacher (a language model)")
+            elif st.wary:
+                entry["source"] += " (wary: it gives tools only what it already holds)"
+            said = f"'{_snip(entry['answer'], 70)}' ({entry['source']})" if entry["answer"] else entry["source"]
+            res.trace.append(f"{tool} asked {who}: '{ask}' -> {said}")
+            self.counts["queries"] += 1
+            self.sys.bus.publish("director.queried", tool=tool, director=who, ask=_snip(ask, 160),
+                                 answered=entry["answer"] is not None, source=entry["source"], order=res.order_id)
+            return entry
+
+    # ------------------------------------------------- trying again, other ways
+    def answered(self, order, res) -> tuple[bool, str]:
+        """Does the result answer the order? Failed, empty, "I don't know", or a maths question
+        answered without maths, does not."""
+        if not res.ok:
+            return False, res.note or "it was not fulfilled"
+        out = res.output
+        said = str(res.answer or "").split("\n")[0]
+        if out is None or (isinstance(out, str) and not out.strip()):
+            return False, "it gave no answer"
+        if REFUSAL.search(str(out)) or REFUSAL.search(said):
+            return False, "the answer says it does not know"
+        route = res.route or ""
+        maths = self._maths_routes()
+        if MATHY.search(order.text) and route not in maths and not self._explicit(order):
+            if maths or route != "answer:direct" or not re.search(r"\d", str(out)):
+                return False, f"a maths question, but {route or 'nothing'} answered it, not {' or '.join(sorted(maths)) or 'maths'}"
+        return True, ""
+
+    def _explicit(self, order) -> bool:
+        """The person named the route themselves ("sentiment: ...", "tool calculator: ...")."""
+        from .tasks import parse_order
+        return parse_order(order.text, self.sys.capabilities)[0] is not None
+
+    def _maths_routes(self) -> set[str]:
+        s = self.sys
+        out = set()
+        for t in s.tools.active():
+            m = t.manifest
+            blob = f"{m.description} {' '.join(map(str, m.keywords))}".lower()
+            if re.search(r"arithmetic|mathemat|equation|calculat", blob):
+                out.add(m.route)
+        return out
+
+    def _routes(self, text: str, tried: set) -> list[str]:
+        """Other routes worth trying: those whose cues appear in the order, strongest first, then by the router."""
+        s = self.sys
+        from .tasks import DISPATCH
+        spec = s.capabilities[DISPATCH]
+        live = [r for r in spec.labels if r not in spec.inactive_labels and r not in tried
+                and (r.startswith(("tool:", "skill:")) or r == "answer:direct")]
+        live = [r for r in live if not r.startswith("tool:") or (r[5:] in s.tools.tools and s.tools.tools[r[5:]].state == "active"
+                                                                 and s.tools.tools[r[5:]].manifest.provides != "knowledge")]
+        heur = s.teachers.teachers.get("heuristic")
+        cues = heur.scores(spec, text) if heur is not None and hasattr(heur, "scores") else {}
+        rank: dict[str, float] = {}
+        champ = s.registry.champion(DISPATCH)
+        if champ is not None and champ.params is not None:
+            probs = champ.predict_proba(s.encode(text)[None, :])[0]
+            rank = {lab: float(p) for lab, p in zip(champ.labels, probs)}
+        # only routes whose own cues appear in the order: a route that merely runs (word counts for a
+        # word problem) is not an answer, and must not teach the router
+        good = [r for r in live if cues.get(r, 0) > 0]
+        return sorted(good, key=lambda r: (-cues.get(r, 0.0), -rank.get(r, 0.0)))
+
+    def _methods(self, order, st: Stance, tried: set) -> list[str]:
+        """The ways still to try, in the order this director prefers them."""
+        from .agents import is_question, rephrase
+        s = self.sys
+        text = order.text
+        question, maths = is_question(text), bool(MATHY.search(text))
+        routes = self._routes(text, tried)
+        maths_routes = sorted(r for r in self._maths_routes() if r not in tried)  # a maths question is its own cue
+        inside = ["memory", "knowledge"] if question else []
+        out: list[str] = []
+        if maths:
+            out += maths_routes
+        if st.wary:  # wary: what it already holds first
+            out += inside
+        out += [r for r in routes if r not in maths_routes][:2]
+        if question:  # the direct answer: memory nodes, retained knowledge, research, then teachers
+            out.append("answer:direct")
+        out += inside
+        if question and not st.wary and s.knowledge_tool() is not None and s.directives.research.research_questions:
+            out.append("research")
+        if any(i.get("provider") and i.get("available") and i.get("in_order") for i in s.teachers.describe().values()):
+            out.append("teacher")
+        if rephrase(text) != " ".join(text.split()):
+            out.append("rephrase")
+        seen: list[str] = []
+        for m in out:
+            if m not in seen and m not in tried:
+                seen.append(m)
+        return seen
+
+    async def persist(self, order, res):
+        """When a director deems the order not answered, it tries a different way, and gives up after
+        max_attempts ways (one fewer when it is impatient). The first answer that works is the reply."""
+        s = self.sys
+        route = res.route or ""
+        if s.guardian.halted or route in ("tasks", "mind") or route.startswith("dream:"):
+            return res
+        ok, why = self.answered(order, res)
+        if ok:
+            return res
+        st = self.stance()
+        limit = max(1, int(self.pol.max_attempts) - (1 if st.impatient else 0))
+        plan = self.plans.get(order.id)
+        tried = {route} if route else set()
+        if route == "answer:direct" and res.knowledge in ("memory", "recalled"):
+            tried.add("memory" if res.knowledge == "memory" else "knowledge")
+        steps, attempt = [], 1
+        async with self.working("retry", order.text) as d:
+            while attempt < limit:
+                methods = self._methods(order, st, tried)
+                if not methods:
+                    break
+                method = methods[0]
+                tried.add(method)
+                attempt += 1
+                keep = len(plan.remember) if plan else 0
+                new = await s.orchestrator.attempt(order, method)
+                ok2, why2 = self.answered(order, new)
+                what = METHOD_WORDS.get(method, f"the route {method}")
+                res.trace.append(f"{d.id} deemed it not answered ({why}); attempt {attempt} of {limit}: {what} -> "
+                                 + ("answered" if ok2 else why2))
+                self.counts["retries"] += 1
+                s.bus.publish("director.retried", director=d.id, order=order.id, text=_snip(order.text, 120),
+                              attempt=attempt, limit=limit, method=method, answered=ok2, why=why if ok2 else why2)
+                if ok2:
+                    new.trace = res.trace + new.trace
+                    new.attempts = attempt
+                    if (method.startswith(("tool:", "skill:")) or method == "answer:direct") and order.learn \
+                            and not self._explicit(order):
+                        from .tasks import DISPATCH
+                        if s.learn(DISPATCH, order.text, method, "director"):  # the router learns the route that worked
+                            new.trace.append(f"the router learns that {method} answers orders like this")
+                    self.counts["rescued"] += 1
+                    return new
+                if plan is not None:
+                    del plan.remember[keep:]  # nothing from a way that did not work is kept
+                steps.append(f"{what}: {why2}")
+                why = why2
+            res.attempts = attempt
+            if attempt >= limit:
+                gave = f"{d.id} gave up after {attempt} attempt{'s' if attempt != 1 else ''} (max_attempts {limit})"
+            else:
+                gave = f"{d.id} gave up after {attempt} attempt{'s' if attempt != 1 else ''}: no other way to try"
+            res.trace.append(gave)
+            if not res.ok:
+                res.note = (f"{res.note}; a director found no other way to try it" if attempt == 1 else
+                            f"{res.note}; a director tried {attempt} ways" + (f" ({'; '.join(steps)})" if steps else "")
+                            + " and gave up")
+            self.counts["gave_up"] += 1
+            s.bus.publish("director.gave_up", director=d.id, order=order.id, text=_snip(order.text, 120),
+                          attempts=attempt, limit=limit, why=why)
+        return res
+
+    def set_attempts(self, n: int, by: str) -> str:
+        n = max(1, min(10, int(n)))
+        self.pol.max_attempts = n
+        self.sys.guardian.audit(by, "directors.attempts", str(n))
+        return f"a director now tries an unanswered order up to {n} way{'s' if n != 1 else ''} before it gives up"
+
     # ------------------------------------------------------------ memory gate
     def review_memory(self, ask: str, answer, source: str = "", by: str = "", kind: str = "people", *,
                       confidence: float | None = None, corroborated: bool = False, disputed: bool = False,
@@ -650,7 +865,8 @@ class DirectorPool(Agent):
                 "limit": self.limit, "most": self.most, "restarts": self.restarts, "waiting": self.waiting,
                 "stance": self.stance().to_dict(), "nodes": [n.to_dict(now) for n in self.nodes.values()],
                 "counts": dict(self.counts), "reviews": list(self.reviews)[-15:], "memory": list(self.memory_log)[-15:],
-                "events": list(self.events)[-10:], "consult": bool(self.pol.consult)}
+                "events": list(self.events)[-10:], "consult": bool(self.pol.consult),
+                "max_attempts": int(self.pol.max_attempts), "tool_queries": int(self.pol.tool_queries)}
 
     def lines(self) -> list[str]:
         st = self.stance()
@@ -660,7 +876,10 @@ class DirectorPool(Agent):
                + (f", director-0 restarted {self.restarts}x" if self.restarts else ""),
                f"  stance {st.line()}",
                f"  handled: {c.get('intake', 0)} orders taken, {c.get('review', 0)} reviewed, {c.get('consult', 0)} second "
-               f"opinions; memory: {c.get('memory.kept', 0)} kept, {c.get('memory.declined', 0)} declined"]
+               f"opinions; memory: {c.get('memory.kept', 0)} kept, {c.get('memory.declined', 0)} declined",
+               f"  unanswered orders: tried again {c.get('retries', 0)} times, {c.get('rescued', 0)} answered that way, "
+               f"{c.get('gave_up', 0)} given up (up to {int(self.pol.max_attempts)} ways each); tools asked "
+               f"{c.get('queries', 0)} questions"]
         for n in self.nodes.values():
             h = n.handled
             mark = "*" if n.role == "primary" else " "

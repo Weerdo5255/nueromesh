@@ -12,7 +12,7 @@ from neuromesh.challenges import ADAPTERS, Item, Suite, convert, fetch_rows, gra
 from neuromesh.commands import execute
 from neuromesh.runtime import System
 from neuromesh.server import _route
-from neuromesh.tasks import DIRECT, DISPATCH
+from neuromesh.tasks import DIRECT, DISPATCH, Inference
 
 from test_system import FAST, make_root, wait_for
 
@@ -189,6 +189,23 @@ class ChallengeSystemTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_missed_questions_teach_the_router_a_better_route(self):
         s = self.system
+        pick = next(i.input for i in self.ch.suites["sample-arithmetic"].practice() if "squared" in i.input
+                    or "*" in i.input or " times " in i.input)
+        real = s.infer
+
+        async def misroute(cap, text, **kw):  # the router sends this one to the wrong place
+            if cap == DISPATCH and text == pick:
+                return Inference(DIRECT, 0.9, "teacher:heuristic", None, "teacher")
+            return await real(cap, text, **kw)
+        s.infer = misroute
+        # a director deems it unanswered and tries the calculator; the router learns that
+        res = await s.submit(pick)
+        self.assertEqual((res.ok, res.route, res.attempts), (True, "tool:calculator", 2), res.trace)
+        rows = s.store.db.execute("SELECT label, source FROM examples WHERE capability=? AND text=?", (DISPATCH, pick)).fetchall()
+        self.assertIn(("tool:calculator", "director"), rows)
+        # with no retries, practice finds the better route itself
+        s.directors.pol.max_attempts = 1
+        s.store.db.execute("DELETE FROM examples WHERE capability=? AND text=?", (DISPATCH, pick))
         rep = await self.ch.run("sample-arithmetic", "practice", 100)
         rerouted = [r for r in rep.results if "->" in r["route"]]
         self.assertTrue(rerouted and rep.rerouted == len(rerouted), rep.results)
@@ -196,6 +213,8 @@ class ChallengeSystemTests(unittest.IsolatedAsyncioTestCase):
         prompt = next(r["input"] for r in rerouted)
         self.assertTrue(any(e.text == prompt and e.label == "tool:calculator" and e.source == "challenge"
                             for e in s.store.examples(DISPATCH)))
+        s.infer = real
+        s.directors.pol.max_attempts = 3
         res = await s.submit(prompt)  # the router now sends it to the calculator
         self.assertTrue(res.ok and res.route == "tool:calculator", (res.route, res.answer))
         # an LLM teacher that answers word problems: the route search finds it and the router learns it
@@ -208,7 +227,7 @@ class ChallengeSystemTests(unittest.IsolatedAsyncioTestCase):
         rep = await self.ch.run("sample-arithmetic", "practice", 100)
         self.assertGreaterEqual(rep.score, 0.9, rep.results)
         problem = "A box holds 12 eggs. How many eggs are in 5 boxes?"
-        self.assertTrue(any(e.text == problem and e.label == DIRECT and e.source == "challenge"
+        self.assertTrue(any(e.text == problem and e.label == DIRECT and e.source in ("challenge", "director")
                             for e in s.store.examples(DISPATCH)), "word problems are routed to the teacher that solves them")
 
     async def test_retained_answers_and_background_task(self):

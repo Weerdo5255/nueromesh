@@ -107,6 +107,7 @@ class Result:
     inquiry: dict | None = None  # a question the mesh asks the user about this order ({"id", "question"})
     director: str = ""       # the director node that reviewed it on its way out (P14)
     review: str = ""         # what that director decided
+    attempts: int = 1        # ways it was tried: a director tries again when it deems an order unanswered
 
     def to_dict(self) -> dict:
         return asdict(self)

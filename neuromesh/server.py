@@ -161,7 +161,12 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             if body.get("action") == "retire":
                 ok, msg = pool.retire(str(body.get("id", "")), f"retired by {by}", by=by)
                 return (200 if ok else 409), {"ok": ok, "message": msg}
-            return 400, {"error": 'action is "spawn" or "retire"'}
+            if body.get("attempts") is not None:
+                try:
+                    return 200, {"message": pool.set_attempts(int(body["attempts"]), by)}
+                except (TypeError, ValueError):
+                    return 400, {"error": "attempts is a whole number from 1 to 10"}
+            return 400, {"error": 'action is "spawn" or "retire", or give "attempts"'}
         if path == "/imagine":  # {"prompt": "a city on Mars"}
             result = await system.submit(f"imagine {body.get('prompt', '')}", source=body.get("source", "api"))
             return 200, result.public_dict()
