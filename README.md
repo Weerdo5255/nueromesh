@@ -190,6 +190,28 @@ no hidden layer, 8-bit weights) with all 31 tests passing, and the node still an
 asked in other words ("what's the capital of Australia?"). More facts need more room: 22 facts
 stop at 128 inputs (about 3 KB), where a smaller node starts failing their tests.
 
+**Merging.** When nothing is left to compress, the Compressor goes back through its compressed
+memory nodes and tries to merge two of them, chosen at random (every `merge_every_seconds`):
+1. **Combine** both networks into one, exactly. The smaller input layer is unfolded to the larger
+   (exact), the shallower node gets identity layers (a linear node becomes a ReLU layer via
+   relu(z) - relu(-z) = z, which is also exact), and the hidden layers sit side by side reading
+   the same inputs. Every answer's output is exactly what its parent gave. The "not something I
+   know" output adds both parents' together, so it wins when both say so and loses to an answer
+   either one is sure of. Two linear nodes stay one linear node.
+2. **Fine-tune** the combined node on both nodes' tests, with each node's questions no longer
+   counted as the other's unknowns.
+3. **Test** it against the answers of both nodes (and the questions neither should answer). If it
+   passes at least 90% (`merge_pass_rate`) it replaces both: their test files fold into one,
+   and their weights move to `state/memory/merged/`. Any tests it still fails are listed in
+   its file, those answers are not served, and it relearns until every test passes. Below 90%
+   both nodes stay, and that pair is not tried again until one of them changes.
+4. **Compress** the combined node like any other. Combined nodes can be merged again with
+   other combined nodes, so knowledge collects into fewer, denser nodes.
+
+In the demo, three nodes of four, four and two facts (200, 200 and 120 bytes) merge in two steps
+into one node of all ten facts. Each merge passes 100% of the answer tests, and the result
+compresses to 440 bytes. `/memory merge [node node]` tries a merge now.
+
 **People own the tests too.** The mesh checks the files every couple of seconds:
 - change an answer: the node is retrained to give the new one (the old answer is not served meanwhile);
 - add a `[[test]]` (ask + answer) or an `[[unknown]]`: it is learned;
@@ -566,7 +588,7 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P8 never lie | the temperament may withhold, delay, shorten or add context or a gentler tone, never change an answer; every change is disclosed; distressed people are never kept waiting (the honesty guard in `neuromesh/temperament.py`) |
 | P9 discretion | private notes and opinions are declined, never denied or faked; opinions about people are always private; the operator sees everything (`/mind`, audited) |
 | P10 human-adopted growth | the mesh proposes skills, labels and tools and asks questions; only a human adopts a proposal or approves a tool |
-| P11 tested memory | knowledge lives in a memory node only while that node passes every test in its external test file; a smaller node is accepted only if all its answers still match; people's edits to the tests are retrained to |
+| P11 tested memory | knowledge lives in a memory node checked by its external test file; a smaller node is accepted only if all its answers still match; a merged node only if it passes at least 90% of both nodes' tests, and the ones it fails are never served and are relearned; people's edits to the tests are retrained to |
 | P12 accountable initiative | the mesh takes initiative only when idle and within its own budget; every decision is audited and logged; the tasks it sets itself can be paused or removed; people can pin its mode or turn it off; it never adds capabilities or approves tools |
 
 **Goals** are measured continuously and shown on the scorecard (`/status`): competence
@@ -660,7 +682,7 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /challenges    /challenge run sample-sentiment    /challenge practice gsm8k 50    /challenge fetch sst2 500    /task challenge gsm8k every 30m
 /evolution    /evolution sentiment
 /director    /director mode examine    /director mode auto    /director now    /director off
-/memorize What is the capital of Australia? :: Canberra is the capital of Australia.    /memory    /memory mem-0001    /memory test    /memory forget <question>
+/memorize What is the capital of Australia? :: Canberra is the capital of Australia.    /memory    /memory mem-0001    /memory test    /memory merge    /memory forget <question>
 what do you think of the calculator tool?    are you hiding anything?    what do you know about me?
 /feedback ord-3f2a91c0 disposition=pass    /feedback ord-3f2a91c0 affect=frustrated
 ```
@@ -1010,13 +1032,14 @@ neuromesh/
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   142 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   146 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
                          evolution (exact growth, pruning, growth bias, promotion rules, a node
                          that evolves larger in a running system), memory nodes (test files,
-                         compression that never accepts a failing node, people's edits, answers),
+                         compression that never accepts a failing node, merging (exact stacking, the
+                         90% rule, relearning what fails), people's edits, answers),
                          the web interface (its files, the endpoints it uses, the token), independent
                          agency (the drive policy, outcomes teaching the agency node, people in charge),
                          temperament and

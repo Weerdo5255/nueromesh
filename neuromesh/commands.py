@@ -32,6 +32,7 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /memory test                    run every memory node against its test file now
   /memorize <question> :: <answer>   teach it a fact (compressed into a memory node with tests)
   /memory forget <question>       forget a fact (its tests go too)
+  /memory merge [node node]       try merging two compressed memory nodes now (random pair if none given)
   /director                       its own initiative: mode, who chose it, the tasks it set itself, what paid off
   /director mode <auto|research|practise|examine|improve|consolidate|rest>   pin a mode (auto: the agency node chooses)
   /director now | on | off        take initiative now, or turn its initiative on or off
@@ -179,6 +180,8 @@ def memory_lines(system, rest: str = "") -> list[str]:
         out = [f"  {n.id} [{n.status}] {len(n.facts())} facts, {len(n.expected_answers())} answers, {_kb(n.bytes)} "
                f"({n.spec()}), {n.passed}/{n.total} tests pass, served {n.served}x",
                f"  test file: {mem.tests_path(n)}"]
+        if n.merged_from:
+            out.append(f"  merged from {' and '.join(n.merged_from)}; made of {', '.join(n.parts)}")
         out += [f"    {mem._history_line(h)}" for h in n.history[-15:]]
         out.append("  facts:")
         out += [f"    {t.ask[:60]!r} -> {t.answer[:70]!r}" for t in n.facts()[:20]]
@@ -191,8 +194,9 @@ def memory_lines(system, rest: str = "") -> list[str]:
     for x in st["nodes"]:
         was = f" (was {_kb(x['first_bytes'])})" if x["first_bytes"] > x["bytes"] else ""
         tests = f"{x['passed']}/{x['total']} tests" if x["total"] else f"{x['tests']} tests, not checked yet"
+        merged = f" - merged from {len(x['parts'])} nodes" if len(x["parts"]) > 1 else ""
         out.append(f"  {x['id']} [{x['status']}] {x['facts']} facts {_kb(x['bytes'])}{was} - {x['spec']} - {tests}"
-                   + (f" - served {x['served']}x" if x["served"] else ""))
+                   + (f" - served {x['served']}x" if x["served"] else "") + merged)
     return out
 
 
@@ -211,6 +215,32 @@ async def memory_command(system, rest: str) -> list[str]:
             for x in [x for x in r["results"] if not x["pass"]][:5]:
                 out.append(f"    x {x['ask'][:60]!r}: wanted {x['want'][:50]!r}, got {x['got'][:50]!r} ({x['confidence']:.2f})")
         return out or ["  no memory nodes yet"]
+    if sub == "merge":
+        if not mem.enabled:
+            return ["  memory nodes are off"]
+        names = arg.split()
+        if names:
+            if len(names) != 2 or any(x not in mem.nodes for x in names) or names[0] == names[1]:
+                return ["  usage: /memory merge <node> <node> (two different memory nodes; /memory lists them)"]
+            a, b = mem.nodes[names[0]], mem.nodes[names[1]]
+            if any(n.params is None or n.dirty for n in (a, b)):
+                return ["  both nodes must have learned their tests first"]
+        else:
+            pairs = mem.merge_candidates()
+            if not pairs:
+                return ["  no pair to try: merges need two compressed nodes that pass all their tests (not tried as they are)"]
+            a, b = pairs[int(mem.rng.integers(len(pairs)))]
+        job = mem.merge_job(a, b)
+        res = await asyncio.to_thread(job.run)
+        before = set(mem.nodes)
+        mem.finish(job, res)
+        made = sorted(set(mem.nodes) - before)
+        rate = f"{res['pos']}/{res['pos_total']} answers and {res['neg']}/{res['neg_total']} unknowns pass"
+        if made:
+            n = mem.nodes[made[0]]
+            return [f"  merged {a.id} and {b.id} into {n.id}: {len(n.facts())} facts, {_kb(n.bytes)} ({n.spec()}); {rate}"
+                    + (f"; relearning the {len(n.failing)} it fails" if n.failing else "")]
+        return [f"  {a.id} and {b.id} would not merge: {rate} (needs {mem.pol.merge_pass_rate:.0%}); both kept"]
     if sub == "forget":
         nid = mem.forget(arg.strip())
         return [f"  forgot '{arg.strip()}' (from {nid})" if nid else f"  no memory node knows '{arg.strip()}'"]

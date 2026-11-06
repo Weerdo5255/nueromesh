@@ -391,7 +391,7 @@
         memNodes.forEach(n => {
           const rr = hexR(n.bytes);
           svg.append(sv("polygon", { points: hexagon(x, y, rr), class: "m-mem" + (n.status === "learning" ? " learning" : "") },
-            sv("title", {}, `${n.id}: ${n.facts} facts in ${bytes(n.bytes)}${n.first_bytes > n.bytes ? ` (first ${bytes(n.first_bytes)})` : ""}\n${n.spec}\ntests ${n.passed}/${n.total}, served ${n.served}`)));
+            sv("title", {}, `${n.id}: ${n.facts} facts in ${bytes(n.bytes)}${n.first_bytes > n.bytes ? ` (first ${bytes(n.first_bytes)})` : ""}${n.parts > 1 ? `, merged from ${n.parts} nodes` : ""}\n${n.spec}\ntests ${n.passed}/${n.total}, served ${n.served}`)));
           x += rr * 2 + 4;
         });
         const facts = m.memory.reduce((a, n) => a + n.facts, 0);
@@ -638,7 +638,8 @@
     const rows = mem.nodes.map(n => {
       const ratio = n.first_bytes ? n.bytes / n.first_bytes : 1;
       return h("tr", { class: "click" + (n.id === S.memNode ? " sel" : ""), tabindex: 0, onclick: () => loadMemNode(n.id), onkeydown: e => { if (e.key === "Enter") loadMemNode(n.id); } },
-        h("td", {}, h("b", {}, n.id)), h("td", {}, n.status), h("td", { class: "n" }, n.facts),
+        h("td", {}, h("b", {}, n.id)), h("td", {}, n.status, n.parts.length > 1 ? h("div", { class: "dim small" }, `merged from ${n.parts.length} nodes`) : null),
+        h("td", { class: "n" }, n.facts),
         h("td", {}, h("div", { class: "size", title: n.first_bytes ? `${(1 / Math.max(ratio, 1e-6)).toFixed(0)}× smaller than when first learned` : "" },
           h("span", {}, bytes(n.bytes), n.first_bytes > n.bytes ? h("span", { class: "dim" }, ` from ${bytes(n.first_bytes)}, ${Math.round(1 / Math.max(ratio, 1e-6)).toLocaleString()}× smaller`) : ""),
           h("div", { class: "bar" }, h("i", { style: `width:${Math.max(1, Math.min(100, ratio * 100)).toFixed(1)}%` })))),
@@ -656,7 +657,9 @@
       h("div", { class: "section" },
         h("p", { class: "lede" }, `${mem.facts} facts in ${mem.nodes.length} memory node${mem.nodes.length === 1 ? "" : "s"}, ${bytes(mem.bytes)}` +
           (mem.first_bytes > mem.bytes ? ` (first learned in ${bytes(mem.first_bytes)})` : "") +
-          `. A node answers at ${pct(mem.threshold)} confidence or more, and is only ever replaced by a smaller one that passes every test in its file. Test files: ${mem.tests_dir}`),
+          `. A node answers at ${pct(mem.threshold)} confidence or more, and is only ever replaced by a smaller one that passes every test in its file` +
+          (mem.merge ? `, or merged with another into one node that passes at least ${pct(mem.merge_pass_rate)} of both nodes' tests (what it fails is not served, and relearned)` : "") +
+          `. Test files: ${mem.tests_dir}`),
         h("h2", {}, "Teach it a fact"), memorize),
       h("div", { class: "section" }, h("div", { class: "row", style: "justify-content:space-between" }, h("h2", {}, "Memory nodes"), runTests),
         mem.nodes.length
@@ -674,7 +677,8 @@
     if (d && d.id === S.memNode) {
       kids.push(h("div", { class: "section" },
         h("h2", {}, `${d.id}: ${d.facts.length} facts`),
-        h("p", { class: "lede" }, `${bytes(d.bytes)} (${d.spec})${d.first_bytes > d.bytes ? `, first learned in ${bytes(d.first_bytes)}` : ""}. Tests ${d.passed}/${d.total}. File: `, h("code", {}, d.file)),
+        h("p", { class: "lede" }, `${bytes(d.bytes)} (${d.spec})${d.first_bytes > d.bytes ? `, first learned in ${bytes(d.first_bytes)}` : ""}. Tests ${d.passed}/${d.total}.` +
+          (d.merged_from.length ? ` Merged from ${d.merged_from.join(" and ")}; made of ${d.parts.join(", ")}.` : "") + " File: ", h("code", {}, d.file)),
         h("div", { class: "cols" },
           h("div", {}, h("h3", {}, "What it knows"), h("ul", { class: "facts" }, d.facts.map(f => h("li", {},
             h("div", {}, h("div", { class: "q" }, f.ask), h("div", { class: "a" }, f.answer),

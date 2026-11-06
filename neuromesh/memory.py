@@ -12,9 +12,17 @@ candidate is fine-tuned and run against the tests; it is accepted, and used to s
 knowledge, only if every answer still matches. People can read and edit the tests: change an
 answer and the node is retrained to match; delete a test and it forgets that fact; delete the
 file and it forgets the node; write a new file and it learns it.
+
+When nothing is left to compress, it goes back through its compressed memory nodes and tries to
+merge two of them, chosen at random, into one: both networks side by side in a single node (every
+answer exactly as its parent gave it), fine-tuned together. The combined node is tested against
+both nodes' tests; if it passes at least 90% of them it replaces both, the tests it still fails are
+listed in its file and never served, and it relearns until every test passes. Combined nodes are
+compressed further, and can be merged again with other combined nodes.
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import math
@@ -30,7 +38,7 @@ from pathlib import Path
 import numpy as np
 
 from .encoding import HashingEncoder
-from .evolution import prune_layer, remove_layer, widen_layer
+from .evolution import insert_layer, prune_layer, remove_layer, widen_layer
 
 UNKNOWN = "(not something this node knows)"  # output 0 of every memory node
 
@@ -323,6 +331,64 @@ def remap_outputs(params: list, old: list, new: list, rng: np.random.Generator) 
     return [p.copy() for p in params[:-2]] + [np.stack(cols, axis=1).astype(np.float32), np.array(bias, dtype=np.float32)]
 
 
+def deepen_linear(params: list) -> list:
+    """A linear node as one hidden layer of ReLUs, exactly: relu(z) - relu(-z) = z."""
+    W, b = params[0], params[1]
+    k = W.shape[1]
+    eye = np.eye(k, dtype=np.float32)
+    return [np.concatenate([W, -W], axis=1).astype(np.float32), np.concatenate([b, -b]).astype(np.float32),
+            np.concatenate([eye, -eye], axis=0), np.zeros(k, dtype=np.float32)]
+
+
+def match_depth(params: list, depth: int, rng: np.random.Generator) -> list:
+    """Give a node more hidden layers without changing what it computes."""
+    p = [x.copy() for x in params]
+    if depth > 0 and len(p) == 2:
+        p = deepen_linear(p)
+    while len(hidden_of(p)) < depth:
+        p = insert_layer(p, len(hidden_of(p)), rng, noise=0.0)  # an identity after a ReLU layer
+    return p
+
+
+def stack(pa: list, answers_a: list, pb: list, answers_b: list, answers: list) -> list:
+    """Two memory nodes (same inputs, same depth) as one: their hidden layers side by side, reading the
+    same inputs. Every answer's logit is exactly its parent's; the "not something I know" logit is the
+    sum of both parents' (high when both say so, beaten by an answer either parent is sure of)."""
+    ia = {a: i for i, a in enumerate(answers_a)}
+    ib = {a: i for i, a in enumerate(answers_b)}
+    M = len(answers)
+    if len(pa) == 2:  # both linear: shared inputs, each answer's column from its parent
+        W = np.zeros((pa[0].shape[0], M), dtype=np.float32)
+        b = np.zeros(M, dtype=np.float32)
+        for m, ans in enumerate(answers):
+            for p, idx in ((pa, ia), (pb, ib)):
+                j = idx.get(ans)
+                if j is not None:
+                    W[:, m] += p[0][:, j]
+                    b[m] += p[1][j]
+        return [W, b]
+    out = [np.concatenate([pa[0], pb[0]], axis=1).astype(np.float32), np.concatenate([pa[1], pb[1]]).astype(np.float32)]
+    for layer in range(1, len(pa) // 2 - 1):
+        Wa, Wb = pa[2 * layer], pb[2 * layer]
+        W = np.zeros((Wa.shape[0] + Wb.shape[0], Wa.shape[1] + Wb.shape[1]), dtype=np.float32)
+        W[:Wa.shape[0], :Wa.shape[1]] = Wa
+        W[Wa.shape[0]:, Wa.shape[1]:] = Wb
+        out += [W, np.concatenate([pa[2 * layer + 1], pb[2 * layer + 1]]).astype(np.float32)]
+    Wa, Wb = pa[-2], pb[-2]
+    W = np.zeros((Wa.shape[0] + Wb.shape[0], M), dtype=np.float32)
+    b = np.zeros(M, dtype=np.float32)
+    for m, ans in enumerate(answers):
+        j = ia.get(ans)
+        if j is not None:
+            W[:Wa.shape[0], m] = Wa[:, j]
+            b[m] += pa[-1][j]
+        j = ib.get(ans)
+        if j is not None:
+            W[Wa.shape[0]:, m] = Wb[:, j]
+            b[m] += pb[-1][j]
+    return out + [W, b]
+
+
 def evaluate(params: list, inputs: int, bits: int, T_full: np.ndarray, expected: np.ndarray, threshold: float,
              margin: float = 0.0):
     """Run the tests: a [[test]] passes when the node's top answer is the expected one with enough
@@ -362,6 +428,8 @@ class MemoryNode:
     file_hash: str = ""
     served: int = 0
     mtime: float = 0.0
+    parts: list = field(default_factory=list)        # the nodes it was merged from, all the way down
+    merged_from: list = field(default_factory=list)  # the two nodes it was made of
 
     @property
     def hidden(self) -> tuple:
@@ -413,7 +481,7 @@ class Recall:
 @dataclass
 class Job:
     """One piece of background work on a node, run in a thread on a snapshot of its data."""
-    kind: str                     # learn | compress
+    kind: str                     # learn | compress | merge
     node_id: str
     version: int
     dim: int
@@ -437,10 +505,14 @@ class Job:
     note: str = ""
     answer_texts: list = field(default_factory=list)  # the node's outputs, in order, for this job
     margin: float = 0.0
+    parts: tuple = ()             # merge: ((params, inputs, answers), (params, inputs, answers))
+    merge: dict = field(default_factory=dict)
 
     def describe(self) -> str:
         if self.kind == "learn":
             return f"{self.node_id}: learning {self.note}"
+        if self.kind == "merge":
+            return f"merging {self.merge['a']} and {self.merge['b']} ({self.note})"
         return f"{self.node_id}: trying a smaller node ({self.step[1]})"
 
     def run(self) -> dict:
@@ -449,7 +521,38 @@ class Job:
         rng = np.random.default_rng(self.seed)
         if self.kind == "learn":
             return self._learn(X, T, rng)
+        if self.kind == "merge":
+            return self._merge(X, T, rng)
         return self._compress(X, T, rng)
+
+    def _merge(self, X, T, rng) -> dict:
+        """Both nodes side by side in one (exact), then fine-tuned together on both nodes' tests."""
+        (pa, ia, aa), (pb, ib, ab) = self.parts
+        inputs = max(ia, ib)
+        pa = unfold_params(pa, inputs) if ia < inputs else [x.copy() for x in pa]
+        pb = unfold_params(pb, inputs) if ib < inputs else [x.copy() for x in pb]
+        depth = max(len(hidden_of(pa)), len(hidden_of(pb)))
+        params = stack(match_depth(pa, depth, rng), aa, match_depth(pb, depth, rng), ab, self.answer_texts)
+        stacked = int(evaluate(params, inputs, 32, T, self.expected, self.threshold, self.margin)[0].sum())
+        best = [params, stacked]
+
+        def check(p) -> bool:
+            ok = evaluate(p, inputs, 32, T, self.expected, self.threshold, self.margin)[0]
+            if ok.sum() > best[1]:
+                best[0], best[1] = [x.copy() for x in p], int(ok.sum())
+            return bool(ok.all())
+        if stacked < len(self.expected):
+            _, used, _ = train(params, fold(X, inputs), self.labels, self.weights, epochs=self.epochs, lr=self.lr,
+                               check=check, check_every=5)
+        else:
+            used = 0
+        res = self._result(best[0], inputs, 32, T, note=f"stacked node passed {stacked}/{len(self.expected)}", epochs=used)
+        ok = np.ones(len(self.expected), dtype=bool)
+        ok[res["failing"]] = False
+        pos = self.expected > 0
+        res.update(stacked=stacked, pos=int(ok[pos].sum()), pos_total=int(pos.sum()), neg=int(ok[~pos].sum()),
+                   neg_total=int((~pos).sum()))
+        return res
 
     def _result(self, params, inputs, bits, T, note="", epochs=0) -> dict:
         ok, top, conf = evaluate(params, inputs, bits, T, self.expected, self.threshold, self.margin)
@@ -538,6 +641,8 @@ class MemoryBank:
         self.stats: Counter = Counter()
         self._next_id = 1
         self._last_sync = 0.0
+        self._last_merge = time.time()  # the first merge waits a while after start
+        self.tried_merges: set = set()  # pairs (as they were) that did not merge
         if self.enabled:
             self.load()
 
@@ -595,7 +700,8 @@ class MemoryBank:
         node = MemoryNode(meta["id"], meta["input_dim"], meta["inputs"], meta["bits"], params or None,
                           meta["answers"], history=meta.get("history", []), created=meta.get("created", time.time()),
                           status=meta.get("status", "ready"), first_bytes=meta.get("first_bytes", 0),
-                          file_hash=meta.get("file_hash", ""), served=meta.get("served", 0))
+                          file_hash=meta.get("file_hash", ""), served=meta.get("served", 0),
+                          parts=meta.get("parts", []), merged_from=meta.get("merged_from", []))
         node.passed, node.total, node.failing = meta.get("passed", 0), meta.get("total", 0), meta.get("failing", [])
         node.checked_version = node.version  # it passed its tests when saved
         if node.input_dim != self.dim:  # the encoder changed width: relearn from the tests
@@ -620,7 +726,7 @@ class MemoryBank:
                 "layers": len(node.params) // 2, "answers": node.answers, "history": node.history[-50:],
                 "created": node.created, "status": node.status, "first_bytes": node.first_bytes,
                 "file_hash": node.file_hash, "served": node.served, "passed": node.passed, "total": node.total,
-                "failing": node.failing}
+                "failing": node.failing, "parts": node.parts, "merged_from": node.merged_from}
         self.dir.mkdir(parents=True, exist_ok=True)
         tmp = self.dir / f".{node.id}.tmp.npz"
         np.savez(tmp, meta=np.array(json.dumps(meta)), **arrays)
@@ -637,7 +743,7 @@ class MemoryBank:
             if node.first_bytes and node.first_bytes != node.bytes:
                 size += f" (first {node.first_bytes:,} bytes)"
         passing = (f"{node.passed}/{node.total}" + (f"; failing: {', '.join(node.failing[:5])}" if node.failing else "")
-                   if node.total and not node.dirty else "not checked yet")
+                   if node.total and (not node.dirty or node.status == "failing") else "not checked yet")
         lines = [
             f"# Memory node {node.id}: what NeuroMesh has learned, compressed into a small neural network.",
             "# These tests are the contract: the node must give exactly these answers, and must not answer",
@@ -822,7 +928,7 @@ class MemoryBank:
             if n is node or changed:
                 self.write_tests(n)
 
-    def _refresh_unknowns(self, node: MemoryNode) -> bool:
+    def _refresh_unknowns(self, node: MemoryNode, exclude: tuple = ()) -> bool:
         keys = {key(t.ask) for n in self.nodes.values() for t in n.tests}
         human = [u for u in node.unknowns if not u.auto]
         auto: list[Test] = []
@@ -831,8 +937,8 @@ class MemoryBank:
                 break
             if key(p) not in keys:
                 auto.append(Test(p, reason="auto: belongs to a tool, a skill or small talk"))
-        others = [(zlib.crc32(t.ask.encode()), t.ask, n.id) for n in self.nodes.values() if n is not node
-                  for t in n.facts()]
+        others = [(zlib.crc32(t.ask.encode()), t.ask, n.id) for n in self.nodes.values()
+                  if n is not node and n.id not in exclude for t in n.facts()]
         for _, ask, nid in sorted(others)[: self.pol.unknown_tests]:
             auto.append(Test(ask, reason=f"auto: {nid} knows this one"))
         for t in node.facts():
@@ -925,7 +1031,7 @@ class MemoryBank:
         return best
 
     # ------------------------------------------------------------- the work
-    def _dataset(self, node: MemoryNode):
+    def _dataset(self, node: MemoryNode, exclude: tuple = ()):
         """Training rows (every way of asking each test, and many things it must not answer) and the tests."""
         answers = [UNKNOWN] + list(dict.fromkeys(t.answer for t in node.tests))
         idx = {a: i for i, a in enumerate(answers)}
@@ -947,7 +1053,7 @@ class MemoryBank:
             if key(p) not in keys:
                 negative(p, 0.5)
         for n in self.nodes.values():
-            if n is not node:
+            if n is not node and n.id not in exclude:
                 for t in n.tests[:400]:
                     negative(t.ask, 0.5)
         for t in node.facts():
@@ -991,7 +1097,103 @@ class MemoryBank:
                                      spec=node.spec(), total=node.total)
                 continue
             return self._compress_job(node, step)
+        if self.pol.merge and time.time() - self._last_merge >= self.pol.merge_every_seconds:
+            pairs = self.merge_candidates()
+            if pairs:
+                self._last_merge = time.time()
+                a, b = pairs[int(self.rng.integers(len(pairs)))]  # chosen at random
+                return self.merge_job(a, b)
         return None
+
+    # ------------------------------------------------------------- merging
+    @staticmethod
+    def _pair(a: MemoryNode, b: MemoryNode) -> str:
+        return "|".join(sorted(f"{n.id}@{n.version}:{n.bytes}" for n in (a, b)))
+
+    def merge_candidates(self) -> list[tuple]:
+        """Pairs of compressed memory nodes that pass all their tests and have not been tried as they are."""
+        nodes = sorted((n for n in self.nodes.values() if n.params is not None and not n.dirty and n.status == "compressed"
+                        and n.total and n.passed == n.total), key=lambda n: n.id)
+        return [(a, b) for i, a in enumerate(nodes) for b in nodes[i + 1:]
+                if len(a.facts()) + len(b.facts()) <= self.pol.merge_max_facts and self._pair(a, b) not in self.tried_merges]
+
+    def merge_job(self, a: MemoryNode, b: MemoryNode) -> Job:
+        merged = MemoryNode(f"{a.id}+{b.id}", self.dim)
+        merged.tests = [dataclasses.replace(t) for t in a.tests + b.tests]
+        seen: set = set()
+        merged.unknowns = [dataclasses.replace(u) for u in a.unknowns + b.unknowns
+                           if not u.auto and not (u.ask in seen or seen.add(u.ask))]
+        self._refresh_unknowns(merged, exclude=(a.id, b.id))
+        answers, texts, labels, weights, test_texts, expected = self._dataset(merged, exclude=(a.id, b.id))
+        p = self.pol
+        job = Job("merge", merged.id, 0, self.dim, texts, labels, weights, test_texts, expected, p.answer_threshold,
+                  None, max(a.inputs, b.inputs), 32, len(answers), p.merge_epochs, p.learning_rate,
+                  zlib.crc32(f"{self._pair(a, b)}:merge".encode()), margin=p.test_margin,
+                  note=f"{len(a.facts()) + len(b.facts())} facts, {len(test_texts)} tests")
+        job.answer_texts = answers
+        job.parts = ((a.params, a.inputs, a.answers), (b.params, b.inputs, b.answers))
+        job.merge = {"a": a.id, "b": b.id, "pair": self._pair(a, b), "tests": merged.tests, "unknowns": merged.unknowns}
+        return job
+
+    def _finish_merge(self, job: Job, res: dict) -> None:
+        m = job.merge
+        a, b = self.nodes.get(m["a"]), self.nodes.get(m["b"])
+        if a is None or b is None or self._pair(a, b) != m["pair"]:
+            return  # one of them changed while it worked
+        self.tried_merges.add(m["pair"])
+        need = self.pol.merge_pass_rate
+        pos_rate = res["pos"] / res["pos_total"] if res["pos_total"] else 1.0
+        neg_rate = res["neg"] / res["neg_total"] if res["neg_total"] else 1.0
+        before = a.bytes + b.bytes
+        detail = dict(a=a.id, b=b.id, pos=res["pos"], pos_total=res["pos_total"], neg=res["neg"], neg_total=res["neg_total"],
+                      need=need, stacked=res["stacked"], total=res["total"])
+        if pos_rate < need or neg_rate < need:
+            self.stats["merges_refused"] += 1
+            self.sys.bus.publish("memory.merge_refused", **detail)
+            return
+        node = MemoryNode(f"mem-{self._next_id:04d}", self.dim)
+        self._next_id += 1
+        node.params, node.inputs, node.bits, node.answers = res["params"], res["inputs"], res["bits"], job.answer_texts
+        node.tests, node.unknowns = m["tests"], m["unknowns"]
+        node.parts = (a.parts or [a.id]) + (b.parts or [b.id])
+        node.merged_from = [a.id, b.id]
+        node.first_bytes = (a.first_bytes or a.bytes) + (b.first_bytes or b.bytes)
+        node.passed, node.total = res["passed"], res["total"]
+        node.failing = [job.test_texts[i] for i in res["failing"]]
+        node.served = a.served + b.served
+        fails = len(node.failing)
+        node.status = "ready" if not fails else "failing"
+        node.checked_version = node.version if not fails else node.version - 1  # relearn until every test passes
+        node.history = [{"ts": time.time(), "event": "merged", "bytes": node.bytes, "spec": node.spec(),
+                         "note": f"{a.id} ({len(a.facts())} facts, {a.bytes:,} bytes) + {b.id} ({len(b.facts())} facts, "
+                                 f"{b.bytes:,} bytes) -> {node.bytes:,} bytes; {res['pos']}/{res['pos_total']} answers and "
+                                 f"{res['neg']}/{res['neg_total']} unknowns pass"
+                                 + (f"; relearning the {fails} that fail" if fails else "")}]
+        for parent in (a, b):
+            self._retire(parent, node.id)
+        self.nodes[node.id] = node
+        for n in self.nodes.values():
+            if self._refresh_unknowns(n):
+                n.version += 1
+            self.write_tests(n)
+        self.save_weights(node)
+        self.stats["merged"] += 1
+        self.sys.guardian.audit("compressor", "memory.merged", node.id, parents=[a.id, b.id], parts=node.parts,
+                                before=before, after=node.bytes, **{k: detail[k] for k in ("pos", "pos_total", "neg", "neg_total")})
+        self.sys.bus.publish("memory.merged", node=node.id, facts=len(node.facts()), bytes=node.bytes, before=before,
+                             parts=len(node.parts), failing=fails, **detail)
+
+    def _retire(self, node: MemoryNode, into: str) -> None:
+        """A node merged into another: its weights are kept aside, its tests live on in the merged node."""
+        self.nodes.pop(node.id, None)
+        wp = self.weights_path(node)
+        if wp.exists():
+            gone = self.dir / "merged"
+            gone.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(wp), str(gone / f"{node.id}-into-{into}.npz"))
+        tp = self.tests_path(node)
+        if tp.exists():
+            tp.unlink()
 
     def _base_job(self, node: MemoryNode, kind: str) -> Job:
         answers, texts, labels, weights, test_texts, expected = self._dataset(node)
@@ -1048,6 +1250,8 @@ class MemoryBank:
         return c[0], c[1], c[2], c[3]
 
     def finish(self, job: Job, res: dict) -> None:
+        if job.kind == "merge":
+            return self._finish_merge(job, res)
         node = self.nodes.get(job.node_id)
         if node is None or node.version != job.version:
             return  # forgotten or changed while it worked: the next pass starts again
@@ -1129,11 +1333,12 @@ class MemoryBank:
                           "facts": len(n.facts()), "answers": len(n.expected_answers()), "tests": len(n.tests) + len(n.unknowns),
                           "passed": n.passed, "total": n.total, "bytes": n.bytes, "first_bytes": n.first_bytes,
                           "spec": n.spec(), "served": n.served, "file": str(self.tests_path(n)),
-                          "failing": n.failing[:5]})
+                          "failing": n.failing[:5], "parts": n.parts or [n.id], "merged_from": n.merged_from})
         return {"enabled": self.enabled, "nodes": nodes, "facts": sum(x["facts"] for x in nodes),
                 "bytes": sum(x["bytes"] for x in nodes), "first_bytes": sum(x["first_bytes"] for x in nodes),
                 "pending": sum(1 for n in self.nodes.values() if n.dirty and n.tests),
-                "tests_dir": str(self.tests_dir), "threshold": self.pol.answer_threshold, **dict(self.stats)}
+                "tests_dir": str(self.tests_dir), "threshold": self.pol.answer_threshold,
+                "merge": self.pol.merge, "merge_pass_rate": self.pol.merge_pass_rate, **dict(self.stats)}
 
 
 # ===================================================================== from outside

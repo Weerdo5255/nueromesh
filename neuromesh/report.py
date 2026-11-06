@@ -111,6 +111,14 @@ def describe_event(ev: Event) -> str | None:
         eg = f", e.g. {d['example']!r}" if d.get("example") else ""
         return (f"[memory]   {d['node']}: a smaller node ({d['step']}, {d['bytes']:,} bytes) failed {d['failed']}/{d['total']} "
                 f"tests{eg}; kept the {d['current']:,}-byte node")
+    if t == "memory.merged":
+        fix = f"; relearning the {d['failing']} it fails" if d.get("failing") else ""
+        return (f"[memory]   merged {d['a']} and {d['b']} into {d['node']} ({d['facts']} facts from {d['parts']} nodes, "
+                f"{d['bytes']:,} bytes): {d['pos']}/{d['pos_total']} answers and {d['neg']}/{d['neg_total']} unknowns pass"
+                f" (needs {d['need']:.0%}){fix}")
+    if t == "memory.merge_refused":
+        return (f"[memory]   {d['a']} and {d['b']} would not merge: {d['pos']}/{d['pos_total']} answers and "
+                f"{d['neg']}/{d['neg_total']} unknowns pass (needs {d['need']:.0%}); both kept")
     if t == "memory.smallest":
         first = f" (first {d['first']:,})" if d.get("first") and d["first"] != d["bytes"] else ""
         return f"[memory]   {d['node']} is as small as its tests allow: {d['bytes']:,} bytes{first}, {d['spec']}"

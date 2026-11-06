@@ -12,8 +12,8 @@ import numpy as np
 
 from neuromesh.commands import execute
 from neuromesh.config import Directives
-from neuromesh.memory import (MemoryBank, check_files, encode_many, fold, key, near_misses, quantize, size_bytes,
-                              subject, unfold_params, variants, forward, init_params)
+from neuromesh.memory import (UNKNOWN, MemoryBank, check_files, encode_many, fold, forward, init_params, key,
+                              match_depth, near_misses, quantize, size_bytes, stack, subject, unfold_params, variants)
 from neuromesh.runtime import System
 from neuromesh.server import _route
 from neuromesh.tasks import Order
@@ -208,6 +208,98 @@ class BankTests(unittest.TestCase):
         self.assertEqual(path.read_text(), edited, "checking from outside changes nothing")
 
 
+MORE = [("Who painted the Mona Lisa?", "Leonardo da Vinci painted the Mona Lisa."),
+        ("What is the largest planet?", "Jupiter is the largest planet."),
+        ("How many bones are in the human body?", "An adult has 206 bones."),
+        ("What is the speed of light?", "Light travels at about 300,000 km per second.")]
+
+
+class MergeTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.bank = bank_at(self.root, facts_per_node=4, merge=False)
+        for q, a in FACTS + MORE:
+            self.bank.learn(q, a, "a test", "me")
+        settle(self.bank)  # learned and compressed, three nodes of four facts
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_stacking_keeps_every_answer_exact(self):
+        rng = np.random.default_rng(3)
+        X = encode_many(["what is the capital of france", "hello", "who was ada lovelace"], 1024)
+        pa, pb = init_params(rng, 64, (), 4), init_params(rng, 128, (16, 8), 3)  # linear vs two hidden layers
+        aa, ab = [UNKNOWN, "a1", "a2", "shared"], [UNKNOWN, "b1", "shared"]
+        answers = [UNKNOWN, "a1", "a2", "shared", "b1"]
+        ua = unfold_params(pa, 128)
+        merged = stack(match_depth(ua, 2, rng), aa, match_depth(pb, 2, rng), ab, answers)
+        za, zb = forward(pa, fold(X, 64))[0], forward(pb, fold(X, 128))[0]
+        z = forward(merged, fold(X, 128))[0]
+        np.testing.assert_allclose(z[:, 1:3], za[:, 1:3], rtol=1e-4, atol=1e-4)    # A's answers, exactly
+        np.testing.assert_allclose(z[:, 4], zb[:, 1], rtol=1e-4, atol=1e-4)        # B's answer, exactly
+        np.testing.assert_allclose(z[:, 0], za[:, 0] + zb[:, 0], rtol=1e-4, atol=1e-4)  # unknown: both say so
+        np.testing.assert_allclose(z[:, 3], za[:, 3] + zb[:, 2], rtol=1e-4, atol=1e-4)
+        lin = stack(pa, aa, init_params(rng, 64, (), 3), ab, answers)
+        self.assertEqual(len(lin), 2)  # two linear nodes stay one linear node
+
+    def test_merge_replaces_both_and_merged_nodes_merge_again(self):
+        b = self.bank
+        self.assertEqual(len(b.nodes), 3)
+        self.assertTrue(all(n.status == "compressed" for n in b.nodes.values()))
+        b.pol.merge, b.pol.merge_every_seconds = True, 0
+        settle(b)
+        self.assertEqual(len(b.nodes), 1)
+        node = next(iter(b.nodes.values()))
+        self.assertEqual(len(node.facts()), 12)
+        self.assertEqual(sorted(node.parts), ["mem-0001", "mem-0002", "mem-0003"])
+        self.assertEqual(node.status, "compressed")  # compressed again after merging
+        self.assertEqual((node.passed, node.dirty), (node.total, False))
+        merged = [d for t, d in b.sys.bus.events if t == "memory.merged"]
+        self.assertEqual(len(merged), 2)  # the second merge combined a merged node with another
+        self.assertTrue(all(d["pos"] / d["pos_total"] >= 0.9 and d["neg"] / d["neg_total"] >= 0.9 for d in merged))
+        self.assertEqual(merged[1]["parts"], 3)
+        for q, a in FACTS + MORE:
+            self.assertEqual(b.recall(q).answer, a, q)
+        self.assertIsNone(b.recall("What is the capital of Germany?"))
+        # the parents are gone: weights kept aside, test files folded into the merged node's
+        self.assertEqual([p.name for p in b.tests_dir.glob("*.toml")], [f"{node.id}.toml"])
+        self.assertEqual(len(list((b.dir / "merged").glob("*-into-*.npz"))), 4)
+        data = tomllib.loads(b.tests_path(node).read_text())
+        self.assertEqual(len([t for t in data["test"] if "variant_of" not in t]), 12)
+        self.assertTrue(any("merged" in h for h in data["history"]))
+        again = bank_at(self.root)
+        self.assertEqual(again.nodes[node.id].parts, node.parts)  # persists
+
+    def test_a_merge_below_90_percent_is_refused(self):
+        b = self.bank
+        a1, a2 = sorted(b.nodes.values(), key=lambda n: n.id)[:2]
+        before = {n.id: n.bytes for n in b.nodes.values()}
+        job = b.merge_job(a1, a2)
+        res = job.run()
+        res["pos"] = int(res["pos_total"] * 0.85)  # say only 85% of the answers matched
+        b.finish(job, res)
+        self.assertEqual({n.id: n.bytes for n in b.nodes.values()}, before)
+        self.assertEqual(b.sys.bus.events[-1][0], "memory.merge_refused")
+        self.assertNotIn((a1, a2), [(x, y) for x, y in b.merge_candidates()])  # not retried as they are
+
+    def test_a_merged_node_that_fails_a_few_tests_relearns_them(self):
+        b = self.bank
+        a1, a2 = sorted(b.nodes.values(), key=lambda n: n.id)[:2]
+        job = b.merge_job(a1, a2)
+        res = job.run()
+        failing = job.test_texts.index("Who was Ada Lovelace?")
+        res["failing"], res["passed"], res["pos"], res["ok"] = [failing], res["passed"] - 1, res["pos"] - 1, False
+        b.finish(job, res)  # 15/16 answers: accepted at >= 90%
+        node = next(n for n in b.nodes.values() if n.merged_from)
+        self.assertEqual((node.status, node.dirty, node.failing), ("failing", True, ["Who was Ada Lovelace?"]))
+        self.assertIsNone(b.recall("Who was Ada Lovelace?"), "an answer whose test fails is not served")
+        self.assertIn("failing: Who was Ada Lovelace?", tomllib.loads(b.tests_path(node).read_text())["passing"])
+        settle(b)
+        self.assertEqual((node.passed, node.failing), (node.total, []))
+        self.assertEqual(b.recall("Who was Ada Lovelace?").answer, FACTS[1][1])
+
+
 class MemorySystemTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -255,6 +347,7 @@ class MemorySystemTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("memory.compressed", {a["kind"] for a in s.store.recent_audit(200)})
         lines = "\n".join((await execute(s, "/memory forget Who painted the Mona Lisa?")).lines)
         self.assertIn("forgot", lines)
+        self.assertIn("no pair to try", (await execute(s, "/memory merge")).lines[0])  # only one node
 
     async def test_what_teachers_and_research_say_is_learned_but_not_exams(self):
         s = self.system

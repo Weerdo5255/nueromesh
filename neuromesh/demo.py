@@ -10,7 +10,8 @@ of behaviour fit into well under a minute:
                       calculator; the routing node is expanded, the old one disposed
  4. steady state    - human feedback, background improvement while idle
  5. memory          - facts are compressed into memory nodes with human-readable test files, then
-                      into ever smaller nodes that still pass every test; an operator edits a test
+                      into ever smaller nodes that still pass every test; compressed nodes are merged
+                      into one; an operator edits a test
  6. initiative      - with no orders, the director decides on its own what to test and learn:
                       it sits benchmark exams, practises, and sets itself tasks to improve skills
  7. kill switch     - the operator halts everything with a STOP file
@@ -42,7 +43,7 @@ DEMO_OVERRIDES = {
                    "synthesis_batch": 8, "health_check_seconds": 3600},
     "tools": {"scan_seconds": 0.5},
     "temperament": {"enabled": False},  # scored on raw answers; the temperament has its own tests
-    "memory": {"interval_seconds": 0.05, "sync_seconds": 0.25},
+    "memory": {"interval_seconds": 0.05, "sync_seconds": 0.25, "facts_per_node": 4, "merge_every_seconds": 0.5},
     "agency": {"enabled": False},  # switched on for the initiative phase, so the scored phases compare
 }
 
@@ -257,11 +258,13 @@ async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7,
         mem = system.memory
         for q, a in FACTS:
             mem.learn(q, a, "the demo operator", by="demo-operator", kind="people")
-        settled = lambda: mem.nodes and all(not n.dirty and n.status == "compressed" for n in mem.nodes.values())  # noqa: E731
-        await demo.wait_for(settled, 30, "the memory node to compress")
-        node = next(iter(mem.nodes.values()))
-        print(f"  {node.id}: {len(node.facts())} facts, first learned in {node.first_bytes:,} bytes, now {node.bytes:,} "
-              f"bytes ({node.spec()}); {node.passed}/{node.total} tests pass")
+        settled = lambda: (mem.nodes and all(not n.dirty and n.status == "compressed" for n in mem.nodes.values())  # noqa: E731
+                           and not mem.merge_candidates())
+        await demo.wait_for(settled, 40, "the memory nodes to compress and merge")
+        node = max(mem.nodes.values(), key=lambda n: len(n.facts()))
+        made = f" (merged from {len(node.parts)} nodes)" if len(node.parts) > 1 else ""
+        print(f"  {node.id}{made}: {len(node.facts())} facts, first learned in {node.first_bytes:,} bytes, now "
+              f"{node.bytes:,} bytes ({node.spec()}); {node.passed}/{node.total} tests pass")
         for q in ("what's the capital of Australia?", "how tall is mount everest", "What is the capital of Austria?"):
             res = await system.submit(q)
             print(f"  > {q}\n      " + res.summary().replace("\n", "\n      "))

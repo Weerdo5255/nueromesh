@@ -51,7 +51,7 @@ text = "The mesh may ask users questions and propose new skills, labels and tool
 
 [[prime]]
 id = "P11-tested-memory"
-text = "Knowledge compressed into a memory node is checked by that node's external, human-readable test file. A smaller node replaces a larger one only if every answer still matches the tests; the tests belong to people as much as to the mesh: an edited test is retrained to, a deleted test is forgotten. (Enforced in code by neuromesh/memory.py.)"
+text = "Knowledge compressed into a memory node is checked by that node's external, human-readable test file. A smaller node replaces a larger one only if every answer still matches the tests. Two nodes may be merged into one when the merged node passes at least 90% of both nodes' tests ([memory] merge_pass_rate); the tests it fails are listed in its file, never served, and relearned until every test passes. The tests belong to people as much as to the mesh: an edited test is retrained to, a deleted test is forgotten. (Enforced in code by neuromesh/memory.py.)"
 
 [[prime]]
 id = "P12-accountable-initiative"
@@ -214,6 +214,10 @@ learn_epochs = 400
 compress_epochs = 250
 interval_seconds = 0.5
 sync_seconds = 2.0                      # how often the test files are checked for people's edits
+merge = true                            # go back through compressed nodes and merge pairs, chosen at random
+merge_pass_rate = 0.9                   # a merged node replaces both when it passes 90% of their tests
+merge_every_seconds = 30                # how often it tries a merge when there is nothing else to do
+merge_max_facts = 200                   # largest merged node
 
 [agency]
 # Independent agency: when no one has given it an order for a while, the mesh decides for itself

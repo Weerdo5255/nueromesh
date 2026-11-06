@@ -314,6 +314,11 @@ class MemoryPolicy:
     interval_seconds: float = 0.5
     sync_seconds: float = 2.0         # how often the test files are checked for edits
     max_answer_chars: int = 600
+    merge: bool = True                # go back through compressed memory nodes and merge pairs, chosen at random
+    merge_pass_rate: float = 0.9      # a merged node replaces both when it passes this share of their tests
+    merge_every_seconds: float = 30.0 # how often it tries a merge when there is nothing else to do
+    merge_max_facts: int = 200        # largest merged node
+    merge_epochs: int = 300
 
 
 @dataclass
