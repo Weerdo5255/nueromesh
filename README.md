@@ -22,7 +22,7 @@ Everything happens inside a set of explicit directives that a Guardian enforces 
 ```
 python -m neuromesh demo      # 30-second offline demo of the whole life cycle
 python -m neuromesh run       # live console: node network, lessons in progress, activity log
-python -m neuromesh serve     # daemon + HTTP API on 127.0.0.1:8765
+python -m neuromesh serve     # daemon + HTTP API + web interface on http://127.0.0.1:8765/
 python -m neuromesh bench     # CPU vs GPU speed for node training and inference
 python -m neuromesh teachers  # which teachers are available (Ollama, Claude); --test for a live lesson
 python -m neuromesh memory test   # run every memory node against its test file
@@ -609,6 +609,38 @@ what do you think of the calculator tool?    are you hiding anything?    what do
 /feedback ord-3f2a91c0 disposition=pass    /feedback ord-3f2a91c0 affect=frustrated
 ```
 
+### Web interface
+`python -m neuromesh serve` also serves a live web interface at http://127.0.0.1:8765/. To have
+it next to the live console, run `python -m neuromesh run --web` (or `--web 9000` for another port).
+
+![The web interface: the node network, an answer from a memory node, work in progress and the activity log](docs/web-interface.png)
+
+- **Live**: the node network drawn like a specimen under a microscope: the router, every route
+  and what serves it (champion nodes sized by their weights, challengers and retired nodes
+  beside them, tools, the memory nodes asked first on `answer:direct`), and the emotional
+  engines every answer passes on its way out. Each order pulses along the route it took. Beside
+  it: the work in progress and the activity log. Below it: what is waiting for you (approvals,
+  questions, lessons) and the directive goals. Hover a node for its shape, size and scores.
+- **Nodes**: every capability's champion, challengers, held-out accuracy and generation, the
+  champion's size over its generations, roll back; what each agent has done.
+- **Memory**: memory nodes with their size now and when first learned, teach a fact, run every
+  test, and per node: what it knows, how it was compressed, the questions it must not answer;
+  forget a fact.
+- **Mind**: questions for you (reply), proposals (adopt or decline), the opinions and notes it
+  shares, investigate something, the temperament.
+- **Logs**: the activity log (search, filter by kind, hide routine work), the audit log, every
+  event, and the family tree of every node ever built.
+- **Status**: directive goals, approvals, teachers, tools, background tasks (add, pause,
+  remove), challenges (practise, sit the exam), retained knowledge.
+- **Command bar**: any order or `/command`. The answer appears below it first, then its sources
+  and how it got there. The header pauses background work, halts (click twice) and resumes.
+
+The page polls `GET /dashboard` every 1.5 s and fetches the activity log by sequence number
+(`GET /log?after=...`), so only what is new travels. It makes no external requests, so it works
+offline; light and dark themes follow your system, or the toggle. With `NEUROMESH_TOKEN` set,
+the page asks for the token once and keeps it in that browser; the page's own files hold no data
+and load without it. The files are in `neuromesh/web/` (plain HTML, CSS and JavaScript, no build step).
+
 ### HTTP API (`serve`)
 Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <token>`.
 
@@ -632,9 +664,13 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | POST | `/task` | `{"id": "task-1", "action": "pause" \| "resume" \| "remove"}` |
 | POST | `/memorize` | `{"ask": "...", "answer": "..."}`: a fact for a memory node |
 | POST | `/memory/test` | run every memory node against its test file now |
+| POST | `/command` | `{"line": "/status"}`: any console command; returns its output lines |
 | POST | `/halt`, `/resume`, `/pause`, `/rollback` | |
 | GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions`, `/knowledge?q=...`, `/temperament`, `/why?order=...`, `/inquiries`, `/proposals`, `/opinions`, `/notes`, `/tasks`, `/challenges`, `/evolution`, `/memory` | |
 | GET | `/mind` | operator: every note, private ones included (audited) |
+| GET | `/dashboard?after=<seq>` | everything the web interface's live view shows, in one request |
+| GET | `/log?after=<seq>&n=500&routine=0` | the activity log after a sequence number (`routine=0` hides routine work) |
+| GET | `/mesh`, `/memory?node=<id>` | the node network as a structure; one memory node's facts, history and tests |
 
 ```
 python -m neuromesh order "convert 10 km to miles"
@@ -910,15 +946,17 @@ neuromesh/
   challenges.py          open-source LLM benchmarks: suites, Hugging Face fetch, grading, the challenge teacher
   evolution.py           the genetic algorithm: genome operators (grow/shrink neurons and layers), selection, judging
   memory.py              memory nodes: facts compressed into small networks, their test files, compression (P11)
+  web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   130 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   134 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
                          evolution (exact growth, pruning, growth bias, promotion rules, a node
                          that evolves larger in a running system), memory nodes (test files,
                          compression that never accepts a failing node, people's edits, answers),
+                         the web interface (its files, the endpoints it uses, the token),
                          temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,
                          questions, proposals, investigations), background tasks, full system,

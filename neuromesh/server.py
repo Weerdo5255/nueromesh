@@ -1,7 +1,9 @@
 """A small JSON-over-HTTP API (stdlib only) so other programs and agents can send orders,
-teach the system and approve tools while it runs as a daemon.
+teach the system and approve tools while it runs as a daemon - and the web interface at /,
+which is built on the same API (web.py, neuromesh/web/).
 
-Binds to 127.0.0.1 by default. Set NEUROMESH_TOKEN to require "Authorization: Bearer <token>".
+Binds to 127.0.0.1 by default. Set NEUROMESH_TOKEN to require "Authorization: Bearer <token>" on
+every API call (the page itself holds no data and asks for the token).
 """
 from __future__ import annotations
 
@@ -11,14 +13,23 @@ import os
 from dataclasses import asdict
 from urllib.parse import parse_qs, urlparse
 
+from . import web
 from .report import render_lineage
 
-REASONS = {200: "OK", 400: "Bad Request", 401: "Unauthorized", 404: "Not Found", 500: "Internal Server Error"}
+REASONS = {200: "OK", 400: "Bad Request", 401: "Unauthorized", 404: "Not Found", 405: "Method Not Allowed",
+           500: "Internal Server Error"}
 
 
 async def _route(system, method: str, path: str, query: dict, body: dict):
     g = system.guardian
     if method == "GET":
+        if path == "/dashboard":  # the web interface's live view, in one request
+            return 200, web.dashboard(system, int(query.get("after", 0) or 0))
+        if path == "/log":  # the activity log; ?after=<seq> returns only newer entries
+            return 200, web.log_since(system, int(query.get("after", 0) or 0), int(query.get("n", 500)),
+                                      query.get("routine", "1") != "0")
+        if path == "/mesh":
+            return 200, web.mesh(system)
         if path == "/status":
             return 200, system.status()
         if path == "/lineage":
@@ -51,6 +62,9 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
         if path == "/evolution":
             return 200, {**system.evolution.status(), "archive": system.evolution.archive}
         if path == "/memory":
+            if query.get("node"):
+                node = web.memory_node(system, query["node"])
+                return (200, node) if node else (404, {"error": f"no memory node {query['node']}"})
             return 200, system.memory.status()
         if path == "/inquiries":
             return 200, [asdict(q) for q in system.mind.open_inquiries()]
@@ -68,6 +82,13 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                                         "fetched_at": d.fetched_at, "reason": d.reason}
                                        for d in system.knowledge.documents(int(query.get("n", 50)))]}
     if method == "POST":
+        if path == "/command":  # {"line": "/status"}: any console command (the web interface's command bar)
+            from .commands import execute
+            out = await execute(system, str(body.get("line", "")))
+            if out.quit:
+                return 200, {"lines": ["  /quit only works in the console; stop the daemon with Ctrl-C where it runs, "
+                                       "or /halt to stop all activity"], "is_order": False}
+            return 200, {"lines": out.lines, "is_order": out.is_order}
         if path == "/order":
             result = await system.submit(body["text"], source=body.get("source", "api"))
             return 200, result.public_dict()  # a held answer is only shown through /release
@@ -167,6 +188,7 @@ async def serve_http(system, host: str = "127.0.0.1", port: int = 8765):
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         code, payload = 500, {"error": "internal error"}
+        page: tuple[bytes, str] | None = None
         try:
             request_line = (await reader.readline()).decode("latin-1").strip()
             method, target, _ = request_line.split(" ", 2)
@@ -182,7 +204,10 @@ async def serve_http(system, host: str = "127.0.0.1", port: int = 8765):
             body = json.loads(raw) if raw else {}
             url = urlparse(target)
             query = {k: v[-1] for k, v in parse_qs(url.query).items()}
-            if token and headers.get("authorization") != f"Bearer {token}":
+            page = web.static_file(url.path) if method.upper() in ("GET", "HEAD") else None
+            if page is not None:  # the web interface's files: no data in them, so no token needed
+                pass
+            elif token and headers.get("authorization") != f"Bearer {token}":
                 code, payload = 401, {"error": "missing or wrong bearer token"}
             else:
                 code, payload = await _route(system, method.upper(), url.path, query, body)
@@ -190,9 +215,13 @@ async def serve_http(system, host: str = "127.0.0.1", port: int = 8765):
             code, payload = 400, {"error": f"bad request: {exc}"}
         except Exception as exc:  # keep the server alive
             code, payload = 500, {"error": repr(exc)}
-        data = json.dumps(payload, default=str).encode()
-        writer.write(f"HTTP/1.1 {code} {REASONS.get(code, 'Error')}\r\nContent-Type: application/json\r\n"
-                     f"Content-Length: {len(data)}\r\nConnection: close\r\n\r\n".encode() + data)
+        if page is not None:
+            code, (data, ctype) = 200, page
+        else:
+            data, ctype = json.dumps(payload, default=str).encode(), "application/json"
+        writer.write(f"HTTP/1.1 {code} {REASONS.get(code, 'Error')}\r\nContent-Type: {ctype}\r\n"
+                     f"Content-Length: {len(data)}\r\nCache-Control: no-store\r\n"
+                     f"X-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n".encode() + data)
         try:
             await writer.drain()
         finally:

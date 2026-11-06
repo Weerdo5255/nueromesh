@@ -162,6 +162,16 @@ class ActivityLog:
             except OSError:
                 pass
 
+    def since(self, after: int = 0, n: int = 500) -> tuple[int, list[tuple[int, LogEntry]]]:
+        """Entries numbered after `after` (each entry's number is its position in the whole log),
+        so a viewer can fetch only what is new. Returns (latest number, [(number, entry), ...])."""
+        with self._lock:
+            items = list(self.entries)
+            version = self.version
+        first = version - len(items) + 1
+        out = [(first + i, e) for i, e in enumerate(items) if first + i > after]
+        return version, (out[-n:] if n > 0 else [])
+
     def tail(self, n: int, routine: bool = True) -> list[LogEntry]:
         with self._lock:
             items = list(self.entries)

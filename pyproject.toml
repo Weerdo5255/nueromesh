@@ -22,3 +22,6 @@ neuromesh = "neuromesh.__main__:main"
 
 [tool.setuptools]
 packages = ["neuromesh"]
+
+[tool.setuptools.package-data]
+neuromesh = ["web/*"]

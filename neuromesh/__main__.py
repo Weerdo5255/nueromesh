@@ -55,6 +55,12 @@ async def _live(args) -> None:
 
     system = System(args.root, device=args.device, library=args.gpu_library,
                     overrides=_teacher_overrides(args, args.root))
+    if args.web:
+        from .server import serve_http
+        server = await serve_http(system, args.host, args.web)
+        async with server:
+            await LiveView(system, subtitle=f"web http://{args.host}:{args.web}/", ascii=args.ascii).run()
+        return
     await LiveView(system, ascii=args.ascii).run()
 
 
@@ -97,9 +103,13 @@ async def _console(args) -> None:
 
     system.bus.listen(show)
     async with system:
+        server = None
+        if args.web:
+            from .server import serve_http
+            server = await serve_http(system, args.host, args.web)
         print(f"{system.directives.name} running - {len(system.agents)} agents, "
               f"{len(system.registry.live())} live nodes, compute: {system.backend.describe()}. "
-              f"/help for commands.\n")
+              f"/help for commands." + (f" Web interface: http://{args.host}:{args.web}/" if server else "") + "\n")
         while True:
             try:
                 line = (await loop.run_in_executor(None, input, "neuromesh> ")).strip()
@@ -110,6 +120,8 @@ async def _console(args) -> None:
                 break
             for out in result.lines:
                 print(out)
+        if server is not None:
+            server.close()
 
 
 async def _serve(args) -> None:
@@ -123,13 +135,14 @@ async def _serve(args) -> None:
         from .live import LiveView
         server = await serve_http(system, args.host, args.port)
         async with server:
-            await LiveView(system, subtitle=f"HTTP {args.host}:{args.port}", ascii=args.ascii).run()
+            await LiveView(system, subtitle=f"web http://{args.host}:{args.port}/", ascii=args.ascii).run()
         return
     system.bus.listen(lambda ev: (line := describe_event(ev)) and print(line, flush=True))
     async with system:
         server = await serve_http(system, args.host, args.port)
         print(f"{system.directives.name} serving on http://{args.host}:{args.port}  "
-              f"(compute: {system.backend.describe()}; Ctrl-C to stop)", flush=True)
+              f"(compute: {system.backend.describe()}; Ctrl-C to stop)\n"
+              f"web interface: http://{args.host}:{args.port}/", flush=True)
         async with server:
             await server.serve_forever()
 
@@ -233,7 +246,11 @@ def main(argv: list[str] | None = None) -> None:
                        "capabilities.toml and plugins/ (default: current folder)")
         p.add_argument("-v", "--verbose", action="store_true")
     p_run.add_argument("--plain", action="store_true", help="line-by-line console instead of the live view")
+    p_run.add_argument("--web", nargs="?", type=int, const=8765, default=None, metavar="PORT",
+                       help="also serve the web interface and HTTP API (default port 8765)")
+    p_run.add_argument("--host", default="127.0.0.1", help="address for --web (default 127.0.0.1)")
     p_serve.add_argument("--live", action="store_true", help="show the live view (with a prompt) while serving")
+    p_serve.add_argument("--web", action="store_true", help=argparse.SUPPRESS)  # the web interface is always on
     for p in (p_run, p_serve):
         p.add_argument("--ascii", action="store_true", help="live view without Unicode line drawing")
     p_serve.add_argument("--host", default="127.0.0.1")

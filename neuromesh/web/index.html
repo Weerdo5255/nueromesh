@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NeuroMesh</title>
+<meta name="description" content="Live view of a NeuroMesh: its node network, the work in progress, every log, and its status.">
+<link rel="icon" href="/ui/mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/app.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><use href="/ui/mark.svg#m"></use></svg>
+    <h1 id="name">NeuroMesh</h1>
+    <span id="state" class="state" role="status">Connecting</span>
+  </div>
+  <div class="controls" id="controls"></div>
+  <dl class="stats" id="stats"></dl>
+  <div class="tools-right">
+    <span id="conn" class="conn" aria-live="polite"></span>
+    <button id="theme" class="quiet" type="button" aria-label="Switch between light and dark">Dark</button>
+  </div>
+</header>
+
+<form class="command" id="command" autocomplete="off">
+  <label for="cmd" class="visually-hidden">Order or command</label>
+  <input id="cmd" name="cmd" type="text" spellcheck="false"
+         placeholder="Ask or order something, or type a command like /status or /memorize question :: answer">
+  <button type="submit" id="send">Send</button>
+</form>
+<section class="answer" id="answer" hidden aria-live="polite"></section>
+
+<nav class="views" id="views" aria-label="Views">
+  <a href="#live" data-view="live">Live</a>
+  <a href="#nodes" data-view="nodes">Nodes</a>
+  <a href="#memory" data-view="memory">Memory</a>
+  <a href="#mind" data-view="mind">Mind <span class="badge" id="badge-mind"></span></a>
+  <a href="#logs" data-view="logs">Logs</a>
+  <a href="#status" data-view="status">Status <span class="badge" id="badge-status"></span></a>
+</nav>
+
+<main id="main">
+  <section class="view" id="view-live">
+    <div class="live">
+      <div class="specimen-col">
+        <div class="specimen" id="specimen"><div class="empty">Waiting for NeuroMesh…</div></div>
+        <div id="attention"></div>
+        <div id="goals"></div>
+      </div>
+      <aside class="feed-col">
+        <h2>Working now</h2>
+        <ul class="work" id="work"></ul>
+        <h2 class="feed-head">Activity <a href="#logs" class="more">All logs</a></h2>
+        <ol class="log" id="live-log"></ol>
+      </aside>
+    </div>
+  </section>
+
+  <section class="view" id="view-nodes" hidden>
+    <div id="nodes"></div>
+  </section>
+
+  <section class="view" id="view-memory" hidden>
+    <div id="memory"></div>
+  </section>
+
+  <section class="view" id="view-mind" hidden>
+    <div id="mind"></div>
+  </section>
+
+  <section class="view" id="view-logs" hidden>
+    <div class="subnav" role="tablist" aria-label="Logs">
+      <button role="tab" data-logs="activity" aria-selected="true">Activity</button>
+      <button role="tab" data-logs="audit" aria-selected="false">Audit</button>
+      <button role="tab" data-logs="events" aria-selected="false">Events</button>
+      <button role="tab" data-logs="lineage" aria-selected="false">Lineage</button>
+    </div>
+    <div id="logs"></div>
+  </section>
+
+  <section class="view" id="view-status" hidden>
+    <div id="status"></div>
+  </section>
+</main>
+
+<dialog id="token">
+  <form method="dialog" id="token-form">
+    <h2>Access token</h2>
+    <p>This NeuroMesh asks for its access token (the <code>NEUROMESH_TOKEN</code> it was started with).
+       It is kept in this browser only.</p>
+    <label for="token-input">Token</label>
+    <input id="token-input" type="password" autocomplete="current-password" required>
+    <div class="row"><button type="submit">Use token</button></div>
+  </form>
+</dialog>
+
+<script src="/ui/app.js" defer></script>
+</body>
+</html>
