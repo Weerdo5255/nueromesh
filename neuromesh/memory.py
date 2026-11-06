@@ -840,9 +840,14 @@ class MemoryBank:
         return made
 
     # ------------------------------------------------------------- learning
-    def learn(self, ask: str, answer, source: str = "", by: str = "", kind: str = "people"):
-        """Remember a question and its answer. Returns (node id, "new" | "updated" | "known") or None."""
+    def learn(self, ask: str, answer, source: str = "", by: str = "", kind: str = "people", reviewed: bool = False):
+        """Remember a question and its answer. Returns (node id, "new" | "updated" | "known") or None.
+        Nothing is stored without a director's review (P14): an order's facts are reviewed with the
+        order (reviewed=True); anything else is reviewed here."""
         if not self.allows(kind):
+            return None
+        directors = getattr(self.sys, "directors", None)
+        if not reviewed and directors is not None and not directors.review_memory(ask, answer, source, by, kind)[0]:
             return None
         ask = " ".join(str(ask or "").split())
         answer = clean_answer(answer, self.pol.max_answer_chars)
@@ -1005,7 +1010,20 @@ class MemoryBank:
         return touched
 
     # ------------------------------------------------------------- answering
-    def recall(self, text: str) -> Recall | None:
+    def known(self, ask: str):
+        """The fact it holds for a question, however it was asked, or None."""
+        k = key(" ".join(str(ask or "").split()))
+        if not k:
+            return None
+        for node in self.nodes.values():
+            for t in node.facts():
+                if key(t.ask) == k:
+                    return t
+        return None
+
+    def recall(self, text: str, quiet: bool = False, threshold: float | None = None) -> Recall | None:
+        """The best answer a memory node holds for a question (quiet: a director's second opinion, which
+        may look at less certain answers (threshold) and is not counted as serving)."""
         if not self.enabled or not self.pol.serve:
             return None
         ready = [n for n in self.nodes.values() if n.params is not None]
@@ -1016,7 +1034,7 @@ class MemoryBank:
         for n in ready:
             top, conf = n.predict(x)
             i, c = int(top[0]), float(conf[0])
-            if i == 0 or c < self.pol.answer_threshold or i >= len(n.answers):
+            if i == 0 or c < (self.pol.answer_threshold if threshold is None else threshold) or i >= len(n.answers):
                 continue
             answer = n.answers[i]
             if answer not in n.expected_answers():  # a person changed or removed it; not relearned yet
@@ -1025,7 +1043,7 @@ class MemoryBank:
                 continue
             if best is None or c > best.confidence:
                 best = Recall(n, answer, c, n.source_of(answer))
-        if best is not None:
+        if best is not None and not quiet:
             best.node.served += 1
             self.stats["recalled"] += 1
         return best

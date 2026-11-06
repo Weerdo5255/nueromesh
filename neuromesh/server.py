@@ -65,6 +65,8 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, system.director.status()
         if path == "/dreams":
             return 200, system.dreams.status()
+        if path == "/directors":
+            return 200, system.directors.status()
         if path == "/memory":
             if query.get("node"):
                 node = web.memory_node(system, query["node"])
@@ -151,6 +153,15 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                 ok = system.dreams.wake("woken by a person", by=by)
                 return (200 if ok else 400), {"ok": ok, "message": "awake" if ok else "it is not asleep"}
             return 400, {"ok": False, "message": "action is sleep or wake"}
+        if path == "/directors":  # {"action": "spawn"} or {"action": "retire", "id": "director-1"}
+            pool, by = system.directors, body.get("by", "api")
+            if body.get("action") == "spawn":
+                node = pool.spawn(f"asked for by {by}", by="director-0")
+                return (200, {"director": node.id}) if node else (409, {"error": f"at most {pool.limit} directors"})
+            if body.get("action") == "retire":
+                ok, msg = pool.retire(str(body.get("id", "")), f"retired by {by}", by=by)
+                return (200 if ok else 409), {"ok": ok, "message": msg}
+            return 400, {"error": 'action is "spawn" or "retire"'}
         if path == "/imagine":  # {"prompt": "a city on Mars"}
             result = await system.submit(f"imagine {body.get('prompt', '')}", source=body.get("source", "api"))
             return 200, result.public_dict()

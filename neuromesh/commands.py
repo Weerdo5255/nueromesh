@@ -36,6 +36,9 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /director                       its own initiative: mode, who chose it, the tasks it set itself, what paid off
   /director mode <auto|research|practise|examine|improve|consolidate|rest>   pin a mode (auto: the agency node chooses)
   /director now | on | off        take initiative now, or turn its initiative on or off
+  /directors                      the director nodes at both ends of every order: who is doing what, the
+                                  stance its mood gives them, recent reviews, what memory was not given
+  /directors spawn | retire <id>  add a duplicate director now, or retire one (never director-0)
   /dreams                         sleep and dreams: the dream nodes, last night's dreams, what checked out
   /sleep    /wake                 send it to sleep (dreaming) now, or wake it
   /imagine <prompt>               its dream nodes imagine something (also: "imagine ...", "what if ...")
@@ -306,6 +309,20 @@ async def director_command(system, rest: str) -> list[str]:
     return director_lines(system)
 
 
+def directors_command(system, rest: str) -> list[str]:
+    pool = system.directors
+    sub, _, arg = rest.strip().partition(" ")
+    by = os.environ.get("USER", "operator")
+    if sub == "spawn":
+        node = pool.spawn(f"asked for by {by}", by="director-0")
+        return [f"  {node.id} is running: a duplicate of director-0" if node else
+                f"  no more directors: {len(pool.nodes)} of at most {pool.limit} are running ([directors] max_directors)"]
+    if sub == "retire":
+        ok, msg = pool.retire(arg.strip(), f"retired by {by}", by=by)
+        return [f"  {msg}"]
+    return pool.lines()
+
+
 def dream_lines(system) -> list[str]:
     d = system.dreams
     if not d.enabled:
@@ -547,6 +564,8 @@ async def execute(system, line: str) -> Output:
             out = [f"[{res.order_id}] {res.summary()}".replace("\n", "\n   ")] + [f"   . {t}" for t in res.trace]
         elif cmd in ("director", "agency", "initiative"):
             out = await director_command(system, rest)
+        elif cmd == "directors":
+            out = directors_command(system, rest)
         elif cmd in ("memorize", "memorise", "remember"):
             ask, sep, answer = rest.partition("::")
             if not sep or not ask.strip() or not answer.strip():

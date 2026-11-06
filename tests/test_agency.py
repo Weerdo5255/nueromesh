@@ -24,7 +24,7 @@ AGENCY_ON = {**FAST,
 
 def flags(**kw):
     f = {"skills": "ok", "gap": "none", "topics": "none", "research": "off", "exams": "none", "scores": "none",
-         "memory": "none", "last": "none", "streak": "one", "budget": "ok", "selftasks": "none"}
+         "memory": "none", "last": "none", "streak": "one", "budget": "ok", "selftasks": "none", "mood": "steady"}
     f.update(kw)
     return f
 

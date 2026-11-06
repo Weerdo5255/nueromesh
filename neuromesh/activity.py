@@ -67,7 +67,7 @@ class ActivityTracker:
 
 # --------------------------------------------------------------------- the log
 ROUTINE = {"node.trained", "node.evaluated", "lesson.label", "memory.rejected", "memory.merge_refused",
-           "dream.dreamt"}  # hidden by "/log important"
+           "dream.dreamt", "director.reviewed"}  # hidden by "/log important"
 
 
 @dataclass
@@ -137,6 +137,10 @@ def format_event(ev: Event) -> LogEntry | None:
         level = "lesson" if t == "memory.fact" else "work"
     if t in ("memory.failing", "memory.unreadable", "memory.forgotten"):
         level = "warn"
+    if t == "director.consulted" and d.get("verdict") == "disagrees" or t == "director.restarted":
+        level = "warn"
+    if t in ("director.reviewed", "director.memory"):
+        level = "work"
     return LogEntry(ev.ts, tag, text.strip(), level, t)
 
 

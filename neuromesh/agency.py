@@ -14,6 +14,12 @@ picks a mode:
     consolidate  run every memory node against its test file, and relearn what fails
     rest         nothing is worth the budget right now
 
+The Director is director-0, the primary director node (directors.py), and its mood shapes it: the
+agency node reads the mood as part of its situation (a good mood reads up and practises more; a
+tense, low or wary one checks what it already holds instead of reaching outside), good spirits
+explore more, high arousal decides sooner. When two modes are both worth doing, a duplicate of the
+director takes the second one alongside it.
+
 A neural node sits in front of the Director: the agency node, an internal capability like the
 emotional engines. It reads the situation and chooses the mode once it is validated and
 confident; until then the drive policy (curiosity, competence, verification, variety) chooses and
@@ -45,21 +51,35 @@ AGENCY = "agency"
 MODES = ("research", "practise", "examine", "improve", "consolidate", "rest")
 TASK_MODES = ("research", "practise", "improve")
 FEATURES = ("skills", "gap", "topics", "research", "exams", "scores", "memory", "last", "streak", "budget",
-            "selftasks")
+            "selftasks", "mood")
+MOODS = ("steady", "upbeat", "content", "alert", "tense", "subdued", "wary")  # the temperament's moods
 VALUES = {"skills": ("weak", "ok", "none"), "gap": ("none", "small", "large"), "topics": ("none", "some", "many"),
           "research": ("ready", "off", "spent"), "exams": ("due", "fresh", "none"), "scores": ("low", "high", "none"),
           "memory": ("failing", "unverified", "ok", "none"), "last": MODES + ("none",),
-          "streak": ("one", "two", "many"), "budget": ("ok", "low"), "selftasks": ("none", "some", "full")}
+          "streak": ("one", "two", "many"), "budget": ("ok", "low"), "selftasks": ("none", "some", "full"),
+          "mood": MOODS}
 WHY = {"research": "there are topics to read up on", "improve": "a skill is below its target",
        "examine": "an exam is due", "practise": "its exam scores are low",
        "consolidate": "memory nodes need checking", "rest": "nothing is worth the budget right now"}
+# How the mood moves the drives (only of modes already worth something; rest always can).
+MOOD_DRIVES = {"upbeat": {"research": 0.15, "practise": 0.05}, "content": {"research": 0.08},
+               "alert": {"examine": 0.08, "consolidate": 0.05},
+               "tense": {"consolidate": 0.15, "examine": 0.1, "research": -0.1},
+               "subdued": {"rest": 0.3, "research": -0.1},
+               "wary": {"consolidate": 0.2, "research": -0.3}}
+MOOD_WHY = {"upbeat": "it is in good spirits, so it reads up and practises",
+            "content": "it is content, so it follows its curiosity",
+            "alert": "it is alert, so it measures and checks itself",
+            "tense": "it is tense, so it checks what it already knows",
+            "subdued": "its mood is low, so it rests",
+            "wary": "it is wary, so it checks what it already holds instead of reaching outside"}
 
 
 # ======================================================================== situation
 def situation_text(flags: dict) -> str:
     """The situation as single words ("skillsweak topicsmany ...") so every feature is one token
     for the hashing encoder the agency node reads."""
-    return " ".join(f"{k}{flags[k]}" for k in FEATURES)
+    return " ".join(f"{k}{flags.get(k, VALUES[k][0])}" for k in FEATURES)
 
 
 def parse_situation(text: str) -> dict:
@@ -94,6 +114,9 @@ def drives(f: dict) -> dict[str, float]:
     last = f.get("last")
     if last in d and last != "rest":                                                         # variety
         d[last] -= {"one": 0.0, "two": 0.15, "many": 0.35}.get(f.get("streak"), 0.0)
+    for m, delta in MOOD_DRIVES.get(f.get("mood", "steady"), {}).items():                    # the mood
+        if d[m] > 0 or m == "rest":
+            d[m] += delta
     return d
 
 
@@ -101,6 +124,11 @@ def policy(f: dict, exclude: tuple = ()) -> tuple[str, str]:
     """The drive policy's choice and why. Ties go to the earlier mode."""
     d = drives(f)
     best = max((m for m in MODES if m not in exclude), key=lambda m: (d[m], -MODES.index(m)))
+    mood = f.get("mood", "steady")
+    if mood in MOOD_WHY and f.get("budget") != "low":
+        calm = drives({**f, "mood": "steady"})
+        if best != max((m for m in MODES if m not in exclude), key=lambda m: (calm[m], -MODES.index(m))):
+            return best, MOOD_WHY[mood]
     if best == "rest" and f.get("budget") == "low":
         return best, "its own budget of decisions is nearly spent"
     if best == "consolidate" and f.get("memory") == "failing":
@@ -344,6 +372,7 @@ class Director(Agent):
             "streak": "one" if streak <= 1 else ("two" if streak == 2 else "many"),
             "budget": "low" if left <= max(1, pol.max_decisions_per_hour // 4) else "ok",
             "selftasks": "none" if not active else ("full" if len(active) >= pol.max_self_tasks else "some"),
+            "mood": s.directors.stance().mood,  # the mood shapes what it chooses (directors.py)
         }
         allowed = set(pol.modes) | {"rest"}
         return {"flags": flags, "text": situation_text(flags), "weak": weak, "topics": topics, "due": due,
@@ -394,7 +423,11 @@ class Director(Agent):
             self.next_at = time.time() + pol.decide_every_seconds
             return None
         self.busy = True
+        pool = s.directors
+        lead = await pool.acquire("initiative", "deciding", spawn=False)  # director-0 unless it is busy
+        helper = None
         try:
+            st = pool.stance()
             sit = self.situation()
             f = sit["flags"]
             if self.pinned != "auto":
@@ -418,7 +451,7 @@ class Director(Agent):
                     mode, why = policy(f, exclude=tuple(m for m in MODES if m not in sit["feasible"]))
                     s.learn(AGENCY, sit["text"], mode, AGENCY)
                     how += f"; {wrong} was not possible, so the drive policy chose"
-                if self.rng.random() < pol.explore:
+                if self.rng.random() < pol.explore * st.explore:  # good spirits explore more
                     options = [m for m in sit["feasible"] if m not in (mode, "rest")]
                     if options:
                         mode = self.rng.choice(sorted(options))
@@ -428,20 +461,61 @@ class Director(Agent):
                 mode, why = policy(f)
                 how = "drive policy"
             record = {"ts": round(time.time(), 1), "mode": mode, "how": how, "why": why, "situation": sit["text"],
-                      "target": "", "task": "", "summary": "", "value": None}
-            await self.act(mode, sit, record)
-            self.history.append(record)
-            self.recent.append(time.time())
-            self.next_at = time.time() + pol.decide_every_seconds * (2 if record["mode"] == "rest" else 1)
+                      "target": "", "task": "", "summary": "", "value": None, "by": lead.id}
+            lead.initiative = mode
+            records = [record]
+            second = self._second_mode(sit, mode, st) if self.pinned == "auto" and pool.pol.collaborate else None
+            if second is not None:  # two things worth doing at once: a duplicate takes the second
+                helper = await pool.acquire("initiative", second, exclude={lead.id}, wait=0.0)
+            if helper is not None:
+                records.append({"ts": round(time.time(), 1), "mode": second, "by": helper.id,
+                                "how": f"a duplicate of {lead.id}, alongside its {mode}",
+                                "why": WHY[second], "situation": sit["text"], "target": "", "task": "", "summary": "",
+                                "value": None})
+                await asyncio.gather(self.act(mode, sit, record), self.act(second, sit, records[1]))
+            else:
+                await self.act(mode, sit, record)
+            for rec in records:
+                self.history.append(rec)
+                self.recent.append(time.time())
+            # high arousal decides sooner, low arousal later
+            self.next_at = time.time() + pol.decide_every_seconds * st.pace * (2 if record["mode"] == "rest" else 1)
             self.save()
-            s.guardian.audit("director", "agency.decided", record["mode"], how=how, why=why, target=record["target"],
-                             task=record["task"], situation=sit["text"])
-            s.bus.publish("agency.decided", **{k: v for k, v in record.items() if k != "value"})
-            if record["value"] is not None:
-                self.outcome(record, record["value"], record["summary"], record["target"])
+            for rec in records:
+                s.guardian.audit(rec["by"], "agency.decided", rec["mode"], how=rec["how"], why=rec["why"],
+                                 target=rec["target"], task=rec["task"], situation=sit["text"])
+                s.bus.publish("agency.decided", **{k: v for k, v in rec.items() if k != "value"})
+            for rec in records:
+                if rec["value"] is not None:
+                    self.outcome(rec, rec["value"], rec["summary"], rec["target"])
             return record
         finally:
+            pool.release(lead, "initiative")
+            if helper is not None:
+                pool.release(helper, "initiative")
             self.busy = False
+
+    @staticmethod
+    def _target(sit: dict, mode: str):
+        pick = {"research": sit["topics"], "practise": sit["practice"], "improve": sit["weak"], "examine": sit["due"]}.get(mode)
+        return pick[0][0] if pick else None
+
+    def _second_mode(self, sit: dict, mode: str, st) -> str | None:
+        """Another mode worth doing at the same time, on a different target, for a duplicate to take."""
+        if mode == "rest" or self._budget_left() < 2:
+            return None
+        d = drives(sit["flags"])
+        active = len([t for t in self.self_tasks if t in self.sys.tasks.tasks])
+        options = []
+        for m in sit["feasible"]:
+            if m in (mode, "rest") or d[m] < st.second_mode:
+                continue
+            if m in TASK_MODES and active + (2 if mode in TASK_MODES else 1) > self.pol.max_self_tasks:
+                continue
+            if self._target(sit, m) is not None and self._target(sit, m) == self._target(sit, mode):
+                continue
+            options.append(m)
+        return max(options, key=lambda m: (d[m], -MODES.index(m))) if options else None
 
     async def act(self, mode: str, sit: dict, record: dict) -> None:
         s, pol = self.sys, self.pol

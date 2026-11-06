@@ -105,6 +105,8 @@ class Result:
     disposition: str = ""    # what the temperament did to the answer ("" = nothing; see temperament.py)
     original: Any = None     # the unchanged answer when the temperament changed or held it (operator-only)
     inquiry: dict | None = None  # a question the mesh asks the user about this order ({"id", "question"})
+    director: str = ""       # the director node that reviewed it on its way out (P14)
+    review: str = ""         # what that director decided
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -15,6 +15,7 @@ import numpy as np
 
 from .activity import ActivityLog, ActivityTracker
 from .agency import AgencyTeacher, Director
+from .directors import DirectorPool
 from .dreams import DreamBank, Dreamer
 from .agents import (Architect, Compressor, Curator, Evaluator, Explorer, Investigator, Orchestrator, Researcher,
                      Sentinel, TaskRunner, Trainer)
@@ -88,6 +89,8 @@ class System:
         self.registry.load(self.directives.nodes.input_dim)
         self.affect = Affect(self)  # the temperament and the emotional engines (P8 honesty guard)
         self.bus.listen(self.affect.on_event)
+        self._bg_tasks: set[asyncio.Task] = set()
+        self.directors = DirectorPool(self)  # director-0 and its duplicates: at both ends of every order (P14)
         self.mind = Mind(self)      # opinions, private notes, inquiries, proposals (P9, P10)
         self.bus.listen(self.mind.on_event)
         self.tasks = BackgroundTasks(self)  # background tasks people set (learn / improve / run / challenge)
@@ -106,13 +109,12 @@ class System:
         self.served: deque[str] = deque(maxlen=100)
         self._enc_cache: OrderedDict[str, np.ndarray] = OrderedDict()
         self._enc_lock = threading.Lock()
-        self._bg_tasks: set[asyncio.Task] = set()
         self._tasks: list[asyncio.Task] = []
         self.researcher = Researcher(self)
         self.investigator = Investigator(self)
         self.orchestrator = Orchestrator(self)
         self.director = Director(self)  # independent agency: the agency node chooses its mode
-        self.agents = [self.orchestrator, Architect(self), Trainer(self), Evaluator(self), Curator(self),
+        self.agents = [self.directors, self.orchestrator, Architect(self), Trainer(self), Evaluator(self), Curator(self),
                        Explorer(self), self.researcher, self.investigator, TaskRunner(self), Compressor(self),
                        self.director, Dreamer(self), Sentinel(self)]
 
@@ -600,6 +602,7 @@ class System:
             "evolution": self.evolution.status(),
             "memory": self.memory.status(),
             "agency": self.director.status(),
+            "directors": self.directors.status(),
             "dreams": self.dreams.status(),
             "scorecard": self.scorecard(),
             "agents": {a.name: dict(a.stats) for a in self.agents},

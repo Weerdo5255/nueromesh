@@ -16,7 +16,10 @@ of behaviour fit into well under a minute:
                       it sits benchmark exams, practises, and sets itself tasks to improve skills
  7. sleep           - it falls asleep and dreams up questions and answers from what it knows;
                       on waking it checks them and evolves its dream nodes; then it imagines
- 8. kill switch     - the operator halts everything with a STOP file
+ 8. directors       - a director takes every order and reviews every result before the person sees
+                      it or memory keeps it; it duplicates itself for second opinions and when work
+                      waits; its mood shapes how carefully it works
+ 9. kill switch     - the operator halts everything with a STOP file
 """
 from __future__ import annotations
 
@@ -108,10 +111,14 @@ class Demo:
         self.rows: list[dict] = []
         self.lifecycle = {"node.spawned": 0, "node.promoted": 0, "node.retired": 0, "node.disposed": 0}
         self.lessons = 0
+        self.quiet = {"director.reviewed": 0, "director.consulted": 0}  # every order has them: summarised per phase
 
     def on_event(self, ev) -> None:
         if ev.topic in self.lifecycle:
             self.lifecycle[ev.topic] += 1
+        if ev.topic in self.quiet:
+            self.quiet[ev.topic] += 1
+            return
         if ev.topic == "teacher.lesson" and ev.data.get("source") != "human":
             self.lessons += 1
             return  # summarised per phase instead of printed one by one
@@ -125,6 +132,7 @@ class Demo:
     async def run_orders(self, phase: str, orders: list, show: int = 3) -> list:
         results = []
         lessons_before = self.lessons
+        quiet_before = dict(self.quiet)
         for i, (text, route, label) in enumerate(orders):
             res = await self.s.submit(text)
             correct = res.ok and res.route == route and (label is None or res.output == label)
@@ -145,7 +153,9 @@ class Demo:
         row = self.rows[-1]
         print(f"  -> {row['orders']} orders: {row['correct']} correct, served by nodes {row['nodes']}, "
               f"teachers {row['teachers']}, mixed {row['mixed']}; "
-              f"{self.lessons - lessons_before} background lessons during the phase")
+              f"{self.lessons - lessons_before} background lessons during the phase; directors reviewed "
+              f"{self.quiet['director.reviewed'] - quiet_before['director.reviewed']}, with "
+              f"{self.quiet['director.consulted'] - quiet_before['director.consulted']} second opinions")
         return results
 
     async def idle(self, seconds: float, why: str) -> None:
@@ -309,6 +319,32 @@ async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7,
                        "imagine a mountain on Jupiter"):
             res = await system.submit(prompt)
             print(f"  > {prompt}\n      " + res.summary().replace("\n", "\n      "))
+
+        demo.say("Phase 9 - directors: one takes every order, one reviews every result; the mood shapes them")
+        pool = system.directors
+        for line in pool.lines()[:3]:
+            print(f"  {line.strip()}")
+        made = pool.counts.get("spawned", 0)
+        print(f"  up to {pool.most} directors ran at once; {made} duplicate{'' if made == 1 else 's'} made so far")
+        print("  the demo stirs up its mood: trust 0.20, patience 0.15, arousal 0.85 (as a run of hostile messages would)")
+        system.affect.state.values.update(trust=0.2, patience=0.15, arousal=0.85)
+        system.affect.state.updated = time.time()
+        st = pool.stance()
+        print(f"  stance {st.line()}")
+        ok, why = pool.review_memory("Who first climbed Mount Everest?", "Edmund Hillary and Tenzing Norgay, in 1953.",
+                                     "the ollama teacher (a language model)", "ollama", "teachers", confidence=0.9)
+        print(f"  a language model's answer offered to long-term memory now: {'kept' if ok else 'not kept'} - {why}")
+        ok, why = pool.review_memory("Who first climbed Mount Everest?", "Edmund Hillary and Tenzing Norgay, in 1953.",
+                                     "the demo operator", "demo-operator", "people")
+        print(f"  the same fact from a person: {'kept' if ok else 'not kept'} - {why}")
+        before = pool.counts.get("consult", 0)
+        burst = demo.f.batch(24, NEW_MIX)
+        results = await asyncio.gather(*(system.submit(text) for text, _, _ in burst))
+        print(f"  24 orders at once, each taken and reviewed by a director ({', '.join(sorted({r.director for r in results}))}); "
+              f"{pool.counts.get('consult', 0) - before} needed a second opinion at the wary bar; "
+              f"{len(pool.nodes)} directors running, up to {pool.most} at once")
+        system.affect.calm(by="demo-operator")
+        print(f"  the operator calms it: stance {pool.stance().line()}")
 
         demo.say("Results")
         print(f"{'phase':<14} {'orders':>6} {'correct':>8} {'by nodes':>9} {'by teachers':>12} {'mixed':>6} {'avg ms':>7}")

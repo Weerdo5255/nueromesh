@@ -159,6 +159,10 @@ main { padding: 18px 24px 40px; }
 .m-dream.asleep, .m-dream-alt.asleep { animation: dreaming 2.4s ease-in-out infinite; }
 @keyframes dreaming { 50% { opacity: .35; } }
 .m-lane { stroke: var(--rule); stroke-width: 1; }
+.m-director { fill: var(--ink); stroke: var(--ink); stroke-width: 1.2; stroke-linejoin: round; }
+.m-director.dup { fill: var(--panel); }
+.m-director.busy { stroke: var(--eosin); stroke-width: 2; }
+.m-director.wary { stroke: var(--warn); stroke-width: 2; }
 
 /* lists that are not cards */
 .work, .log, .rows { list-style: none; margin: 0; padding: 0; }
@@ -211,6 +215,7 @@ main { padding: 18px 24px 40px; }
 .scroll-x { overflow-x: auto; }
 .ok { color: var(--good); }
 .no { color: var(--bad); }
+span.hit { color: var(--eosin); }
 .wait { color: var(--warn); }
 .dim { color: var(--ink-3); }
 .small { font-size: 13px; }

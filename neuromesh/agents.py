@@ -2,7 +2,8 @@
 the registry and the store. Only the Orchestrator serves users; the rest work in the
 background, yielding whenever an order is in flight (prime directive P2).
 
-  Orchestrator - takes user orders, routes them, runs tools / nodes, returns results
+  Orchestrator - takes user orders, routes them, runs tools / nodes, returns results; a director
+                 (directors.py) takes every order first and reviews every result last
   Architect    - grows the network: seeds nodes for capability gaps, expands nodes when
                  new labels or tools appear, breeds challengers when a champion is weak
   Trainer      - continually trains nodes on teacher-labelled experience and asks
@@ -100,19 +101,24 @@ class Orchestrator(Agent):
         t0 = time.perf_counter()
         try:
             with self.sys.activity.track("order", order.source, " ".join(order.text.split())[:100]):
-                result = await self.fulfil(order)
-                try:  # the emotional engines see every answer before the user does (P8 limits them)
-                    await self.sys.affect.process(order, result)
+                try:
+                    result = await self.fulfil(order, review=False)  # a director takes it first (P14)
+                    try:  # the emotional engines see every answer before the user does (P8 limits them)
+                        await self.sys.affect.process(order, result)
+                    except Exception:
+                        self.log.exception("temperament could not process %s; the answer passes unchanged", order.id)
+                    try:  # the mind notes gaps and may ask the user what they meant
+                        self.sys.mind.observe(order, result)
+                    except Exception:
+                        self.log.exception("the mind could not observe %s", order.id)
+                except Exception as exc:
+                    self.log.exception("order %s failed", order.id)
+                    result = Result(order.id, order.text, None, None, 0.0, ok=False, note=f"internal error: {exc}")
+                    voice.finish(result)
+                try:  # and a director reviews it last, before the person sees it or memory keeps it (P14)
+                    await self.sys.directors.review(order, result)
                 except Exception:
-                    self.log.exception("temperament could not process %s; the answer passes unchanged", order.id)
-                try:  # the mind notes gaps and may ask the user what they meant
-                    self.sys.mind.observe(order, result)
-                except Exception:
-                    self.log.exception("the mind could not observe %s", order.id)
-        except Exception as exc:
-            self.log.exception("order %s failed", order.id)
-            result = Result(order.id, order.text, None, None, 0.0, ok=False, note=f"internal error: {exc}")
-            voice.finish(result)
+                    self.log.exception("the director could not review %s; it is reported as it is", order.id)
         finally:
             self.sys.inflight -= 1
             sem.release()
@@ -122,10 +128,15 @@ class Orchestrator(Agent):
         if order.future is not None and not order.future.done():
             order.future.set_result(result)
 
-    async def fulfil(self, order) -> Result:
-        """Do the order; the reply leads with the result in the mesh's own words (voice.py)."""
+    async def fulfil(self, order, review: bool = True) -> Result:
+        """Do the order between two directors (P14): one takes it, the tools and nodes do it, one
+        reviews it. The reply leads with the result in the mesh's own words (voice.py)."""
+        plan = await self.sys.directors.intake(order)
         res = await self._fulfil(order)
+        res.trace.insert(0, plan.line)
         voice.finish(res)
+        if review:
+            await self.sys.directors.review(order, res)
         return res
 
     async def _fulfil(self, order) -> Result:
@@ -235,9 +246,9 @@ class Orchestrator(Agent):
                     res.sources.append(f"the {reply[1]} teacher (a language model; not checked against a source)")
                     res.trace.append(f"answered directly by the {reply[1]} teacher")
                     kinds.append("teacher")
-                    if order.learn and is_question(order.text):  # compressed into a memory node
-                        s.memory.learn(order.text, res.answer, f"the {reply[1]} teacher (a language model)",
-                                       by=reply[1], kind="teachers")
+                    if order.learn and is_question(order.text):  # into a memory node, if the director's review agrees
+                        s.directors.remember(order.id, order.text, res.answer, f"the {reply[1]} teacher (a language model)",
+                                             by=reply[1], kind="teachers")
                 else:
                     res.ok = False
                     res.note = "no tool, skill or teacher can fulfil this yet; queued for a human teacher"
@@ -287,9 +298,10 @@ class Orchestrator(Agent):
         res.trace.append(f"answered by memory node {node.id} (confidence {rec.confidence:.2f}; {node.spec()})")
         self.sys.bus.publish("memory.recalled", node=node.id, question=res.text[:200], confidence=rec.confidence)
 
-    def _remember(self, question: str, answer: str, source: str) -> None:
-        if answer:
-            self.sys.memory.learn(question, answer, source.split(' ("', 1)[0], by="research", kind="knowledge")
+    def _remember(self, res: Result, question: str, answer: str, source: str) -> None:
+        if answer:  # into a memory node, if the director's review agrees (P14)
+            self.sys.directors.remember(res.order_id, question, answer, source.split(' ("', 1)[0], by="research",
+                                        kind="knowledge")
 
     async def answer_from_retained(self, res: Result, question: str, hits, confidence: float,
                                    learn: bool = True) -> None:
@@ -304,7 +316,7 @@ class Orchestrator(Agent):
         s.bus.publish("knowledge.recalled", question=question[:200], title=doc.title,
                       confidence=confidence, how=how)
         if learn:  # exam questions are never learned from
-            self._remember(question, answer, source)
+            self._remember(res, question, answer, source)
 
     async def knowledge_order(self, res: Result, question: str, tool: Tool, background: bool = False,
                               learn: bool = True) -> None:
@@ -332,7 +344,7 @@ class Orchestrator(Agent):
             res.trace.append(f"researched with {doc.source}: '{doc.title}' ({n} passage{'s' if n != 1 else ''} "
                              f"retained; {how})")
             if learn:
-                self._remember(question, answer, source)
+                self._remember(res, question, answer, source)
         elif hits:
             answer, source, how = await s.answer_from_knowledge(question, hits)
             res.output, res.answer, res.knowledge = answer, answer, "recalled"

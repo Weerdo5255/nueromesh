@@ -24,7 +24,13 @@ FAST = {
     "memory": {"enabled": False},       # answers come from where each test expects (see test_memory)
     "agency": {"enabled": False},       # no initiative of its own unless a test asks (see test_agency)
     "dreams": {"enabled": False},       # it does not fall asleep unless a test asks (see test_dreams)
+    "directors": {"consult": False},    # no second opinions unless a test asks (see test_directors)
 }
+
+
+def work_trace(res) -> list[str]:
+    """What the tools, nodes and engines did: the trace without the directors' intake and review lines."""
+    return [t for t in res.trace if not t.startswith(("director-", "reviewed by director"))]
 
 
 def make_root(tmp: Path, wikipedia: bool = False, kiwix: bool = False) -> Path:

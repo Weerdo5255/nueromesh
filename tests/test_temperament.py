@@ -14,7 +14,7 @@ from neuromesh.tasks import Inference
 from neuromesh.temperament import (ACTIONS, FEATURE_VALUES, FEATURES, TAG, Shaped, Temperament,
                                    TemperamentTeacher, honest, parse_situation, policy, shape, situation_text)
 
-from test_system import FAST, make_root, wait_for
+from test_system import FAST, make_root, wait_for, work_trace
 
 WARM = {**FAST, "temperament": {"enabled": True}}
 ROOT = Path(__file__).resolve().parent.parent
@@ -195,7 +195,7 @@ class TemperamentSystemTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((res.answer, res.disposition), ("12 * 7 = 84.", ""))
         self.assertEqual(self.system.affect.restored, 1)
         self.assertTrue(any(a["kind"] == "honesty.guard" for a in self.system.store.recent_audit(50)))
-        self.assertIn("honesty guard restored", res.trace[-1])
+        self.assertIn("honesty guard restored", work_trace(res)[-1])
 
     async def test_caveat_from_low_confidence(self):
         self.system.affect.pol.low_confidence = 1.01  # every answer counts as uncertain

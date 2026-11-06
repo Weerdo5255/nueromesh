@@ -381,6 +381,26 @@ class ComputePolicy:
 
 
 @dataclass
+class DirectorsPolicy:
+    """The directors: at least one director node at both ends of every order, duplicating itself when
+    it needs to, its stance shaped by the mood (see directors.py)."""
+    max_directors: int = 4                  # director-0 and its duplicates (P4); never fewer than one
+    spawn_after_waiting: int = 2            # pieces of work waiting for a director before it duplicates itself
+    retire_after_idle_seconds: float = 30.0 # a duplicate idle this long retires
+    beat_seconds: float = 0.5
+    consult: bool = True                    # ask a duplicate for a second opinion when unsure
+    consult_wait_seconds: float = 0.25      # how long a review waits for a free director to consult
+    second_opinion_threshold: float = 0.35  # a second opinion also weighs what memory nodes hold less surely
+    review_confidence: float = 0.6          # answers below this get a second opinion (the mood moves it)
+    memory_confidence: float = 0.35         # facts from orders below this confidence are not stored (the mood moves it)
+    wary_trust: float = 0.35                # below this trust it is wary: a language model's answer needs corroboration
+    impatient_patience: float = 0.25        # below this patience it skips second opinions (unless wary)
+    mood_influence: float = 1.0             # how much the mood shapes the directors (0 = not at all)
+    collaborate: bool = True                # a duplicate may take a second mode of initiative alongside director-0
+    second_mode_min: float = 0.55           # the drive a second mode needs
+
+
+@dataclass
 class Directives:
     name: str = "NeuroMesh"
     mission: str = ""
@@ -401,6 +421,7 @@ class Directives:
     memory: MemoryPolicy = field(default_factory=MemoryPolicy)
     agency: AgencyPolicy = field(default_factory=AgencyPolicy)
     dreams: DreamsPolicy = field(default_factory=DreamsPolicy)
+    directors: DirectorsPolicy = field(default_factory=DirectorsPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -425,6 +446,7 @@ class Directives:
             memory=build(MemoryPolicy, d.get("memory")),
             agency=build(AgencyPolicy, d.get("agency")),
             dreams=build(DreamsPolicy, d.get("dreams")),
+            directors=build(DirectorsPolicy, d.get("directors")),
         )
 
     @classmethod

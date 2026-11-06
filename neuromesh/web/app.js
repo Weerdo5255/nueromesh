@@ -301,6 +301,14 @@
     return `M ${X.router} ${g.yMid} C ${X.router + 95} ${g.yMid}, ${X.label - 95} ${y}, ${X.label - 10} ${y}`;
   }
 
+  function directorGlyph(x, y, r, n, ds) {  // a diamond: the directors, at both ends of every order
+    const cls = "m-director" + (n.role === "primary" ? "" : " dup") + (n.busy ? " busy" : "") + (ds && ds.wary ? " wary" : "");
+    const tip = `${n.id}${n.role === "duplicate" ? ` (a duplicate of ${n.parent})` : n.role === "primary" ? " (the primary director)" : ""}: ${n.doing}` +
+      (n.handled ? `\n${n.handled.intake || 0} taken, ${n.handled.review || 0} reviewed, ${n.handled.consult || 0} second opinions` : "") +
+      (ds ? `\nstance: ${ds.mood}${ds.wary ? " (wary)" : ""}` : "");
+    return sv("polygon", { points: `${x},${y - r} ${x + r},${y} ${x},${y + r} ${x - r},${y}`, class: cls }, sv("title", {}, tip));
+  }
+
   function drawMesh(m, width) {
     const g = meshGeometry(m, width);
     const { X } = g;
@@ -321,8 +329,17 @@
       }
       svg.append(sv("text", { x: X.router + 20, y: y - 14, class: "m-dim" }, an ? (dr.trusted ? "agency node" : "agency node (learning)") : "drive policy"));
       svg.append(sv("path", { d: `M ${X.router + 16} ${y} L ${X.label - 10} ${y}`, class: "m-edge" + (dr.enabled ? "" : " inactive") }));
-      const head = sv("text", { x: X.label, y: y + 4.5, class: "m-route" }, "director");
+      const ds = m.directors;
+      const head = sv("text", { x: X.label, y: y + 4.5, class: "m-route" }, ds && ds.nodes.length > 1 ? "directors" : "director");
       svg.append(head);
+      if (ds) {  // the director nodes: director-0 and the duplicates it made
+        let x = X.label + (ds.nodes.length > 1 ? 84 : 74);
+        ds.nodes.slice(0, 6).forEach(n => {
+          const r = n.role === "primary" ? 7 : 5.5;
+          svg.append(directorGlyph(x, y, r, n, ds));
+          x += r * 2 + 7;
+        });
+      }
       const room = g.chars(X.target);
       let text;
       if (!dr.enabled) text = "initiative off";
@@ -337,6 +354,11 @@
     // orders flow in to the router
     svg.append(sv("text", { x: X.inlet, y: g.yMid + 4, class: "m-sub" }, "orders"));
     svg.append(sv("path", { d: `M 70 ${g.yMid} L ${X.router - g.routerR - 4} ${g.yMid}`, class: "m-edge" }));
+    if (m.directors) {  // a director takes every order first
+      const dx = Math.round((70 + X.router - g.routerR) / 2) - 4;
+      svg.append(directorGlyph(dx, g.yMid, 6, { ...m.directors.nodes[0], id: "a director", doing: "takes every order before anything else touches it" }, m.directors));
+      svg.append(sv("text", { x: dx, y: g.yMid + 22, "text-anchor": "middle", class: "m-dim" }, "director"));
+    }
     m.routes.forEach((r, i) => svg.append(sv("path", { d: routePath(g, i), class: "m-edge" + (r.inactive ? " inactive" : "") })));
     // the router
     const rc = m.router.champion;
@@ -411,19 +433,21 @@
     const ly = g.lane;
     svg.append(sv("line", { x1: 16, x2: g.W - 16, y1: ly - 24, y2: ly - 24, class: "m-lane" }));
     svg.append(sv("text", { x: X.inlet, y: ly + 4, class: "m-sub" }, "answers"));
-    if (!m.engines.length) {
-      svg.append(sv("text", { x: 100, y: ly + 4, class: "m-dim" }, "go straight to you (temperament off)"));
-    } else {
+    {
       let x = 120;
       const long = { affect: "affect reads the tone", disposition: "disposition decides" };
       let stops = m.engines.map(e => ({ label: long[e.capability] || e.capability, short: e.capability, node: e.champion }));
-      const guard = m.guard ? `honesty guard: ${m.guard.checked} checked, ${m.guard.changed} changed` : "honesty guard";
-      stops.push({ label: guard, short: m.guard ? `guard: ${m.guard.changed} of ${m.guard.checked} changed` : "honesty guard", guard: true });
+      if (m.engines.length) {
+        const guard = m.guard ? `honesty guard: ${m.guard.checked} checked, ${m.guard.changed} changed` : "honesty guard";
+        stops.push({ label: guard, short: m.guard ? `guard: ${m.guard.changed} of ${m.guard.checked} changed` : "honesty guard", guard: true });
+      }
+      if (m.directors) stops.push({ label: m.engines.length ? "a director reviews" : "a director reviews (temperament off)", short: "director", director: true });
       const need = labels => 120 + labels.reduce((a, st) => a + 48 + st.length * 7.3, 0) + 40;
       if (need(stops.map(st => st.label)) > g.W) stops = stops.map(st => ({ ...st, label: st.short }));
       stops.forEach((st, k) => {
         if (k) svg.append(sv("line", { x1: x - 34, x2: x - 12, y1: ly, y2: ly, class: "m-edge" }));
-        if (st.guard) svg.append(sv("rect", { x: x - 6, y: ly - 6, width: 12, height: 12, rx: 2, class: "m-tool" }));
+        if (st.director) svg.append(directorGlyph(x, ly, 6, { ...m.directors.nodes[0], id: "a director", doing: "reviews every result before you see it or memory keeps it" }, m.directors));
+        else if (st.guard) svg.append(sv("rect", { x: x - 6, y: ly - 6, width: 12, height: 12, rx: 2, class: "m-tool" }));
         else if (st.node) svg.append(sv("circle", { cx: x, cy: ly, r: 6.5, class: "m-champ" }, sv("title", {}, nodeTip(st.node))));
         else svg.append(sv("circle", { cx: x, cy: ly, r: 6, class: "m-none" }, sv("title", {}, "no node yet")));
         const t = sv("text", { x: x + 12, y: ly + 4.5, class: "m-sub" }, st.label);
@@ -753,6 +777,39 @@
           h("h3", { style: "margin-top:14px" }, "Tasks it set itself"), tasks.length ? h("ul", { class: "rows" }, tasks) : h("p", { class: "dim" }, "None right now."))));
   }
 
+  function directorsPanel(ds) {
+    if (!ds) return null;
+    const st = ds.stance, c = ds.counts;
+    const full = ds.nodes.length >= ds.limit;
+    const nodes = ds.nodes.map(n => h("li", { class: "ask" },
+      h("div", { class: "row", style: "justify-content:space-between" },
+        h("span", {}, h("b", {}, n.id), n.role === "primary" ? " the primary director" : ` a duplicate of ${n.parent}`, ": ",
+          h("span", { class: n.doing === "idle" ? "dim" : "hit" }, n.doing)),
+        n.role === "duplicate" ? h("button", { type: "button", class: "quiet small", onclick: e => act(e.target, () => api("/directors", { action: "retire", id: n.id, by: "web" }), r => r.message) }, "Retire") : null),
+      h("p", { class: "why" }, `${n.handled.intake || 0} orders taken, ${n.handled.review || 0} reviewed, ${n.handled.consult || 0} second opinions, ${n.handled.initiative || 0} initiatives; ` +
+        (n.role === "primary" ? `running for ${span(n.age)}; it never retires` : `made ${span(n.age)} ago: ${n.reason}`))));
+    const reviews = ds.reviews.slice().reverse().map(r => h("li", { class: "ask" },
+      h("p", {}, h("time", { class: "dim small", title: dateTime(r.ts) }, clock(r.ts)), " ", `“${r.text}”`),
+      h("p", { class: "why" }, `taken by ${r.intake}, reviewed by ${r.director} (${r.mood}): `,
+        h("span", { class: r.second === "disagrees" ? "no" : r.second === "agrees" ? "ok" : "dim" }, r.verdict))));
+    const declined = ds.memory.filter(m => !m.kept).reverse().map(m => h("li", { class: "ask" },
+      h("p", {}, `“${m.ask}”`), h("p", { class: "why" }, `${m.director}: ${m.why}`)));
+    return h("div", { class: "section" }, h("h2", {}, "Directors"),
+      h("p", { class: "lede" }, `A director takes every order before anything else touches it, and reviews the result before you see it or anything goes into long-term memory. ` +
+        `There is always at least one. It duplicates itself when work waits, when it wants a second opinion, and to take a second mode of initiative; idle duplicates retire. ` +
+        `${ds.nodes.length} running of at most ${ds.limit}; ${c.review || 0} reviewed, ${c.consult || 0} second opinions, ${c["memory.declined"] || 0} facts kept out of memory.`),
+      h("div", { class: "row" },
+        h("button", { type: "button", disabled: full, title: full ? `At most ${ds.limit} directors ([directors] max_directors)` : "", onclick: e => act(e.target, () => api("/directors", { action: "spawn", by: "web" }), r => `${r.director} is running`) }, "Add a duplicate")),
+      h("div", { class: "cols", style: "margin-top:14px" },
+        h("div", {},
+          h("h3", {}, `How its mood shapes them: ${st.mood}`),
+          h("ul", { class: "rows small" }, st.effects.map(e => h("li", { style: "padding:3px 0" }, e))),
+          h("h3", { style: "margin-top:14px" }, "Director nodes"), h("ul", { class: "rows" }, nodes)),
+        h("div", {},
+          h("h3", {}, "Recent reviews"), reviews.length ? h("ul", { class: "rows" }, reviews) : h("p", { class: "dim" }, "None yet."),
+          h("h3", { style: "margin-top:14px" }, "Kept out of long-term memory"), declined.length ? h("ul", { class: "rows" }, declined) : h("p", { class: "dim" }, "Nothing so far."))));
+  }
+
   function dreamsPanel(dr) {
     if (!dr || !dr.enabled) return null;
     const prompt = h("input", { type: "text", placeholder: "a city on Mars, what if Ada Lovelace painted the Mona Lisa, ...", "aria-label": "What to imagine" });
@@ -809,6 +866,7 @@
           h("button", { type: "button", onclick: e => act(e.target, () => api("/decline", { proposal_id: p.id, by: "web" }), r => r.message) }, "Decline")));
     });
     fill(host,
+      directorsPanel(st.directors),
       dreamsPanel(st.dreams),
       initiative(st.agency),
       h("div", { class: "cols" },

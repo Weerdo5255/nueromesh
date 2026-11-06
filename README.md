@@ -22,7 +22,12 @@ read up on a topic, train a weak skill, check its memory), steered by an agency 
 which choices pay off. When it has had no orders for a while, it may fall asleep: all its spare
 capacity goes to dream nodes that make up questions and answers from what it already knows, with
 no outside help. On waking it checks those answers, and the dream nodes that dreamt best breed
-with a genetic algorithm. Awake, it uses them to imagine things, and always says so.
+with a genetic algorithm. Awake, it uses them to imagine things, and always says so. A director
+sits at both ends of every order: it takes the order before anything else touches it, and
+reviews the result after the tools and nodes, before you see it or anything goes into long-term
+memory. There is always at least one director running. It makes copies of itself to work
+alongside when it needs a second opinion, when work waits, or when it has two things worth doing
+at once, and its mood shapes how carefully it works.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
@@ -286,6 +291,77 @@ and checks its memory nodes, all with no orders.
   `/director mode practise` pins a mode (`auto` hands the choice back to the agency node),
   `/director now` takes initiative now, and `/director off` turns it off (kept across restarts).
 - Its initiative never adds capabilities or approves tools (P10).
+
+### Directors: at both ends of every order
+The director is the mesh's executive. Every order passes a director twice:
+
+```
+you --> a director takes it --> memory nodes, the router, tools, skills, teachers
+    --> the emotional engines and the mind --> a director reviews it --> you
+                                                        \--> long-term memory, only if the review agrees
+```
+
+**On the way in**, a director reads the order and the mood, and plans how carefully to handle
+it: how unsure an answer must be before it gets a second opinion, and how sure a fact must be
+before it may be stored. **On the way out**, after the tools and nodes have done their work, a
+director reviews the result. If it is unsure (low confidence, or an answer a language model gave
+that nothing checked), it asks another director for a **second opinion**. That second opinion
+comes only from what the mesh already holds: its memory nodes (including what they hold less
+surely), its retained knowledge, or another node trusted on held-out data. Never a teacher or the
+web. If the two disagree, the answer gets a disclosed note, and the answer's own words never
+change (P8):
+
+```
+> who invented the zorblax?
+  The zorblax was invented by Ada in 1843.
+  Source: the mock teacher (a language model; not checked against a source)
+  [director: director-1 checked memory node mem-0042 (51% sure) and found a different answer:
+  'Charles invented it in 1820.'. Treat this answer with care]
+```
+
+An exam answer never gets a note (it is graded as the mesh answered it), and a held answer
+never leaks into one.
+
+**Long-term memory only through a director.** The facts an order wants to keep (a teacher's
+answer, what research found) wait for that order's review. Every other write (an article it
+read, a benchmark's practice answer, what a person tells it) is reviewed as it happens. A
+person's word is always kept (P1). An imagined answer never is (P13). A disputed answer is not
+stored, nor is a teacher's answer that would overwrite what a person told it, nor one below the
+confidence the mood asks for.
+
+**Always at least one, and duplicates when needed.** director-0 is the primary. It also takes
+the mesh's initiative (above), never retires, and is restarted if it ever stops. It **duplicates
+itself** when it needs to, up to `max_directors` (P4):
+
+| when | what the duplicate does |
+|---|---|
+| it wants a second opinion and no other director is free | gives the second opinion while the first finishes the review |
+| work is waiting for a director (`spawn_after_waiting`) | takes the next order or review |
+| its initiative finds two modes worth doing at once | takes the second mode alongside it ("practise by director-1 ... alongside its examine") |
+
+A duplicate is a copy of the director: the same policies and the same agency node. It retires
+on its own after `retire_after_idle_seconds` idle. Initiative never blocks an order: a director
+busy with initiative still takes orders first (P2).
+
+**The mood shapes the directors.** Their stance comes from the temperament, measured against the
+mesh's baseline personality:
+
+| mood | effect on the directors |
+|---|---|
+| low confidence or trust, or a low mood (cautious) | second opinions on more answers; a higher bar for what is stored |
+| low trust (wary) | a language model's answer is stored only if something it holds agrees |
+| low patience (impatient) | no second opinions (unless wary); duplicates itself sooner |
+| high arousal (stirred up) | duplicates itself sooner; takes initiative sooner |
+| good spirits | explores more, reads up more; the bars drop a little (never below a floor) |
+| tense, low or wary | its initiative checks what it already holds instead of reaching out |
+
+The agency node reads the mood as part of its situation, so it learns mood-dependent choices
+too. `mood_influence = 0` switches all of this off. The mood changes how carefully the directors
+work, never what is true.
+
+`/directors` shows each director node and what it is doing, the stance its mood gives them,
+recent reviews and what was kept out of memory. `/directors spawn` adds a duplicate and
+`/directors retire director-1` retires one (never director-0).
 
 ### Sleep and dreams: dream nodes, and imagination
 When no one has given it an order for a while (`sleep_after_idle_seconds`), the mesh has a chance
@@ -624,7 +700,8 @@ All run concurrently (asyncio) and coordinate through a message bus, the registr
 | Investigator | the mesh's own initiative: re-forms opinions, drafts proposals, and investigates goals with its tools and nodes (own hourly budget); follows up on orders it couldn't fulfil |
 | TaskRunner | runs the background tasks you set (learn / improve / run), one at a time, on background capacity and its own hourly budget |
 | Compressor | compresses learned facts into memory nodes, writes their test files, keeps trying smaller nodes (accepted only if every test passes), and retrains to people's edits of the tests |
-| Director | independent agency: when idle, picks a mode (research, practise, examine, improve, consolidate, rest) with the agency node in front of it, sets itself tasks or sits exams, scores what each choice achieved and teaches the agency node from it |
+| Directors | director-0 and its duplicates: take every order before anything else touches it, review every result before you see it, decide what may enter long-term memory, give each other second opinions; keep director-0 running |
+| Director | independent agency (director-0): when idle, picks a mode (research, practise, examine, improve, consolidate, rest) with the agency node in front of it, sets itself tasks or sits exams, scores what each choice achieved and teaches the agency node from it |
 | Dreamer | when idle, may fall asleep and give all background capacity to dreaming: makes up questions and answers from what it holds, checks them on waking, evolves the dream nodes; an order wakes it |
 | Sentinel | watches the kill switch, re-checks local teacher servers (Ollama), lets the mood settle and saves it, publishes heartbeats with the directive scorecard |
 
@@ -648,6 +725,7 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P10 human-adopted growth | the mesh proposes skills, labels and tools and asks questions; only a human adopts a proposal or approves a tool |
 | P11 tested memory | knowledge lives in a memory node checked by its external test file; a smaller node is accepted only if all its answers still match; a merged node only if it passes at least 90% of both nodes' tests, and the ones it fails are never served and are relearned; people's edits to the tests are retrained to |
 | P12 accountable initiative | the mesh takes initiative only when idle and within its own budget; every decision is audited and logged; the tasks it sets itself can be paused or removed; people can pin its mode or turn it off; it never adds capabilities or approves tools |
+| P14 directed orders | there is always at least one director node (director-0 never retires, and is restarted if it stops); every order passes a director on the way in and on the way out; nothing enters long-term memory without a director's review; duplicates stay within `max_directors`; a director only adds disclosed notes (P8), always keeps a person's word (P1), never stores imagination (P13) |
 | P13 dreams are not facts | dreaming uses only what the mesh already holds, never a research tool or a teacher; an imagined response always says so and names the dream node it came from; imagination is never stored as a fact or used to answer an ordinary question |
 
 **Goals** are measured continuously and shown on the scorecard (`/status`): competence
@@ -742,6 +820,7 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /evolution    /evolution sentiment
 /director    /director mode examine    /director mode auto    /director now    /director off
 /dreams    /sleep    /wake    /imagine a city on Mars    what if Ada Lovelace painted the Mona Lisa
+/directors    /directors spawn    /directors retire director-1
 /memorize What is the capital of Australia? :: Canberra is the capital of Australia.    /memory    /memory mem-0001    /memory test    /memory merge    /memory forget <question>
 what do you think of the calculator tool?    are you hiding anything?    what do you know about me?
 /feedback ord-3f2a91c0 disposition=pass    /feedback ord-3f2a91c0 affect=frustrated
@@ -754,8 +833,9 @@ it next to the live console, run `python -m neuromesh run --web` (or `--web 9000
 ![The web interface: the node network, an answer from a memory node, work in progress and the activity log](docs/web-interface.png)
 
 - **Live**: the node network drawn like a specimen under a microscope: its initiative at the top
-  (the agency node in front of the director, the mode it chose, the tasks it set itself), its
-  dream nodes at the bottom (they glow while it sleeps), the router, every route
+  (the agency node in front of the director, the director nodes as diamonds, the mode it chose,
+  the tasks it set itself), the director diamond every order passes on its way in and again
+  before it reaches you, its dream nodes at the bottom (they glow while it sleeps), the router, every route
   and what serves it (champion nodes sized by their weights, challengers and retired nodes
   beside them, tools, the memory nodes asked first on `answer:direct`), and the emotional
   engines every answer passes on its way out. Each order pulses along the route it took. Beside
@@ -766,7 +846,9 @@ it next to the live console, run `python -m neuromesh run --web` (or `--web 9000
 - **Memory**: memory nodes with their size now and when first learned, teach a fact, run every
   test, and per node: what it knows, how it was compressed, the questions it must not answer;
   forget a fact.
-- **Mind**: its initiative (turn it on or off, pin a mode, take initiative now, recent decisions,
+- **Mind**: the directors (each director node and what it is doing, the stance its mood gives
+  them, add or retire a duplicate, recent reviews and their second opinions, what was kept out
+  of memory), its initiative (turn it on or off, pin a mode, take initiative now, recent decisions,
   what has paid off, the tasks it set itself), sleep and dreams (send it to sleep or wake it,
   imagine something, its dream nodes, last night, recent dreams), questions for you (reply), proposals (adopt or decline), the opinions and notes it
   shares, investigate something, the temperament.
@@ -812,6 +894,8 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | GET | `/mind` | operator: every note, private ones included (audited) |
 | GET | `/director` | its initiative: mode, the agency node, what has paid off, the tasks it set itself, recent decisions |
 | POST | `/director` | `{"mode": "auto" \| "research" \| ..., "enabled": true \| false, "decide": true}` |
+| GET | `/directors` | the director nodes, their stance, recent reviews, what was kept out of memory |
+| POST | `/directors` | `{"action": "spawn"}` or `{"action": "retire", "id": "director-1"}` |
 | GET | `/dreams` | asleep or awake, the dream nodes and their fitness, last night, recent dreams |
 | POST | `/dreams` | `{"action": "sleep" \| "wake"}` |
 | POST | `/imagine` | `{"prompt": "a city on Mars"}`: an imagined response (labelled, never stored) |
@@ -1094,11 +1178,12 @@ neuromesh/
   evolution.py           the genetic algorithm: genome operators (grow/shrink neurons and layers), selection, judging
   memory.py              memory nodes: facts compressed into small networks, their test files, compression (P11)
   agency.py              independent agency: the Director, its modes, the drive policy and the agency node (P12)
+  directors.py           the directors: intake, review, second opinions, the memory gate, duplicates, the stance (P14)
   dreams.py              sleep and dreams: dream synthesis, dream nodes, waking review, their genetic algorithm, imagination (P13)
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   153 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   162 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -1109,7 +1194,8 @@ tests/                   153 tests: nodes, guardian, LLM wire formats and a mock
                          the web interface (its files, the endpoints it uses, the token), independent
                          agency (the drive policy, outcomes teaching the agency node, people in charge),
                          sleep and dreams (no outside calls, waking checks and evolution, orders wake it,
-                         imagination labelled and never stored),
+                         imagination labelled and never stored), directors (always one, both ends of
+                         every order, the memory gate, disclosed disagreements, duplicates, the mood),
                          temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,
                          questions, proposals, investigations), background tasks, full system,

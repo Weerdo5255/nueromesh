@@ -95,7 +95,13 @@ def mesh(system) -> dict:
                           "shape": n.shape(), "champion": champ is not None and n.id == champ.id}
                          for n in sorted(dr.nodes.values(), key=lambda n: -(n.fitness or 0))],
                "last": dr.last_night} if dr.enabled else None)
-    return {"dreams": dreams, "director": director, "router": _family(s, DISPATCH), "routes": routes, "waiting": waiting, "engines": engines,
+    pool = s.directors
+    st = pool.stance()
+    directors = {"mood": st.mood, "wary": st.wary, "limit": pool.limit,
+                 "nodes": [{"id": n.id, "role": n.role, "parent": n.parent, "doing": n.doing(),
+                            "busy": n.state != "idle" or bool(n.initiative), "handled": dict(n.handled)}
+                           for n in pool.nodes.values()]}
+    return {"directors": directors, "dreams": dreams, "director": director, "router": _family(s, DISPATCH), "routes": routes, "waiting": waiting, "engines": engines,
             "memory": memory, "memory_enabled": mem.enabled,
             "guard": {"checked": sum(a.decisions.values()), "changed": sum(v for k, v in a.decisions.items() if k != "pass"),
                       "held": len(a.held), "withheld": a.decisions.get("block", 0)} if a.enabled else None}

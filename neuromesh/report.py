@@ -134,7 +134,8 @@ def describe_event(ev: Event) -> str | None:
         return f"[memory]   {d['node']}.toml can't be read ({d['error'][:80]}); keeping the node as it is"
     if t == "agency.decided":
         did = f"; {d['summary']}" if d.get("summary") else ""
-        return f"[director] {d['mode']}: {d['why']} ({d['how']}){did}"
+        by = f" by {d['by']}" if d.get("by") else ""
+        return f"[director] {d['mode']}{by}: {d['why']} ({d['how']}){did}"
     if t == "agency.outcome":
         if d.get("value") is None:
             return f"[director] {d['task']} ({d['mode']}): {d['summary']}"
@@ -144,6 +145,20 @@ def describe_event(ev: Event) -> str | None:
         return f"[director] {d['by']} set its mode to {d['mode']}"
     if t == "agency.toggled":
         return f"[director] {d['by']} turned its initiative {'on' if d['on'] else 'off'}"
+    if t == "director.spawned":
+        return f"[director] {d['director']} duplicated from {d['parent']}: {d['reason']} ({d['running']} running)"
+    if t == "director.retired":
+        return f"[director] {d['director']} retired: {d['reason']} ({d['running']} running)"
+    if t == "director.restarted":
+        return f"[director] {d['director']} had stopped; restarted (there is always at least one director)"
+    if t == "director.consulted":
+        what = {"agrees": "agrees", "disagrees": f"disagrees ('{d.get('answer', '')[:60]}')",
+                "unchecked": "nothing to check against"}.get(d["verdict"], d["verdict"])
+        return f"[director] {d['asked']} asked {d['by']} for a second opinion on '{d.get('text', '')[:50]}' ({d['why']}): {what} - {d['source']}"
+    if t == "director.reviewed":
+        return f"[director] {d['director']} reviewed {d['order']}: {d['verdict']} ({d['mood']})"
+    if t == "director.memory":
+        return f"[director] {d['director']} did not store '{d['ask'][:60]}' in memory: {d['why']}"
     if t == "dream.sleep":
         idle = f" after {d['idle']}s with no orders" if d.get("idle") else ""
         return (f"[sleep]    fell asleep{idle} ({d['reason']}): dreaming about {d['material']} things it remembers; "
@@ -238,6 +253,13 @@ def render_status(st: dict) -> str:
         lines.append(f"dreams: {state}; {len(dr['nodes'])} dream nodes"
                      + (f", best {champ['id']} gen {champ['generation']} at {champ['fitness']:.0%}" if champ and champ["fitness"] is not None else "")
                      + f"; {dr['verified']} checked dreams kept")
+    ds = st.get("directors")
+    if ds:
+        busy = [n["id"] for n in ds["nodes"] if n["doing"] != "idle"]
+        lines.append(f"directors: {len(ds['nodes'])} running (at most {ds['limit']})"
+                     + (f", busy: {', '.join(busy)}" if busy else "") + f"; stance {ds['stance']['mood']}"
+                     + f"; {ds['counts'].get('review', 0)} reviewed, {ds['counts'].get('consult', 0)} second opinions, "
+                     f"{ds['counts'].get('memory.declined', 0)} facts kept out of memory")
     ag = st.get("agency")
     if ag:
         if not ag["enabled"]:

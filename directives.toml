@@ -61,6 +61,10 @@ text = "The mesh may take initiative on its own: choose what to learn or test ne
 id = "P13-dreams-are-not-facts"
 text = "Dreams use only what the mesh already holds: its memory nodes and retained passages, never a research tool, a teacher or the web. Sleep never delays an order: an order always wakes it (P2). Only dreams that check out against its own memory after waking are learned from, and an imagined response always says it is imagined and names the dream node it came from; it is never stored as a fact. (Enforced in code by neuromesh/dreams.py.)"
 
+[[prime]]
+id = "P14-directed-orders"
+text = "There is always at least one director node running: director-0 never retires and is restarted if it stops. Every order passes a director on the way in, and again on the way out after the tools and nodes have done their work; nothing enters long-term memory without a director's review. A director may duplicate itself within [directors] max_directors (P4); duplicates retire when idle. A director never changes an answer's words (P8): it may only add a disclosed note. It always keeps what a person tells it (P1) and never stores an imagined answer (P13). Its mood shapes how carefully it works, never what is true. (Enforced in code by neuromesh/directors.py.)"
+
 # ------------------------------------------------------------------------- goals
 [[goals]]
 id = "G1-competence"
@@ -381,3 +385,26 @@ default_timeout_s = 10
 # [tools.config.wikipedia]
 # language = "de"                                   # research German Wikipedia
 # user_agent = "MyMesh/1.0 (https://example.org; me@example.org)"   # Wikimedia asks for contact details
+
+[directors]
+# The directors: the mesh's executive. A director takes every order before anything else touches
+# it, and reviews the result after the tools, nodes and emotional engines, before you see it or
+# anything goes into long-term memory. There is always at least one director node (director-0,
+# which also takes the initiative above). It duplicates itself when work waits for a director,
+# when it wants a second opinion, or when its initiative finds two things worth doing at once; a
+# duplicate gives second opinions only from what the mesh already holds. The mood shapes how
+# carefully the directors work: low confidence or trust means more second opinions and a higher
+# bar for memory, low trust means a language model's answer is stored only if corroborated, low
+# patience skips second opinions, high arousal duplicates sooner, good spirits explore more.
+max_directors = 4                       # director-0 and its duplicates (P4); never fewer than one
+spawn_after_waiting = 2                 # pieces of work waiting for a director before it duplicates itself
+retire_after_idle_seconds = 30          # a duplicate idle this long retires
+consult = true                          # ask a duplicate for a second opinion when unsure
+second_opinion_threshold = 0.35         # a second opinion also weighs what memory nodes hold less surely
+review_confidence = 0.6                 # answers below this get a second opinion (the mood moves it)
+memory_confidence = 0.35                # facts from orders below this confidence are not stored (the mood moves it)
+wary_trust = 0.35                       # below this trust a language model's answer needs corroboration to be stored
+impatient_patience = 0.25               # below this patience it skips second opinions (unless wary)
+mood_influence = 1.0                    # how much the mood shapes the directors (0 = not at all)
+collaborate = true                      # a duplicate may take a second mode of initiative alongside director-0
+second_mode_min = 0.55                  # the drive a second mode needs

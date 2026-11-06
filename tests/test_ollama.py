@@ -191,7 +191,7 @@ class OllamaSystemTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_orders_are_taught_by_ollama_and_fall_back_when_it_goes_away(self):
         from neuromesh.runtime import System
-        from test_system import FAST, make_root
+        from test_system import FAST, make_root, work_trace
         MockOllama.models = [EMBED, LLAMA]
         server, url = start_server()
         events = []
@@ -206,10 +206,10 @@ class OllamaSystemTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(system.teachers.describe()["ollama"]["available"])
                 res = await system.submit("sentiment: I love this hotel")
                 self.assertEqual(res.output, "positive")
-                self.assertIn("via teacher:ollama", res.trace[-1])
+                self.assertIn("via teacher:ollama", work_trace(res)[-1])
                 res = await system.submit("what is 6 * 7")
                 self.assertEqual((res.route, res.output), ("tool:calculator", 42))
-                self.assertIn("teacher:ollama", res.trace[0])
+                self.assertIn("teacher:ollama", work_trace(res)[0])
                 sources = {e.source for e in system.store.examples("sentiment")}
                 self.assertIn("ollama", sources)
 
@@ -220,13 +220,13 @@ class OllamaSystemTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(events[-1].data["state"], "unreachable")
                 res = await system.submit("sentiment: the room was awful")
                 self.assertTrue(res.ok)
-                self.assertIn("teacher:heuristic", res.trace[-1])
+                self.assertIn("teacher:heuristic", work_trace(res)[-1])
             finally:
                 await system.stop()
 
     async def test_a_teacher_left_out_of_order_is_never_used(self):
         from neuromesh.runtime import System
-        from test_system import FAST, make_root
+        from test_system import FAST, make_root, work_trace
         MockOllama.models = [EMBED, LLAMA]
         MockOllama.requests.clear()
         server, url = start_server()
@@ -237,7 +237,7 @@ class OllamaSystemTests(unittest.IsolatedAsyncioTestCase):
                 await system.start()
                 try:
                     res = await system.submit("sentiment: I love this hotel")
-                    self.assertIn("teacher:heuristic", res.trace[-1])
+                    self.assertIn("teacher:heuristic", work_trace(res)[-1])
                     info = system.teachers.describe()["ollama"]
                     self.assertFalse(info["available"])
                     self.assertEqual(info["detail"], "not listed in teachers.order")

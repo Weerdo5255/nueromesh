@@ -317,7 +317,20 @@ def teacher_goal_lines(system, g: dict) -> list[Line]:
             mind_line(s, g),
             tasks_line(s, g),
             director_line(s, g),
-            dreams_line(s, g)]
+            dreams_line(s, g),
+            directors_line(s, g)]
+
+
+def directors_line(system, g: dict) -> Line:
+    pool = system.directors
+    st = pool.stance()
+    nodes = list(pool.nodes.values())
+    who = ", ".join(f"{n.id} {n.doing().split(':')[0]}" for n in nodes[:4]) + (" ..." if len(nodes) > 4 else "")
+    c = pool.counts
+    return (f"directors: {len(nodes)} running ({who}) {g['dot']} {st.mood}: "
+            + ("wary " if st.wary else "") + f"2nd opinions <{st.review_confidence:.0%}, memory >={st.memory_confidence:.0%} "
+            f"{g['dot']} {c.get('review', 0)} reviewed, {c.get('consult', 0)} 2nd opinions, "
+            f"{c.get('memory.declined', 0)} kept out of memory", "warn" if st.wary else "info")
 
 
 def dreams_line(system, g: dict) -> Line:
