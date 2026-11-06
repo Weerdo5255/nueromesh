@@ -19,7 +19,10 @@ networks that each come with an external test file you can read and edit, and wh
 shrinking for as long as every test still passes. And it has initiative of its own: when no one
 has asked it for anything, a director decides what to learn or test next (sit an exam, practise,
 read up on a topic, train a weak skill, check its memory), steered by an agency node that learns
-which choices pay off.
+which choices pay off. When it has had no orders for a while, it may fall asleep: all its spare
+capacity goes to dream nodes that make up questions and answers from what it already knows, with
+no outside help. On waking it checks those answers, and the dream nodes that dreamt best breed
+with a genetic algorithm. Awake, it uses them to imagine things, and always says so.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
@@ -283,6 +286,60 @@ and checks its memory nodes, all with no orders.
   `/director mode practise` pins a mode (`auto` hands the choice back to the agency node),
   `/director now` takes initiative now, and `/director off` turns it off (kept across restarts).
 - Its initiative never adds capabilities or approves tools (P10).
+
+### Sleep and dreams: dream nodes, and imagination
+When no one has given it an order for a while (`sleep_after_idle_seconds`), the mesh has a chance
+(`sleep_chance`, checked every `check_every_seconds`) to **fall asleep**. Asleep, all other
+background work waits (training, evaluation, research, tasks, initiative) and the background
+capacity goes to dreaming, up to `duty_cycle`. An order always wakes it at once (P2), and so do
+a halt and a pause (P1); otherwise it wakes after `sleep_max_seconds` or `dreams_per_night` dreams.
+
+**Dreams use only what it already holds**: the facts in its memory nodes and the passages it has
+retained. Dreaming never calls a research tool or a teacher. A short remembered answer is turned
+back into a statement first ("Who wrote Hamlet?" + "William Shakespeare" -> "William Shakespeare
+wrote Hamlet."). Each dream step makes up questions and answers about random pieces of it:
+
+| dream | how it is made | how it is checked on waking |
+|---|---|---|
+| remembered | a sentence with one name, number or date taken out: "Paris is the capital and largest city of France." -> "Paris is the capital and largest city of what?" | against the sentence it came from |
+| imagined | a remembered question with one name swapped for a name from something else it knows: "What is the capital and largest city of Japan?" | nobody told it the answer: confirmed only if a fact or passage it holds says the same (the answer, the name swapped in, and the same relation) |
+
+A **dream node** is a small neural network. Through the night, a working copy of the best dream
+node rehearses on some remembered dreams (`rehearse_share`) and answers the rest, and every
+imagined one, on its own. **On waking**, those answers are checked. The dreams that check out are
+kept (`keep_dreams`) and replayed in later nights. If any did, the dream nodes go through the
+**genetic algorithm** (the same operators as every other node): children of the night's dreamer,
+with more or fewer neurons and layers, train on every checked dream; each is judged on checked
+dreams held out from its training; the fittest `population` stay, and a larger node wins a tie.
+
+**Awake, it imagines.** "imagine ...", "what if ...", "dream up ..." or `/imagine` asks the best
+dream node what comes to mind for the prompt (never just the prompt back), then blends the prompt
+into the thing it remembers that is nearest to it:
+
+```
+> imagine the capital of Australia
+  I imagine Canberra.
+  Or perhaps Ottawa is the capital of Australia.
+  Source: imagined by dream node dream-0002 (generation 1, 90% of its checked dreams right); not a fact
+> what if Jane Austen painted the Mona Lisa
+  I imagine Leonardo da Vinci.
+  If Jane Austen took Leonardo da Vinci's place, then perhaps Leonardo da Vinci wrote Pride and Prejudice.
+> imagine a mountain on Jupiter
+  I imagine the Solar System.
+  Or perhaps Jupiter is 8,848.86 metres tall.
+```
+
+If the nearest thing it remembers relates other things the same way ("Ottawa is the capital of
+Canada"), the prompt's name is swapped in: an analogy. If it already relates the prompt's things
+("Leonardo da Vinci painted the Mona Lisa"), the prompt is a what-if, so it imagines what follows:
+the one it displaced takes the newcomer's place in turn.
+
+**Dreams are not facts (P13).** An imagined response always says it is imagined and names the
+dream node it came from. It is never stored in a memory node, never used to answer an ordinary
+question, and dreaming never reaches outside the mesh. Every sleep, waking and evolution is
+audited. `/dreams` shows whether it is asleep, its dream nodes and their fitness, last night and
+recent dreams; `/sleep` and `/wake` send it to sleep or wake it now; `[dreams] enabled = false`
+turns sleep off.
 
 ### Replies: the result first, in its own words
 Every reply leads with the result, said in the mesh's own words. Sources come after it, then
@@ -568,6 +625,7 @@ All run concurrently (asyncio) and coordinate through a message bus, the registr
 | TaskRunner | runs the background tasks you set (learn / improve / run), one at a time, on background capacity and its own hourly budget |
 | Compressor | compresses learned facts into memory nodes, writes their test files, keeps trying smaller nodes (accepted only if every test passes), and retrains to people's edits of the tests |
 | Director | independent agency: when idle, picks a mode (research, practise, examine, improve, consolidate, rest) with the agency node in front of it, sets itself tasks or sits exams, scores what each choice achieved and teaches the agency node from it |
+| Dreamer | when idle, may fall asleep and give all background capacity to dreaming: makes up questions and answers from what it holds, checks them on waking, evolves the dream nodes; an order wakes it |
 | Sentinel | watches the kill switch, re-checks local teacher servers (Ollama), lets the mood settle and saves it, publishes heartbeats with the directive scorecard |
 
 Background agents yield whenever an order is in flight and stay within a compute duty cycle.
@@ -590,6 +648,7 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P10 human-adopted growth | the mesh proposes skills, labels and tools and asks questions; only a human adopts a proposal or approves a tool |
 | P11 tested memory | knowledge lives in a memory node checked by its external test file; a smaller node is accepted only if all its answers still match; a merged node only if it passes at least 90% of both nodes' tests, and the ones it fails are never served and are relearned; people's edits to the tests are retrained to |
 | P12 accountable initiative | the mesh takes initiative only when idle and within its own budget; every decision is audited and logged; the tasks it sets itself can be paused or removed; people can pin its mode or turn it off; it never adds capabilities or approves tools |
+| P13 dreams are not facts | dreaming uses only what the mesh already holds, never a research tool or a teacher; an imagined response always says so and names the dream node it came from; imagination is never stored as a fact or used to answer an ordinary question |
 
 **Goals** are measured continuously and shown on the scorecard (`/status`): competence
 (held-out accuracy), autonomy (share of orders served by nodes), tool fluency, economy.
@@ -682,6 +741,7 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /challenges    /challenge run sample-sentiment    /challenge practice gsm8k 50    /challenge fetch sst2 500    /task challenge gsm8k every 30m
 /evolution    /evolution sentiment
 /director    /director mode examine    /director mode auto    /director now    /director off
+/dreams    /sleep    /wake    /imagine a city on Mars    what if Ada Lovelace painted the Mona Lisa
 /memorize What is the capital of Australia? :: Canberra is the capital of Australia.    /memory    /memory mem-0001    /memory test    /memory merge    /memory forget <question>
 what do you think of the calculator tool?    are you hiding anything?    what do you know about me?
 /feedback ord-3f2a91c0 disposition=pass    /feedback ord-3f2a91c0 affect=frustrated
@@ -694,7 +754,8 @@ it next to the live console, run `python -m neuromesh run --web` (or `--web 9000
 ![The web interface: the node network, an answer from a memory node, work in progress and the activity log](docs/web-interface.png)
 
 - **Live**: the node network drawn like a specimen under a microscope: its initiative at the top
-  (the agency node in front of the director, the mode it chose, the tasks it set itself), the router, every route
+  (the agency node in front of the director, the mode it chose, the tasks it set itself), its
+  dream nodes at the bottom (they glow while it sleeps), the router, every route
   and what serves it (champion nodes sized by their weights, challengers and retired nodes
   beside them, tools, the memory nodes asked first on `answer:direct`), and the emotional
   engines every answer passes on its way out. Each order pulses along the route it took. Beside
@@ -706,7 +767,8 @@ it next to the live console, run `python -m neuromesh run --web` (or `--web 9000
   test, and per node: what it knows, how it was compressed, the questions it must not answer;
   forget a fact.
 - **Mind**: its initiative (turn it on or off, pin a mode, take initiative now, recent decisions,
-  what has paid off, the tasks it set itself), questions for you (reply), proposals (adopt or decline), the opinions and notes it
+  what has paid off, the tasks it set itself), sleep and dreams (send it to sleep or wake it,
+  imagine something, its dream nodes, last night, recent dreams), questions for you (reply), proposals (adopt or decline), the opinions and notes it
   shares, investigate something, the temperament.
 - **Logs**: the activity log (search, filter by kind, hide routine work), the audit log, every
   event, and the family tree of every node ever built.
@@ -750,6 +812,9 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | GET | `/mind` | operator: every note, private ones included (audited) |
 | GET | `/director` | its initiative: mode, the agency node, what has paid off, the tasks it set itself, recent decisions |
 | POST | `/director` | `{"mode": "auto" \| "research" \| ..., "enabled": true \| false, "decide": true}` |
+| GET | `/dreams` | asleep or awake, the dream nodes and their fitness, last night, recent dreams |
+| POST | `/dreams` | `{"action": "sleep" \| "wake"}` |
+| POST | `/imagine` | `{"prompt": "a city on Mars"}`: an imagined response (labelled, never stored) |
 | GET | `/dashboard?after=<seq>` | everything the web interface's live view shows, in one request |
 | GET | `/log?after=<seq>&n=500&routine=0` | the activity log after a sequence number (`routine=0` hides routine work) |
 | GET | `/mesh`, `/memory?node=<id>` | the node network as a structure; one memory node's facts, history and tests |
@@ -1012,7 +1077,7 @@ neuromesh/
   live.py                live console (curses): network, work in progress, activity log, prompt
   activity.py            work-in-flight tracker and the activity log
   commands.py            orders and /commands shared by the live and plain consoles
-  agents.py              eleven of the agents (the Director is in agency.py, the challenge runner in challenges.py)
+  agents.py              eleven of the agents (the Director is in agency.py, the Dreamer in dreams.py, the challenge runner in challenges.py)
   nodes.py               NeuralNode + derivations (expand / widen / deepen / retune / fresh)
   backend.py             compute backends: numpy (CPU), PyTorch (CUDA / ROCm / MPS), CuPy
   bench.py               CPU vs GPU benchmark
@@ -1029,10 +1094,11 @@ neuromesh/
   evolution.py           the genetic algorithm: genome operators (grow/shrink neurons and layers), selection, judging
   memory.py              memory nodes: facts compressed into small networks, their test files, compression (P11)
   agency.py              independent agency: the Director, its modes, the drive policy and the agency node (P12)
+  dreams.py              sleep and dreams: dream synthesis, dream nodes, waking review, their genetic algorithm, imagination (P13)
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   146 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   153 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -1042,6 +1108,8 @@ tests/                   146 tests: nodes, guardian, LLM wire formats and a mock
                          90% rule, relearning what fails), people's edits, answers),
                          the web interface (its files, the endpoints it uses, the token), independent
                          agency (the drive policy, outcomes teaching the agency node, people in charge),
+                         sleep and dreams (no outside calls, waking checks and evolution, orders wake it,
+                         imagination labelled and never stored),
                          temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,
                          questions, proposals, investigations), background tasks, full system,

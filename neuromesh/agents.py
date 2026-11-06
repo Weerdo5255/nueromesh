@@ -30,7 +30,7 @@ import numpy as np
 from .guardian import Verdict
 from .knowledge import Hit
 from .nodes import Architecture, NeuralNode
-from .tasks import DIRECT, DISPATCH, Result, parse_order, skill_payload
+from .tasks import DIRECT, DISPATCH, Result, imagine_prompt, parse_order, skill_payload
 from .evolution import judge as evolution_judge
 from .tools import ACTIVE, APPROVED, PENDING, QUARANTINED, REJECTED, Tool, outputs_match
 from . import voice
@@ -88,6 +88,8 @@ class Orchestrator(Agent):
         sem = asyncio.Semaphore(self.sys.directives.orders.max_concurrent_orders)
         while not self.sys.stopping:
             order = await self.sys.orders.get()
+            if self.sys.dreams.asleep:  # orders first: an order always wakes it (P2)
+                self.sys.dreams.wake("an order arrived")
             await sem.acquire()
             self.sys.inflight += 1
             task = asyncio.create_task(self._handle(order, sem))
@@ -143,6 +145,10 @@ class Orchestrator(Agent):
                     res.ok, res.note = False, made[0]
                 res.trace.append(made[1])
                 return res
+        prompt = imagine_prompt(order.text) if s.dreams.enabled else None
+        if prompt is not None:  # "imagine ...": its dream nodes, labelled as imagination (P13)
+            self.imagine(res, prompt)
+            return res
         own = s.mind.answer_self(order.text, order.id)  # questions about the mesh's own opinions and notes (P9)
         if own is not None:
             res.route, res.output, res.confidence, res.served_by = "mind", own[0], 1.0, "explicit"
@@ -251,6 +257,23 @@ class Orchestrator(Agent):
             res.served_by = "mixed"
         return res
 
+
+    # ------------------------------------------------------------- imagining
+    def imagine(self, res: Result, prompt: str) -> None:
+        s = self.sys
+        res.route, res.knowledge = "dream:imagine", "imagined"
+        got = s.dreams.imagine(prompt) if prompt else None
+        if got is None:
+            res.ok = False
+            res.note = ("nothing comes to mind yet: it needs to sleep and dream first (/sleep)" if prompt
+                        else "imagine what? (imagine <something>)")
+            res.trace.append("no dream node could imagine anything")
+            return
+        res.output, res.answer, res.confidence, res.served_by = got["text"], got["text"], round(got["ideas"][0][1], 3), "nodes"
+        res.sources.append(got["source"])
+        res.trace.append(f"imagined by {got['node']}: ideas {', '.join(f'{i} ({c:.0%})' for i, c in got['ideas'])}"
+                         + (f"; blended into '{got['blended_from'][:80]}'" if got.get("blended_from") else ""))
+        s.bus.publish("dream.imagined", node=got["node"], prompt=prompt[:160], text=got["text"].split("\n")[0][:200])
 
     # ------------------------------------------------------------- knowledge
     def answer_from_memory_node(self, res: Result, rec) -> None:

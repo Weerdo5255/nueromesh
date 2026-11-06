@@ -150,3 +150,13 @@ def skill_payload(text: str) -> str:
         if len(head) < 60 and tail.strip():
             return tail.strip()
     return text
+
+
+_IMAGINE = re.compile(r"^\s*(?:please\s+)?(?:can you\s+)?(?:imagine|dream\s+(?:up|about|of)|daydream(?:\s+about)?|"
+                      r"what\s+if)\b[\s:,]*(?P<prompt>.*)$", re.I | re.S)
+
+
+def imagine_prompt(text: str) -> str | None:
+    """'imagine a city on Mars' -> 'a city on Mars'; None when the order is not asking it to imagine."""
+    m = _IMAGINE.match(text)
+    return m.group("prompt").strip() if m else None

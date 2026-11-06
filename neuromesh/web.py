@@ -88,7 +88,14 @@ def mesh(system) -> dict:
                 "last": {k: last.get(k) for k in ("mode", "target", "summary", "value", "ts")} if last else None,
                 "tasks": [{"id": t, "mode": r["mode"], "what": r["what"]} for t, r in d.self_tasks.items()
                           if t in s.tasks.tasks]}
-    return {"director": director, "router": _family(s, DISPATCH), "routes": routes, "waiting": waiting, "engines": engines,
+    dr = s.dreams
+    champ = dr.champion() if dr.enabled else None
+    dreams = ({"asleep": dr.asleep, "tonight": dr.night_dreams if dr.asleep else 0,
+               "nodes": [{"id": n.id, "generation": n.generation, "weights": n.weights, "fitness": n.fitness,
+                          "shape": n.shape(), "champion": champ is not None and n.id == champ.id}
+                         for n in sorted(dr.nodes.values(), key=lambda n: -(n.fitness or 0))],
+               "last": dr.last_night} if dr.enabled else None)
+    return {"dreams": dreams, "director": director, "router": _family(s, DISPATCH), "routes": routes, "waiting": waiting, "engines": engines,
             "memory": memory, "memory_enabled": mem.enabled,
             "guard": {"checked": sum(a.decisions.values()), "changed": sum(v for k, v in a.decisions.items() if k != "pass"),
                       "held": len(a.held), "withheld": a.decisions.get("block", 0)} if a.enabled else None}

@@ -23,6 +23,7 @@ FAST = {
     "temperament": {"enabled": False},  # answers unshaped, so tests can compare outputs (see test_temperament)
     "memory": {"enabled": False},       # answers come from where each test expects (see test_memory)
     "agency": {"enabled": False},       # no initiative of its own unless a test asks (see test_agency)
+    "dreams": {"enabled": False},       # it does not fall asleep unless a test asks (see test_dreams)
 }
 
 

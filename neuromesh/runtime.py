@@ -15,6 +15,7 @@ import numpy as np
 
 from .activity import ActivityLog, ActivityTracker
 from .agency import AgencyTeacher, Director
+from .dreams import DreamBank, Dreamer
 from .agents import (Architect, Compressor, Curator, Evaluator, Explorer, Investigator, Orchestrator, Researcher,
                      Sentinel, TaskRunner, Trainer)
 from .background import BackgroundTasks
@@ -94,6 +95,7 @@ class System:
         self.evolution = Evolution(self)    # the genetic algorithm that breeds each capability's challengers
         self.bus.listen(self.evolution.on_event)
         self.memory = MemoryBank(self)      # what it learns, compressed into memory nodes checked by test files
+        self.dreams = DreamBank(self)       # sleep, dream nodes, and imagination
 
         self.orders: asyncio.Queue = asyncio.Queue()
         self.inflight = 0
@@ -112,7 +114,7 @@ class System:
         self.director = Director(self)  # independent agency: the agency node chooses its mode
         self.agents = [self.orchestrator, Architect(self), Trainer(self), Evaluator(self), Curator(self),
                        Explorer(self), self.researcher, self.investigator, TaskRunner(self), Compressor(self),
-                       self.director, Sentinel(self)]
+                       self.director, Dreamer(self), Sentinel(self)]
 
     # ------------------------------------------------------------- lifecycle
     async def start(self) -> "System":
@@ -149,8 +151,8 @@ class System:
     async def __aexit__(self, *exc) -> None:
         await self.stop()
 
-    async def background_slot(self) -> None:
-        while self.inflight > 0 or not self.guardian.background_allowed():
+    async def background_slot(self, dreaming: bool = False) -> None:
+        while self.inflight > 0 or not self.guardian.background_allowed(dreaming=dreaming):
             await asyncio.sleep(0.02)
 
     # ---------------------------------------------------------------- orders
@@ -598,6 +600,7 @@ class System:
             "evolution": self.evolution.status(),
             "memory": self.memory.status(),
             "agency": self.director.status(),
+            "dreams": self.dreams.status(),
             "scorecard": self.scorecard(),
             "agents": {a.name: dict(a.stats) for a in self.agents},
         }

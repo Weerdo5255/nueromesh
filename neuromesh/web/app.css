@@ -73,6 +73,7 @@ h1 { font-size: 21px; font-weight: 750; letter-spacing: -0.01em; }
 }
 .state.running { background: color-mix(in srgb, var(--good) 14%, transparent); color: var(--good); }
 .state.paused { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.state.asleep { background: color-mix(in srgb, var(--hema) 16%, transparent); color: var(--hema); }
 .state.halted, .state.down { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
 .controls { grid-area: controls; display: flex; gap: 8px; flex-wrap: wrap; }
 .tools-right { grid-area: right; display: flex; gap: 12px; align-items: center; }
@@ -153,6 +154,10 @@ main { padding: 18px 24px 40px; }
 .m-mem { fill: color-mix(in srgb, var(--hema) 22%, transparent); stroke: var(--hema); stroke-width: 1.4; }
 .m-mem.learning { stroke: var(--warn); fill: color-mix(in srgb, var(--warn) 18%, transparent); }
 .m-pulse { fill: var(--eosin); }
+.m-dream { fill: color-mix(in srgb, var(--eosin) 70%, var(--hema)); }
+.m-dream-alt { fill: none; stroke: color-mix(in srgb, var(--eosin) 70%, var(--hema)); stroke-width: 1.5; }
+.m-dream.asleep, .m-dream-alt.asleep { animation: dreaming 2.4s ease-in-out infinite; }
+@keyframes dreaming { 50% { opacity: .35; } }
 .m-lane { stroke: var(--rule); stroke-width: 1; }
 
 /* lists that are not cards */

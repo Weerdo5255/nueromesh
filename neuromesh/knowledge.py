@@ -215,6 +215,11 @@ class KnowledgeStore:
         row = self.db.execute(f"SELECT {self._COLS} FROM kn_documents WHERE id=?", (doc_id,)).fetchone()
         return self._doc(row) if row else None
 
+    def sample_passages(self, n: int = 50) -> list[tuple[str, str]]:
+        """Random retained passages (title, text): what the mesh dreams about besides its memory nodes."""
+        table = "kn_passages" if self.fts else "kn_passages_plain"
+        return [(r[0], r[1]) for r in self.db.execute(f"SELECT title, text FROM {table} ORDER BY random() LIMIT ?", (n,))]
+
     def documents(self, limit: int = 20) -> list[Document]:
         rows = self.db.execute(f"SELECT {self._COLS} FROM kn_documents ORDER BY fetched_at DESC LIMIT ?",
                                (limit,)).fetchall()

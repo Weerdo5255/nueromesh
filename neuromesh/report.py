@@ -144,6 +144,25 @@ def describe_event(ev: Event) -> str | None:
         return f"[director] {d['by']} set its mode to {d['mode']}"
     if t == "agency.toggled":
         return f"[director] {d['by']} turned its initiative {'on' if d['on'] else 'off'}"
+    if t == "dream.sleep":
+        idle = f" after {d['idle']}s with no orders" if d.get("idle") else ""
+        return (f"[sleep]    fell asleep{idle} ({d['reason']}): dreaming about {d['material']} things it remembers; "
+                f"everything else waits, and an order wakes it")
+    if t == "dream.wake":
+        return (f"[sleep]    woke up ({d['reason']}) after {d['seconds']:g}s: {d['dreams']} dreams, {d['rehearsed']} rehearsed, "
+                f"{d['answered']} answered on its own ({d['imagined']} imagined)")
+    if t == "dream.dreamt":
+        return f"[dream]    {d['kind']}: '{_cut(d['question'], 70)}' -> '{_cut(d['answer'], 40)}' ({d['confidence']:.0%})"
+    if t == "dream.reviewed":
+        return (f"[dream]    checked last night's dreams against its own memory: {d['remembered_correct']}/{d['remembered']} "
+                f"remembered answers right, {d['imagined_confirmed']}/{d['imagined']} imagined ones confirmed"
+                + ("" if d["correct"] else "; nothing checked out, so the dreams are let go"))
+    if t == "dream.evolved":
+        was = f" (was {d['was']} at {d['was_fitness']:.0%})" if d.get("was") and d.get("was_fitness") is not None else ""
+        return (f"[dream]    the genetic algorithm on the dream nodes: {d['node']} (generation {d['generation']}, {d['shape']}) "
+                f"dreams best, {d['fitness']:.0%} on {d['tested']} checked dreams{was}; {d['population']} kept")
+    if t == "dream.imagined":
+        return f"[dream]    imagined for '{_cut(d['prompt'], 50)}': {_cut(d['text'], 90)} ({d['node']})"
     if t == "teacher.status":
         verb = "ready" if d["state"] == "ready" else f"unavailable ({d['state']})"
         return f"[teacher]  {d['teacher']} {verb}: {d['detail']}"
@@ -212,6 +231,13 @@ def render_status(st: dict) -> str:
             if sm["champion"]:
                 parts.append(f"{cap} gen {sm['champion']['generation']} {'x'.join(map(str, sm['champion']['hidden']))}")
         lines.append(f"evolution (grows {ev['growth_bias']:.0%} of the time): " + ", ".join(parts))
+    dr = st.get("dreams")
+    if dr and dr["enabled"]:
+        champ = next((n for n in dr["nodes"] if n["champion"]), None)
+        state = f"asleep, dreaming ({dr['dreams_tonight']} dreams so far)" if dr["asleep"] else "awake"
+        lines.append(f"dreams: {state}; {len(dr['nodes'])} dream nodes"
+                     + (f", best {champ['id']} gen {champ['generation']} at {champ['fitness']:.0%}" if champ and champ["fitness"] is not None else "")
+                     + f"; {dr['verified']} checked dreams kept")
     ag = st.get("agency")
     if ag:
         if not ag["enabled"]:

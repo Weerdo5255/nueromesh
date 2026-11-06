@@ -57,6 +57,10 @@ text = "Knowledge compressed into a memory node is checked by that node's extern
 id = "P12-accountable-initiative"
 text = "The mesh may take initiative on its own: choose what to learn or test next, assign itself background tasks, and sit exams, but only when idle (P2), within its own budget (P4), and in plain view: every decision is audited and logged, every task it sets itself can be paused or removed by a person, and a person can pin its mode or turn its initiative off. Its initiative never adds capabilities or approves tools (P10). (Enforced in code by neuromesh/agency.py.)"
 
+[[prime]]
+id = "P13-dreams-are-not-facts"
+text = "Dreams use only what the mesh already holds: its memory nodes and retained passages, never a research tool, a teacher or the web. Sleep never delays an order: an order always wakes it (P2). Only dreams that check out against its own memory after waking are learned from, and an imagined response always says it is imagined and names the dream node it came from; it is never stored as a fact. (Enforced in code by neuromesh/dreams.py.)"
+
 # ------------------------------------------------------------------------- goals
 [[goals]]
 id = "G1-competence"
@@ -241,6 +245,27 @@ verify_after_seconds = 3600             # memory nodes count as unverified after
 reexam_after_seconds = 21600            # a suite's exam is due again after this long
 low_score = 0.8                         # exam scores below this make practice worthwhile
 retry_after_seconds = 1800              # a topic, suite or skill that did not pay off rests this long
+
+[dreams]
+# Sleep and dreams: when there have been no orders for a while, it may fall asleep. Asleep, all
+# other background work waits and dream nodes make up questions and answers from what it already
+# knows (its memory nodes and retained passages - never a research tool or a teacher). Upon
+# waking, the answers are checked against its own memory; if any check out, the dream nodes go
+# through a genetic algorithm. Awake, "imagine ..." uses the best dream node (always labelled).
+enabled = true
+sleep_after_idle_seconds = 60           # quiet time (no orders from people) before it may fall asleep
+sleep_chance = 0.3                      # the chance, at each check, that it falls asleep then
+check_every_seconds = 30
+sleep_max_seconds = 120                 # longest sleep; an order always wakes it at once
+duty_cycle = 0.9                        # the background capacity dreaming may use while asleep
+dreams_per_step = 24
+dreams_per_night = 600
+rehearse_share = 0.6                    # remembered dreams it rehearses; it answers the rest on its own
+imagine_share = 0.3                     # dreams that swap in a name from something else it knows
+population = 4                          # dream nodes kept by the genetic algorithm
+children = 3                            # children bred on each waking
+vocabulary = 400                        # most answers a dream node can give
+imagine_threshold = 0.2                 # lowest confidence for an idea it imagines
 
 [challenges]
 # Open-source LLM benchmarks as a teacher. Each suite is split once into practice (graded, and

@@ -152,6 +152,7 @@
     $("#name").textContent = st.name;
     const chip = $("#state");
     if (st.halted) { chip.textContent = `Halted: ${cut(st.halt_reason, 60)}`; chip.className = "state halted"; }
+    else if (st.dreams && st.dreams.asleep) { chip.textContent = `Asleep, dreaming (${st.dreams.dreams_tonight})`; chip.className = "state asleep"; }
     else if (st.background_paused) { chip.textContent = "Background paused"; chip.className = "state paused"; }
     else { chip.textContent = "Running"; chip.className = "state running"; }
 
@@ -292,7 +293,7 @@
     const lane = top + n * rowH + 42;
     const longest = Math.max(10, ...m.routes.map(r => Math.min(26, r.route.length)));
     const label = 300, target = label + Math.round(longest * 7.8) + 30;
-    return { W: width, H: lane + 34, rowH, top, yMid, lane, routerR, X: { inlet: 16, router: 160, label, target },
+    return { W: width, H: lane + 34 + (m.dreams ? 56 : 0), rowH, top, yMid, lane, routerR, X: { inlet: 16, router: 160, label, target },
              y: i => top + i * rowH + rowH / 2, chars: x => Math.max(12, Math.floor((width - x - 12) / 6.9)) };
   }
   function routePath(g, i) {
@@ -431,6 +432,24 @@
       });
       svg.append(sv("line", { x1: x - 34, x2: x - 12, y1: ly, y2: ly, class: "m-edge" }));
       svg.append(sv("text", { x: x - 4, y: ly + 4.5, class: "m-text" }, "you"));
+    }
+    // dreams: the dream nodes it sleeps and imagines with
+    if (m.dreams) {
+      const dy = ly + 56, dm = m.dreams;
+      svg.append(sv("line", { x1: 16, x2: g.W - 16, y1: dy - 28, y2: dy - 28, class: "m-lane" }));
+      svg.append(sv("text", { x: X.inlet, y: dy + 4, class: "m-sub" }, "dreams"));
+      let x = X.router - 10;
+      dm.nodes.slice(0, 6).forEach(n => {
+        const rr = Math.max(5, Math.min(12, 3 + 1.6 * Math.log2(Math.max(1, n.weights / 4000))));
+        svg.append(sv("circle", { cx: x, cy: dy, r: rr, class: (n.champion ? "m-dream" : "m-dream-alt") + (dm.asleep ? " asleep" : "") },
+          sv("title", {}, `${n.id}: generation ${n.generation}, ${n.shape}, ${num(n.weights)} weights; ${n.fitness === null ? "not checked yet" : pct(n.fitness) + " of its checked dreams right"}${n.champion ? "\nthe best dreamer: imagination uses it" : ""}`)));
+        x += rr * 2 + 6;
+      });
+      const best = dm.nodes.find(n => n.champion);
+      const text = dm.asleep ? `asleep, dreaming: ${dm.tonight} dreams tonight (everything else waits)`
+        : best ? `awake; ${best.id} dreams best (generation ${best.generation}${best.fitness === null ? "" : `, ${pct(best.fitness)} of checked dreams right`}); "imagine ..." uses it`
+        : "no dream nodes yet: it dreams the first time it sleeps";
+      svg.append(sv("text", { x: Math.max(x + 8, X.label), y: dy + 4.5, class: dm.asleep ? "m-route hit" : "m-text" }, cut(text, g.chars(Math.max(x + 8, X.label)))));
     }
     return { svg, g };
   }
@@ -734,6 +753,40 @@
           h("h3", { style: "margin-top:14px" }, "Tasks it set itself"), tasks.length ? h("ul", { class: "rows" }, tasks) : h("p", { class: "dim" }, "None right now."))));
   }
 
+  function dreamsPanel(dr) {
+    if (!dr || !dr.enabled) return null;
+    const prompt = h("input", { type: "text", placeholder: "a city on Mars, what if Ada Lovelace painted the Mona Lisa, ...", "aria-label": "What to imagine" });
+    const imagine = h("form", { class: "row", onsubmit: async e => {
+      e.preventDefault();
+      if (!prompt.value.trim()) return;
+      const b = e.target.querySelector("button");
+      b.disabled = true;
+      try { showAnswer({ text: `imagine ${prompt.value}`, order: await api("/imagine", { prompt: prompt.value.trim(), source: "web" }) }); prompt.value = ""; window.scrollTo(0, 0); }
+      catch (err) { toast(err.message); } finally { b.disabled = false; }
+    } }, prompt, h("button", { type: "submit", class: "primary" }, "Imagine"));
+    const ln = dr.last_night || {};
+    const state = dr.asleep ? `Asleep for ${span(dr.slept_for)}, dreaming: ${dr.dreams_tonight} dreams so far. Everything else waits; an order wakes it.`
+      : `Awake for ${span(dr.awake_for)}. When there are no orders for a while it may fall asleep and dream about what it already knows, with no research tools or teachers.`;
+    const nodes = dr.nodes.map(n => h("li", { class: "ask" }, h("p", {}, n.champion ? h("b", {}, `${n.id} (dreams best)`) : h("b", {}, n.id),
+      ` generation ${n.generation}, ${shape(n.shape)}, ${num(n.weights)} weights: `, h("span", { class: n.fitness === null ? "dim" : "ok" }, n.fitness === null ? "not checked yet" : `${pct(n.fitness)} of checked dreams right`)),
+      n.parent ? h("p", { class: "why" }, `from ${n.parent}${n.changes.length ? ": " + n.changes.join("; ") : ""}`) : null));
+    const recent = dr.recent.slice().reverse().map(r => h("li", { class: "ask" }, h("p", {}, h("span", { class: "dim small" }, `${r.kind} `), `“${r.question}”`),
+      h("p", { class: "why" }, `it answered “${r.answer}” (${pct(r.confidence)}): `, h("span", { class: r.verdict === "correct" ? "ok" : r.verdict === "wrong" ? "no" : "dim" },
+        r.verdict === "correct" ? "checked out" : r.verdict === "wrong" ? `wrong${r.truth ? `, it was “${r.truth}”` : ""}` : r.verdict === "nothing" ? "nothing came to mind" : "nothing it knows confirms it"))));
+    return h("div", { class: "section" }, h("h2", {}, "Dreams"),
+      h("p", { class: "lede" }, state),
+      h("div", { class: "row" },
+        dr.asleep ? h("button", { type: "button", class: "primary", onclick: e => act(e.target, () => api("/dreams", { action: "wake", by: "web" }), "Awake") }, "Wake up")
+          : h("button", { type: "button", onclick: e => act(e.target, () => api("/dreams", { action: "sleep", by: "web" }), r => r.message) }, "Sleep now")),
+      h("h3", { style: "margin-top:14px" }, "Imagine"), imagine,
+      h("p", { class: "dim small" }, "Its best dream node suggests what comes to mind and blends it into something it remembers. Imagined answers are labelled and never stored as facts."),
+      h("div", { class: "cols", style: "margin-top:10px" },
+        h("div", {}, h("h3", {}, "Dream nodes"), nodes.length ? h("ul", { class: "rows" }, nodes) : h("p", { class: "dim" }, "None yet: the first one is born the first time it sleeps."),
+          ln.dreams ? h("p", { class: "small" }, `Last night: ${ln.dreams} dreams (${ln.rehearsed} rehearsed); ${ln.remembered_correct}/${ln.remembered} remembered answers right, ${ln.imagined_confirmed}/${ln.imagined} imagined ones confirmed by its own memory` +
+            (ln.evolved ? `; the genetic algorithm made ${ln.champion} the best dreamer (${pct(ln.fitness)}).` : "; nothing checked out, so no evolution.")) : null),
+        h("div", {}, h("h3", {}, "Recent dreams"), recent.length ? h("ul", { class: "rows" }, recent) : h("p", { class: "dim" }, "None yet."))));
+  }
+
   function renderMind() {
     const host = $("#mind");
     if (busy(host)) return;
@@ -756,6 +809,7 @@
           h("button", { type: "button", onclick: e => act(e.target, () => api("/decline", { proposal_id: p.id, by: "web" }), r => r.message) }, "Decline")));
     });
     fill(host,
+      dreamsPanel(st.dreams),
       initiative(st.agency),
       h("div", { class: "cols" },
         h("div", {},

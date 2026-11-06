@@ -63,6 +63,8 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, {**system.evolution.status(), "archive": system.evolution.archive}
         if path == "/director":
             return 200, system.director.status()
+        if path == "/dreams":
+            return 200, system.dreams.status()
         if path == "/memory":
             if query.get("node"):
                 node = web.memory_node(system, query["node"])
@@ -140,6 +142,18 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                     return 400, {"ok": False, "message": "its initiative is off or the mesh is halted"}
                 out["decision"] = await d.decide(force=True)
             return 200, {"ok": True, **out, "status": d.status()}
+        if path == "/dreams":  # {"action": "sleep" | "wake"}
+            action, by = body.get("action", ""), body.get("by", "api-operator")
+            if action == "sleep":
+                ok, msg = system.dreams.fall_asleep("asked to", by=by)
+                return (200 if ok else 400), {"ok": ok, "message": msg, "status": system.dreams.status()}
+            if action == "wake":
+                ok = system.dreams.wake("woken by a person", by=by)
+                return (200 if ok else 400), {"ok": ok, "message": "awake" if ok else "it is not asleep"}
+            return 400, {"ok": False, "message": "action is sleep or wake"}
+        if path == "/imagine":  # {"prompt": "a city on Mars"}
+            result = await system.submit(f"imagine {body.get('prompt', '')}", source=body.get("source", "api"))
+            return 200, result.public_dict()
         if path == "/memorize":  # {"ask": "...", "answer": "..."}
             made = system.memory.learn(body.get("ask", ""), body.get("answer", ""), body.get("source") or "the operator",
                                        by=body.get("by", "api"), kind="people")

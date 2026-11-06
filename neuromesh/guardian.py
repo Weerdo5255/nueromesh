@@ -60,6 +60,7 @@ class Guardian:
         self.store = store
         self.bus = bus
         self.stop_file = Path(state_dir) / "STOP"
+        self.sleeping = False  # the mesh is asleep and dreaming (dreams.py)
         self.halted = False
         self.halt_reason = ""
         self.paused = False
@@ -119,9 +120,17 @@ class Guardian:
             self._busy.popleft()
         return sum(s for _, s in self._busy) / window
 
-    def background_allowed(self) -> bool:
-        return (self.d.background.enabled and not self.halted and not self.paused
-                and self.duty_cycle() < self.d.background.max_duty_cycle)
+    def background_allowed(self, dreaming: bool = False) -> bool:
+        """Background work may run (P2). While the mesh sleeps, all of it waits except dreaming,
+        which may use the dream duty cycle."""
+        if not self.d.background.enabled or self.halted or self.paused:
+            return False
+        if self.sleeping and not dreaming:
+            return False
+        limit = self.d.background.max_duty_cycle
+        if dreaming:
+            limit = max(limit, self.d.dreams.duty_cycle)
+        return self.duty_cycle() < limit
 
     # ------------------------------------------------- P3: approved tools only
     def authorize_tool(self, manifest) -> Decision:

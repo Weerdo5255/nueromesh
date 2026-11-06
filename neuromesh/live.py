@@ -62,6 +62,8 @@ def header_text(system, g: dict, extra: str = "") -> tuple[str, str]:
     built = len(reg.lineage)
     if s.guardian.halted:
         state, style = f"HALTED: {s.guardian.halt_reason}", "bad"
+    elif s.dreams.asleep:
+        state, style = f"ASLEEP, DREAMING ({s.dreams.night_dreams} dreams)", "warn"
     elif s.guardian.paused:
         state, style = "BACKGROUND PAUSED", "warn"
     else:
@@ -314,7 +316,23 @@ def teacher_goal_lines(system, g: dict) -> list[Line]:
             temperament_line(s, g),
             mind_line(s, g),
             tasks_line(s, g),
-            director_line(s, g)]
+            director_line(s, g),
+            dreams_line(s, g)]
+
+
+def dreams_line(system, g: dict) -> Line:
+    d = system.dreams
+    if not d.enabled:
+        return ("dreams:   off", "dim")
+    champ = d.champion()
+    best = (f"best dreamer {champ.id} gen {champ.generation}" + (f" ({champ.fitness:.0%})" if champ.fitness is not None else "")
+            if champ else "no dream nodes yet")
+    if d.asleep:
+        return (f"dreams:   asleep, dreaming {g['dot']} {d.night_dreams} dreams tonight {g['dot']} {best} {g['dot']} /wake", "warn")
+    ln = d.last_night
+    last = (f"last night {ln.get('correct', 0)} of {ln.get('remembered', 0) + ln.get('imagined', 0)} answers checked out"
+            if ln else "has not slept yet")
+    return (f"dreams:   awake {g['dot']} {best} {g['dot']} {last} {g['dot']} /sleep {g['dot']} imagine ...", "info")
 
 
 def director_line(system, g: dict) -> Line:

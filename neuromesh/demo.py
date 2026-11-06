@@ -14,7 +14,9 @@ of behaviour fit into well under a minute:
                       into one; an operator edits a test
  6. initiative      - with no orders, the director decides on its own what to test and learn:
                       it sits benchmark exams, practises, and sets itself tasks to improve skills
- 7. kill switch     - the operator halts everything with a STOP file
+ 7. sleep           - it falls asleep and dreams up questions and answers from what it knows;
+                      on waking it checks them and evolves its dream nodes; then it imagines
+ 8. kill switch     - the operator halts everything with a STOP file
 """
 from __future__ import annotations
 
@@ -45,6 +47,7 @@ DEMO_OVERRIDES = {
     "temperament": {"enabled": False},  # scored on raw answers; the temperament has its own tests
     "memory": {"interval_seconds": 0.05, "sync_seconds": 0.25, "facts_per_node": 4, "merge_every_seconds": 0.5},
     "agency": {"enabled": False},  # switched on for the initiative phase, so the scored phases compare
+    "dreams": {"enabled": False},  # switched on for the sleep phase
 }
 
 FACTS = [("What is the capital of Australia?", "Canberra is the capital of Australia."),
@@ -293,6 +296,19 @@ async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7,
         from .commands import director_lines
         for line in director_lines(system)[1:3]:
             print(f"  {line.strip()}")
+
+        demo.say("Phase 8 - sleep: it dreams about what it knows, checks its dreams on waking, then imagines")
+        dp = system.directives.dreams
+        dp.enabled, dp.sleep_after_idle_seconds, dp.check_every_seconds, dp.sleep_chance = True, 0.5, 0.3, 1.0
+        dp.sleep_max_seconds, dp.dreams_per_night, dp.ga_epochs = 5, 400, 40
+        evolved = lambda: any(e.topic == "dream.evolved" for e in system.bus.recent("dream.*", 300))  # noqa: E731
+        await demo.wait_for(evolved, 40, "a night's dreams to be checked")
+        dp.sleep_chance = 0.0
+        system.dreams.wake("the demo moves on")
+        for prompt in ("imagine the capital of Australia", "what if Jane Austen painted the Mona Lisa",
+                       "imagine a mountain on Jupiter"):
+            res = await system.submit(prompt)
+            print(f"  > {prompt}\n      " + res.summary().replace("\n", "\n      "))
 
         demo.say("Results")
         print(f"{'phase':<14} {'orders':>6} {'correct':>8} {'by nodes':>9} {'by teachers':>12} {'mixed':>6} {'avg ms':>7}")

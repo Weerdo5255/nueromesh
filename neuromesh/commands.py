@@ -36,6 +36,9 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /director                       its own initiative: mode, who chose it, the tasks it set itself, what paid off
   /director mode <auto|research|practise|examine|improve|consolidate|rest>   pin a mode (auto: the agency node chooses)
   /director now | on | off        take initiative now, or turn its initiative on or off
+  /dreams                         sleep and dreams: the dream nodes, last night's dreams, what checked out
+  /sleep    /wake                 send it to sleep (dreaming) now, or wake it
+  /imagine <prompt>               its dream nodes imagine something (also: "imagine ...", "what if ...")
   /challenges                     benchmark suites, exam scores and trends
   /challenge run <suite> [n]      sit the exam now (graded, never learned from)
   /challenge practice <suite> [n] practise now: every graded answer teaches the mesh
@@ -303,6 +306,33 @@ async def director_command(system, rest: str) -> list[str]:
     return director_lines(system)
 
 
+def dream_lines(system) -> list[str]:
+    d = system.dreams
+    if not d.enabled:
+        return ["dreams are off ([dreams] enabled = false in the directives)"]
+    st = d.status()
+    if st["asleep"]:
+        head = f"dreams: asleep for {st['slept_for']}s, dreaming ({st['dreams_tonight']} dreams so far; everything else waits)"
+    else:
+        head = (f"dreams: awake for {st['awake_for']}s; it may fall asleep after {d.pol.sleep_after_idle_seconds:g}s with no "
+                f"orders (chance {d.pol.sleep_chance:.0%} each {d.pol.check_every_seconds:g}s)")
+    out = [head, f"  {st['verified']} checked dreams kept; {st.get('sleeps', 0)} sleeps, {st.get('dreams', 0)} dreams, "
+                 f"{st.get('evolutions', 0)} evolutions, {st.get('imagined', 0)} things imagined"]
+    for n in st["nodes"]:
+        fit = "-" if n["fitness"] is None else f"{n['fitness']:.0%}"
+        out.append(f"  {'*' if n['champion'] else ' '} {n['id']} gen {n['generation']} {n['shape']} ({n['weights']:,} weights): "
+                   f"{fit} of checked dreams right" + (f" - from {n['parent']}" if n["parent"] else ""))
+    ln = st["last_night"]
+    if ln:
+        out.append(f"  last night: {ln['dreams']} dreams ({ln['rehearsed']} rehearsed); {ln['remembered_correct']}/{ln['remembered']} "
+                   f"remembered answers right, {ln['imagined_confirmed']}/{ln['imagined']} imagined ones confirmed by its own memory"
+                   + (f"; evolved: {ln['champion']} gen {ln['generation']} at {ln['fitness']:.0%}" if ln.get("evolved") else
+                      "; nothing checked out, so no evolution"))
+    for r in st["recent"][-6:]:
+        out.append(f"    {r['kind']:<10} {r['question'][:60]!r} -> {r['answer'][:40]!r} [{r['verdict']}]")
+    return out
+
+
 def _pct(x) -> str:
     return "-" if x is None else f"{x:.0%}"
 
@@ -504,6 +534,17 @@ async def execute(system, line: str) -> Output:
             out = evolution_lines(system, rest)
         elif cmd == "memory":
             out = await memory_command(system, rest)
+        elif cmd in ("dreams", "dream"):
+            out = dream_lines(system)
+        elif cmd == "sleep":
+            ok, msg = system.dreams.fall_asleep("asked to", by=os.environ.get("USER", "operator"))
+            out = [f"  {msg}"]
+        elif cmd == "wake":
+            out = ["  awake" if system.dreams.wake("woken by a person", by=os.environ.get("USER", "operator"))
+                   else "  it is not asleep"]
+        elif cmd == "imagine":
+            res = await system.submit(f"imagine {rest}")
+            out = [f"[{res.order_id}] {res.summary()}".replace("\n", "\n   ")] + [f"   . {t}" for t in res.trace]
         elif cmd in ("director", "agency", "initiative"):
             out = await director_command(system, rest)
         elif cmd in ("memorize", "memorise", "remember"):

@@ -345,6 +345,36 @@ class AgencyPolicy:
 
 
 @dataclass
+class DreamsPolicy:
+    """Sleep and dreams: dream nodes that make up questions and answers from what the mesh already
+    knows, checked on waking, evolved by a genetic algorithm, and used to imagine (see dreams.py)."""
+    enabled: bool = True
+    sleep_after_idle_seconds: float = 60.0  # quiet time (no orders from people) before it may fall asleep
+    sleep_chance: float = 0.3               # the chance, at each check, that it falls asleep then
+    check_every_seconds: float = 30.0
+    sleep_max_seconds: float = 120.0        # longest sleep; an order always wakes it at once
+    duty_cycle: float = 0.9                 # the background capacity dreaming may use while asleep
+    dreams_per_step: int = 24
+    dreams_per_night: int = 600
+    rehearse_share: float = 0.6             # remembered dreams it rehearses on; it answers the rest itself
+    imagine_share: float = 0.3              # dreams that swap in a name from something else it knows
+    rehearse_epochs: int = 25
+    min_material: int = 5                   # things it must remember before it can dream
+    material_passages: int = 60             # retained passages sampled for a night's dreams
+    material_max: int = 400
+    vocabulary: int = 400                   # most answers a dream node can give
+    inputs: int = 512
+    hidden: tuple = (64,)
+    max_hidden: int = 256
+    learning_rate: float = 0.01
+    population: int = 4                     # dream nodes kept by the genetic algorithm
+    children: int = 3                       # children bred on each waking
+    ga_epochs: int = 60
+    keep_dreams: int = 1500                 # checked dreams remembered
+    imagine_threshold: float = 0.2          # lowest confidence for an idea it imagines
+
+
+@dataclass
 class ComputePolicy:
     device: str = "cpu"     # "cpu" | "auto" | "cuda" | "cuda:N" | "mps"
     library: str = "auto"   # "auto" | "numpy" | "torch" | "cupy"
@@ -370,6 +400,7 @@ class Directives:
     evolution: EvolutionPolicy = field(default_factory=EvolutionPolicy)
     memory: MemoryPolicy = field(default_factory=MemoryPolicy)
     agency: AgencyPolicy = field(default_factory=AgencyPolicy)
+    dreams: DreamsPolicy = field(default_factory=DreamsPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -393,6 +424,7 @@ class Directives:
             evolution=build(EvolutionPolicy, d.get("evolution")),
             memory=build(MemoryPolicy, d.get("memory")),
             agency=build(AgencyPolicy, d.get("agency")),
+            dreams=build(DreamsPolicy, d.get("dreams")),
         )
 
     @classmethod
