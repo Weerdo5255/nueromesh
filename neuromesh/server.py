@@ -67,6 +67,8 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, system.dreams.status()
         if path == "/directors":
             return 200, system.directors.status()
+        if path == "/toolsmith":
+            return 200, system.toolsmith.status()
         if path == "/memory":
             if query.get("node"):
                 node = web.memory_node(system, query["node"])
@@ -167,6 +169,23 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                 except (TypeError, ValueError):
                     return 400, {"error": "attempts is a whole number from 1 to 10"}
             return 400, {"error": 'action is "spawn" or "retire", or give "attempts"'}
+        if path == "/toolsmith":  # {"build": "reverse a word"} or {"try": "reverser"}: it asks before a tool runs (P15)
+            smith, by = system.toolsmith, body.get("by", "api")
+            if not smith.enabled:
+                return 409, {"error": "the toolsmith is off ([toolsmith] enabled)"}
+            if body.get("build"):
+                from .commands import toolsmith_command
+                lines = await toolsmith_command(system, f"build {body['build']}")
+                made = smith.history[-1] if smith.history else None
+                ok = bool(made and made["event"] == "drafted")
+                return (200 if ok else 422), {"ok": ok, "message": " ".join(x.strip() for x in lines),
+                                              "status": smith.status()}
+            if body.get("try"):
+                rep = await smith.experiment(str(body["try"]), by)
+                if rep is None:
+                    return 409, {"ok": False, "message": f"{body['try']} is not an active tool it made"}
+                return 200, {"ok": True, "message": rep["line"], "results": rep.get("results", [])}
+            return 400, {"error": 'give "build": "<what the tool should do>" or "try": "<tool>"'}
         if path == "/imagine":  # {"prompt": "a city on Mars"}
             result = await system.submit(f"imagine {body.get('prompt', '')}", source=body.get("source", "api"))
             return 200, result.public_dict()

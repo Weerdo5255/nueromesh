@@ -356,6 +356,41 @@ async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7,
                 if " asked director" in t or "attempt " in t or "gave up" in t or "router learns" in t:
                     print(f"      . {t[:200]}")
 
+        demo.say("Phase 10 - code: it writes tools for requests nothing met, asks first, then tries them out")
+        smith, director = system.toolsmith, system.director
+        asks = ("reverse the word lantern", "what is the acronym for portable network graphics",
+                "abbreviate frequently asked questions")
+        for q in asks:
+            res = await system.submit(q)
+            print(f"  > {q}\n      " + res.summary().replace("\n", "\n      "))
+        needs = smith.needs()
+        print("  requests its coder node says a tool could meet: "
+              + ("; ".join(f"{g['recipe']} x{len(g['texts'])} ({g['how']})" for g in needs) or "none"))
+        director.set_mode("build", "demo-operator")
+        for _ in needs:
+            rec = await director.decide(force=True)
+            print(f"  initiative ({rec['by']}): {rec['mode']} - {rec['summary']}")
+        made = [a for a in system.guardian.pending_approvals() if a.kind == "tool.made"]
+        for a in made:
+            d = smith.drafts[a.subject]
+            code = (Path(d["folder"]) / "tool.py").read_text().splitlines()
+            print(f"  {a.id}: {a.subject} v{d['version']} from the '{d['recipe']}' recipe, {len(code)} lines, "
+                  f"{len(d['tests'])} self-tests; nothing it wrote has run yet")
+        print("  the operator reads the code and approves: " + ", ".join(a.id for a in made))
+        for a in made:
+            system.guardian.decide(a.id, True, by="demo-operator")
+        await demo.wait_for(lambda: all(system.tools.tools.get(a.subject) is not None
+                                        and system.tools.tools[a.subject].state == "active" for a in made), 30,
+                            "the new tools to pass their self-tests")
+        director.set_mode("experiment", "demo-operator")
+        for _ in made:
+            rec = await director.decide(force=True)
+            print(f"  initiative ({rec['by']}): {rec['mode']} - {rec['summary']}")
+        director.set_mode("auto", "demo-operator")
+        for q in asks + ("abbreviate very important person", "write stressed backwards"):
+            res = await system.submit(q)
+            print(f"  > {q}  ->  {res.output if res.ok else res.note}  [{res.route}]")
+
         demo.say("Results")
         print(f"{'phase':<14} {'orders':>6} {'correct':>8} {'by nodes':>9} {'by teachers':>12} {'mixed':>6} {'avg ms':>7}")
         for row in demo.rows:

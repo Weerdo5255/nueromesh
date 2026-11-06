@@ -65,6 +65,10 @@ text = "Dreams use only what the mesh already holds: its memory nodes and retain
 id = "P14-directed-orders"
 text = "There is always at least one director node running: director-0 never retires and is restarted if it stops. Every order passes a director on the way in, and again on the way out after the tools and nodes have done their work; nothing enters long-term memory without a director's review. A director may duplicate itself within [directors] max_directors (P4); duplicates retire when idle. A director never changes an answer's words (P8): it may only add a disclosed note. It always keeps what a person tells it (P1) and never stores an imagined answer (P13). When a director deems an order unanswered it tries other ways, at most [directors] max_attempts in all, and when it gives up the reply says what it tried (P7). A tool may ask a director for context; the answer's source goes with the reply. Its mood shapes how carefully it works, never what is true. (Enforced in code by neuromesh/directors.py.)"
 
+[[prime]]
+id = "P15-self-made-tools"
+text = "The mesh may write tools of its own for requests no tool could meet, but no code it wrote runs before a person approves it: it asks, with the code and its self-tests in the workshop for anyone to read, and a changed version asks again. Its code uses only the standard library and is checked before it is offered (no files, network, processes, eval or exec); a made tool never gets permissions, and once approved it is vetted and self-tested like any tool (P3). It experiments with its own tools only when idle (P2), within its budgets (P4), and every draft, approval, experiment and refinement is audited and logged. (Enforced in code by neuromesh/toolsmith.py and the Explorer.)"
+
 # ------------------------------------------------------------------------- goals
 [[goals]]
 id = "G1-competence"
@@ -231,7 +235,8 @@ merge_max_facts = 200                   # largest merged node
 # Independent agency: when no one has given it an order for a while, the mesh decides for itself
 # what to learn or test next. The Director picks a mode - research (set itself a learn task),
 # practise (a challenge task), examine (sit an exam now), improve (train its weakest skill),
-# consolidate (check its memory nodes) or rest - and assigns itself background tasks you can see,
+# consolidate (check its memory nodes), build (write a tool for requests nothing met, and ask you
+# to approve it), experiment (try out a tool it wrote) or rest - and assigns itself background tasks you can see,
 # pause or remove in /tasks. The agency node in front of it learns which mode pays off in which
 # situation, from the drive policy and from how its own choices turned out. /director shows it all.
 enabled = true
@@ -240,7 +245,7 @@ idle_seconds = 15                       # quiet time (no orders from people) bef
 max_decisions_per_hour = 12             # its own budget (P4)
 max_self_tasks = 3                      # tasks it has set itself at once
 explore = 0.1                           # chance of trying another possible mode, to learn what it is worth
-modes = ["research", "practise", "examine", "improve", "consolidate", "rest"]
+modes = ["research", "practise", "examine", "improve", "consolidate", "build", "experiment", "rest"]
 research_articles = 3                   # a self-set learn task reads this many articles
 practice_items = 20
 improve_window_seconds = 600            # a self-set improve task is scored after this long (or when met)
@@ -340,6 +345,9 @@ heuristic = 1.0
 temperament = 1.0                       # the temperament policy (teaches only the disposition engine)
 challenge = 2.5                         # gold labels from benchmark suites (curated, so trusted)
 director = 1.8                          # a route a director found answered an order the router had misrouted
+coder = 1.0                             # the code library's cues (teach only the coder node)
+experiment = 2.0                        # a request a made tool met when it tried the tool out
+approved = 2.5                          # a recipe a person approved a made tool for
 
 # Each [teachers.<name>] table with a `provider` is an LLM teacher with its own budget.
 [teachers.ollama]
@@ -414,3 +422,27 @@ max_attempts = 3                        # ways a director tries an order it deem
 tool_queries = 3                        # times one tool run may ask a director for context ("what is the speed of light?")
 query_outside = true                    # to answer a tool, a director may research or ask a teacher (within budgets;
                                         # never while wary: then only what the mesh already holds)
+
+[toolsmith]
+# The toolsmith: neural "coder" nodes that write new tools. When requests go unmet, the coder node
+# (an internal capability, trained and evolved like any node, taught by the code library's cues,
+# by people, and by what gets approved) picks a recipe from the code library (neuromesh/codelib.py).
+# The toolsmith fits it to the requests, writes tool.py (the recipe's own readable code, copied in),
+# manifest.toml with self-tests whose answers are worked out independently, and TESTS.md into
+# state/workshop/<tool>/<version>/, checks the code, and asks you (/approvals, /inquiries, the web
+# Mind tab). Nothing it wrote runs before you approve it (P15). Approved, it is installed in plugins/,
+# vetted and self-tested like any tool; then, on its own initiative (agency modes build and
+# experiment), it tries the tool on the requests it was made for and on fresh probes, teaches the
+# router what works, and refines what falls short - a new version, which asks you again.
+# "make a tool that reverses text" as an order, or /toolsmith build <what>, asks for one directly.
+enabled = true
+min_needs = 1                           # unmet requests before it writes a tool for them
+need_confidence = 0.55                  # how sure the coder node (or its cues) must be that a recipe fits
+builds_per_hour = 4                     # tools it may write in an hour (P4)
+max_waiting = 3                         # drafts waiting for approval at once; it writes no more until you decide
+experiments_per_hour = 6                # experiments with its own tools in an hour (P4)
+experiment_probes = 8                   # fresh probes per experiment, besides the requests it was made for
+proven_score = 0.8                      # an experiment this good proves a tool; below it, it refines the tool
+retry_after_seconds = 3600              # a recipe you declined is not offered again for this long
+llm_code = true                         # an LLM teacher may write a tool no recipe fits (checked the same way,
+                                        # never run before you approve it)

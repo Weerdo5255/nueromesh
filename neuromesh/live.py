@@ -208,7 +208,7 @@ def engine_lines(system, g: dict) -> list[Line]:
     if not a.enabled:
         return [("answers -> a director reviews -> user (temperament off)", "dim")]
     lines: list[Line] = [("answers", "title")]
-    engines = [c for c, spec in s.capabilities.items() if spec.internal and spec.kind != "agency"]
+    engines = [c for c, spec in s.capabilities.items() if spec.internal and spec.kind not in ("agency", "coder")]
     what = {"affect": "reads the tone", "disposition": "decides"}
     for cap in engines:
         champ = s.registry.champion(cap)
@@ -319,7 +319,30 @@ def teacher_goal_lines(system, g: dict) -> list[Line]:
             tasks_line(s, g),
             director_line(s, g),
             dreams_line(s, g),
-            directors_line(s, g)]
+            directors_line(s, g),
+            toolsmith_line(s, g)]
+
+
+def toolsmith_line(system, g: dict) -> Line:
+    sm = system.toolsmith
+    if not sm.enabled:
+        return ("toolsmith: off", "dim")
+    node = system.registry.champion("coder") if "coder" in system.capabilities else None
+    acc = node.metrics.get("holdout_acc") if node else None
+    who = (f"coder node {node.id}" if node and acc is not None and acc >= system.directives.nodes.serve_min_accuracy
+           else "code-library cues")
+    waiting = [d for d in sm.drafts.values() if d["status"] == "awaiting approval"]
+    made = [d for d in sm.drafts.values() if d.get("live")]
+    parts = [f"{who} picks recipes"]
+    needs = sm.needs()
+    if needs:
+        parts.append(f"{sum(len(n['texts']) for n in needs)} requests it could write a tool for")
+    if made:
+        parts.append("made " + ", ".join(f"{d['name']} v{d['live']}" + (f" {d['score']:.0%}" if d.get("score") is not None else "")
+                                         for d in made[:3]))
+    if waiting:
+        parts.append("waiting for you: " + ", ".join(f"{d['name']} ({d['approval']})" for d in waiting[:3]))
+    return ("toolsmith: " + f" {g['dot']} ".join(parts), "warn" if waiting else "info")
 
 
 def directors_line(system, g: dict) -> Line:

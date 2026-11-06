@@ -12,6 +12,10 @@ picks a mode:
     examine      sit a benchmark exam now, to measure itself
     improve      assign itself an improve task for its weakest skill
     consolidate  run every memory node against its test file, and relearn what fails
+    build        have the toolsmith write a tool for requests no tool could meet, and ask a person
+                 for permission to use it (toolsmith.py, P15)
+    experiment   try out a tool it wrote that a person approved: the requests it was made for and
+                 fresh probes; teach the router what works, refine what falls short (asking again)
     rest         nothing is worth the budget right now
 
 The Director is director-0, the primary director node (directors.py), and its mood shapes it: the
@@ -31,7 +35,8 @@ prefer what has actually worked for this mesh, not just what the policy says.
 
 People stay in charge (P1, P12): every decision is audited and logged, every task it assigns
 itself shows up in /tasks where it can be paused or removed, a person can pin a mode or turn the
-initiative off, and it never adds capabilities or approves tools (P10). It runs only when idle
+initiative off, and it never adds capabilities or approves tools (P10): a tool it wrote runs only once a
+person has approved it (P15). It runs only when idle
 (P2) and within its own hourly budget of decisions (P4).
 """
 from __future__ import annotations
@@ -48,25 +53,28 @@ from .tasks import DIRECT
 from .teachers import Lesson, Teacher
 
 AGENCY = "agency"
-MODES = ("research", "practise", "examine", "improve", "consolidate", "rest")
+MODES = ("research", "practise", "examine", "improve", "consolidate", "build", "experiment", "rest")
 TASK_MODES = ("research", "practise", "improve")
 FEATURES = ("skills", "gap", "topics", "research", "exams", "scores", "memory", "last", "streak", "budget",
-            "selftasks", "mood")
+            "selftasks", "mood", "needs", "newtools")
 MOODS = ("steady", "upbeat", "content", "alert", "tense", "subdued", "wary")  # the temperament's moods
 VALUES = {"skills": ("weak", "ok", "none"), "gap": ("none", "small", "large"), "topics": ("none", "some", "many"),
           "research": ("ready", "off", "spent"), "exams": ("due", "fresh", "none"), "scores": ("low", "high", "none"),
           "memory": ("failing", "unverified", "ok", "none"), "last": MODES + ("none",),
           "streak": ("one", "two", "many"), "budget": ("ok", "low"), "selftasks": ("none", "some", "full"),
-          "mood": MOODS}
+          "mood": MOODS, "needs": ("none", "some", "many"), "newtools": ("none", "fresh")}
 WHY = {"research": "there are topics to read up on", "improve": "a skill is below its target",
        "examine": "an exam is due", "practise": "its exam scores are low",
-       "consolidate": "memory nodes need checking", "rest": "nothing is worth the budget right now"}
+       "consolidate": "memory nodes need checking",
+       "build": "requests no tool could meet need a tool it could write",
+       "experiment": "a tool it wrote has not been tried out yet",
+       "rest": "nothing is worth the budget right now"}
 # How the mood moves the drives (only of modes already worth something; rest always can).
-MOOD_DRIVES = {"upbeat": {"research": 0.15, "practise": 0.05}, "content": {"research": 0.08},
-               "alert": {"examine": 0.08, "consolidate": 0.05},
-               "tense": {"consolidate": 0.15, "examine": 0.1, "research": -0.1},
-               "subdued": {"rest": 0.3, "research": -0.1},
-               "wary": {"consolidate": 0.2, "research": -0.3}}
+MOOD_DRIVES = {"upbeat": {"research": 0.15, "practise": 0.05, "build": 0.1}, "content": {"research": 0.08, "experiment": 0.05},
+               "alert": {"examine": 0.08, "consolidate": 0.05, "experiment": 0.05},
+               "tense": {"consolidate": 0.15, "examine": 0.1, "research": -0.1, "build": -0.1},
+               "subdued": {"rest": 0.3, "research": -0.1, "build": -0.1},
+               "wary": {"consolidate": 0.2, "research": -0.3, "build": -0.5}}
 MOOD_WHY = {"upbeat": "it is in good spirits, so it reads up and practises",
             "content": "it is content, so it follows its curiosity",
             "alert": "it is alert, so it measures and checks itself",
@@ -111,6 +119,10 @@ def drives(f: dict) -> dict[str, float]:
         d["consolidate"] = 0.85                                                              # verification
     elif f.get("memory") == "unverified":
         d["consolidate"] = 0.4
+    if f.get("needs") in ("some", "many"):                                                   # make what it lacks
+        d["build"] = 0.5 + (0.15 if f.get("needs") == "many" else 0.0)
+    if f.get("newtools") == "fresh":                                                         # try what it made
+        d["experiment"] = 0.7
     last = f.get("last")
     if last in d and last != "rest":                                                         # variety
         d[last] -= {"one": 0.0, "two": 0.15, "many": 0.35}.get(f.get("streak"), 0.0)
@@ -151,6 +163,10 @@ def feasible(f: dict) -> set[str]:
         out.add("practise")
     if f.get("memory") != "none":
         out.add("consolidate")
+    if f.get("needs") in ("some", "many"):
+        out.add("build")
+    if f.get("newtools") == "fresh":
+        out.add("experiment")
     return out
 
 
@@ -270,7 +286,9 @@ class Director(Agent):
     def _describe(mode: str) -> str:
         return {"research": "sets itself a learn task", "practise": "practises on a benchmark suite",
                 "examine": "sits a benchmark exam", "improve": "trains its weakest skill",
-                "consolidate": "checks its memory nodes against their tests", "rest": "rests"}[mode]
+                "consolidate": "checks its memory nodes against their tests",
+                "build": "writes a tool for requests no tool could meet (and asks permission to use it)",
+                "experiment": "tries out a tool it wrote", "rest": "rests"}[mode]
 
     # ---------------------------------------------------------------- the loop
     async def step(self) -> None:
@@ -362,6 +380,13 @@ class Director(Agent):
             streak += 1
         active = [t for t in self.self_tasks if t in s.tasks.tasks]
         left = self._budget_left()
+        smith = s.toolsmith  # requests its code library could meet, and tools it made but has not tried (P15)
+        needs = [g for g in smith.needs() if not cool("build", g["recipe"])] if smith.enabled else []
+        fresh = [n for n in smith.fresh() if not cool("experiment", n)] if smith.enabled else []
+        if smith.enabled and smith._budget(smith.builds, smith.pol.builds_per_hour) <= 0:
+            needs = []
+        if smith.enabled and smith._budget(smith.trials, smith.pol.experiments_per_hour) <= 0:
+            fresh = []
         flags = {
             "skills": "weak" if weak else ("ok" if any(s.registry.champion(c) for c in s.capabilities if c != AGENCY) else "none"),
             "gap": gap, "topics": "none" if not topics else ("many" if len(topics) >= 3 else "some"),
@@ -373,10 +398,13 @@ class Director(Agent):
             "budget": "low" if left <= max(1, pol.max_decisions_per_hour // 4) else "ok",
             "selftasks": "none" if not active else ("full" if len(active) >= pol.max_self_tasks else "some"),
             "mood": s.directors.stance().mood,  # the mood shapes what it chooses (directors.py)
+            "needs": "none" if not needs else ("many" if sum(len(g["texts"]) for g in needs) >= 3 else "some"),
+            "newtools": "fresh" if fresh else "none",
         }
         allowed = set(pol.modes) | {"rest"}
         return {"flags": flags, "text": situation_text(flags), "weak": weak, "topics": topics, "due": due,
-                "practice": practice, "feasible": feasible(flags) & allowed, "any_suite": any_suite}
+                "practice": practice, "feasible": feasible(flags) & allowed, "any_suite": any_suite,
+                "needs": needs, "fresh": fresh}
 
     def topics(self) -> list[tuple[str, str]]:
         s = self.sys
@@ -497,6 +525,10 @@ class Director(Agent):
 
     @staticmethod
     def _target(sit: dict, mode: str):
+        if mode == "build":
+            return sit["needs"][0]["recipe"] if sit.get("needs") else None
+        if mode == "experiment":
+            return sit["fresh"][0] if sit.get("fresh") else None
         pick = {"research": sit["topics"], "practise": sit["practice"], "improve": sit["weak"], "examine": sit["due"]}.get(mode)
         return pick[0][0] if pick else None
 
@@ -555,6 +587,30 @@ class Director(Agent):
             record["summary"] = (f"{failing} failing tests found; relearning them" if failing
                                  else f"all {len(mem.nodes)} memory nodes pass their tests")
             record["value"] = 0.9 if failing else 0.25
+        elif mode == "build":
+            need = sit["needs"][0]
+            record["target"] = need["recipe"]
+            n = len(need["texts"])
+            made = await s.toolsmith.build(need["texts"], f"{n} request{'s' if n != 1 else ''} no tool could meet "
+                                           f"(like '{need['texts'][0][:60]}')", record["by"])
+            if made is not None:
+                record["summary"] = (f"wrote {made['name']} v{made['version']} for {n} request{'s' if n != 1 else ''}; "
+                                     f"asked permission to use it ({made['approval']})")
+                record["value"] = 0.6  # what it is worth shows once a person decides and it is tried out
+            else:
+                last = s.toolsmith.history[-1]["line"] if s.toolsmith.history else "no recipe fits"
+                record["summary"] = f"could not write a tool for '{need['texts'][0][:60]}': {last}"
+                record["value"] = 0.0
+        elif mode == "experiment":
+            name = sit["fresh"][0]
+            record["target"] = name
+            rep = await s.toolsmith.experiment(name, record["by"])
+            if rep is None or rep.get("score") is None:
+                record["summary"] = f"could not try out {name}" + (f": {rep['line']}" if rep else "")
+                record["value"] = 0.0
+            else:
+                record["summary"] = f"tried out {rep['line']}"
+                record["value"] = round(0.3 + 0.7 * rep["score"], 3)
         else:
             record["summary"] = "rests"
 
@@ -640,7 +696,7 @@ class Director(Agent):
         not pay off rest for a while."""
         s, pol = self.sys, self.pol
         mode = entry["mode"]
-        if target and mode in ("research", "practise", "improve", "examine") and value < pol.good_value:
+        if target and mode in ("research", "practise", "improve", "examine", "build", "experiment") and value < pol.good_value:
             key = f"{mode}:{target.lower() if mode == 'research' else target}"
             self.cooldown[key] = time.time() + pol.retry_after_seconds
         old = self.values.get(mode)

@@ -147,7 +147,7 @@ doask = ["check the build", "answer the question", "fix this", "tell me the tota
 [agency]
 answer = "In that situation I would {label} ({description})."
 description = "The mesh's own initiative: given its situation (skills below target, exams due, topics to read up on, memory nodes to check, its budgets), decide what to do next when no one has asked it for anything."
-labels = ["research", "practise", "examine", "improve", "consolidate", "rest"]
+labels = ["research", "practise", "examine", "improve", "consolidate", "build", "experiment", "rest"]
 open_labels = false
 internal = true
 kind = "agency"
@@ -159,7 +159,38 @@ practise = "practise on a benchmark suite, then re-sit its exam"
 examine = "sit a benchmark exam to measure itself"
 improve = "train its weakest skill towards its target"
 consolidate = "check its memory nodes against their tests"
+build = "write a tool for requests no tool could meet, and ask permission to use it"
+experiment = "try out a tool it wrote, and refine it if it falls short"
 rest = "do nothing for now"
+
+[coder]
+answer = "To meet that I would write a tool from the {label} recipe ({description})."
+description = "The toolsmith's coder node: given a request no tool could meet, decide which recipe from its code library (neuromesh/codelib.py) a new tool should be written from - or none. The toolsmith writes, checks and offers the tool; a person approves it before it runs (P15)."
+labels = ["reverse", "case", "count_letters", "palindrome", "acronym", "sort", "caesar", "base64", "morse", "roman", "number_words", "days_between", "weekday", "extract", "convert", "word_frequency", "replace", "none"]
+open_labels = false
+internal = true
+kind = "coder"
+teachers = ["human", "coder"]     # people, and the code library's cues; what gets approved teaches it too
+
+[coder.label_descriptions]
+reverse = "write text backwards"
+case = "change text to upper, lower or title case"
+count_letters = "count a letter, the vowels or consonants"
+palindrome = "check whether text is a palindrome"
+acronym = "make an acronym from a phrase"
+sort = "sort words alphabetically or numbers in order"
+caesar = "encode or decode with a Caesar cipher (ROT13)"
+base64 = "encode text as base64 or decode it"
+morse = "translate text to and from Morse code"
+roman = "convert numbers to and from Roman numerals"
+number_words = "write numbers out in words"
+days_between = "count the days between two dates"
+weekday = "find the day of the week of a date"
+extract = "pull emails, links, hashtags or phone numbers out of text"
+convert = "convert between units"
+word_frequency = "find the most common word in a text"
+replace = "replace a word or phrase in a text"
+none = "no recipe: a tool would not help, or its code library has nothing for it"
 
 [disposition]
 answer = "In that situation I would {label} the answer ({description})."

@@ -152,7 +152,8 @@ class TeacherPolicy:
     order: tuple = ("human", "challenge", "ollama", "llm", "heuristic")
     weights: dict = field(default_factory=lambda: {
         "human": 3.0, "challenge": 2.5, "tool-manifest": 2.0, "outcome": 2.0, "llm": 1.5, "ollama": 1.2,
-        "heuristic": 1.0, "temperament": 1.0, "agency": 1.0, "director": 1.8})
+        "heuristic": 1.0, "temperament": 1.0, "agency": 1.0, "director": 1.8,
+        "coder": 1.0, "experiment": 2.0, "approved": 2.5})
     models: dict = field(default_factory=dict)  # teacher name -> LLMConfig, from [teachers.<name>]
 
     @property
@@ -330,7 +331,7 @@ class AgencyPolicy:
     max_decisions_per_hour: int = 12      # its own budget (P4)
     max_self_tasks: int = 3               # tasks it has set itself at once
     explore: float = 0.1                  # chance of trying another possible mode, to learn what it is worth
-    modes: tuple = ("research", "practise", "examine", "improve", "consolidate", "rest")
+    modes: tuple = ("research", "practise", "examine", "improve", "consolidate", "build", "experiment", "rest")
     research_articles: int = 3            # a self-set learn task reads this many articles
     practice_items: int = 20
     max_task_runs: int = 5                # a self-set task is scored and retired after this many runs
@@ -404,6 +405,22 @@ class DirectorsPolicy:
 
 
 @dataclass
+class ToolsmithPolicy:
+    """The toolsmith: coder nodes that write new tools from the code library (or with an LLM teacher),
+    ask permission, and experiment with what a person approves (see toolsmith.py, P15)."""
+    enabled: bool = True
+    min_needs: int = 1                      # requests no tool could meet before it writes a tool for them
+    need_confidence: float = 0.55           # how sure the coder node (or its cues) must be that a recipe fits
+    builds_per_hour: int = 4                # tools it may write in an hour (P4)
+    max_waiting: int = 3                    # tools waiting for approval at once; it writes no more until they are decided
+    experiments_per_hour: int = 6           # experiments with its tools in an hour (P4)
+    experiment_probes: int = 8              # fresh probes per experiment (as well as the requests it was made for)
+    proven_score: float = 0.8               # an experiment this good proves a tool; below it, it refines the tool
+    retry_after_seconds: float = 3600.0     # a recipe a person declined is not offered again for this long
+    llm_code: bool = True                   # an LLM teacher may write tools no recipe fits (still asked for, still checked)
+
+
+@dataclass
 class Directives:
     name: str = "NeuroMesh"
     mission: str = ""
@@ -425,6 +442,7 @@ class Directives:
     agency: AgencyPolicy = field(default_factory=AgencyPolicy)
     dreams: DreamsPolicy = field(default_factory=DreamsPolicy)
     directors: DirectorsPolicy = field(default_factory=DirectorsPolicy)
+    toolsmith: ToolsmithPolicy = field(default_factory=ToolsmithPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -450,6 +468,7 @@ class Directives:
             agency=build(AgencyPolicy, d.get("agency")),
             dreams=build(DreamsPolicy, d.get("dreams")),
             directors=build(DirectorsPolicy, d.get("directors")),
+            toolsmith=build(ToolsmithPolicy, d.get("toolsmith")),
         )
 
     @classmethod

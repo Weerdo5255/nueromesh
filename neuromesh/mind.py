@@ -627,9 +627,16 @@ class Mind:
             msg = f"added '{p.name}' to {p.target}" + (f" and applied {fixed} correction{'s' if fixed != 1 else ''}"
                                                        if fixed else "")
         else:
-            folder = self.write_stub(p)
-            msg = (f"wrote a stub to {folder}: implement tool.py and its self-tests, then move the folder "
-                   f"into plugins/ - it will be vetted like any other tool (P3)")
+            smith = getattr(s, "toolsmith", None)
+            made = smith.build_now([str(e) for e in p.evidence], f"{by} adopted {p.id}", "toolsmith") \
+                if smith is not None and smith.enabled else None
+            if made is not None:  # its toolsmith can write it: it still asks before the tool runs (P15)
+                msg = (f"my toolsmith wrote {made['name']} v{made['version']} for those requests; it runs only once you "
+                       f"approve it: /approve {made['approval']} (code and tests in {made['folder']})")
+            else:
+                folder = self.write_stub(p)
+                msg = (f"wrote a stub to {folder}: implement tool.py and its self-tests, then move the folder "
+                       f"into plugins/ - it will be vetted like any other tool (P3)")
         self._decide(p, "adopted", by, msg)
         return True, msg
 
@@ -721,7 +728,9 @@ class Mind:
 
     async def _propose_from_unmet(self, known: list[str]) -> None:
         """Orders nothing could fulfil that share a theme become a proposal."""
-        gaps = [u for u in self.unmet.values() if u.route == DIRECT and not u.proposed]
+        smith = getattr(self.sys, "toolsmith", None)  # what its code library can meet, the toolsmith writes (P15)
+        gaps = [u for u in self.unmet.values() if u.route == DIRECT and not u.proposed
+                and not (smith is not None and smith.claims(u.text))]
         if len(gaps) < self.pol.min_evidence:
             return
         taken = set(known) | {p.name for p in self.proposals.values()}

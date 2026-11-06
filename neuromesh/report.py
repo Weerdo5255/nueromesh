@@ -31,7 +31,14 @@ def describe_event(ev: Event) -> str | None:
     if t == "tool.invalid":
         return f"[tool]     invalid plugin '{d['tool']}': {d['error']}"
     if t == "approval.requested":
+        if d["kind"] == "tool.made":
+            det = d["detail"]
+            return (f"[approval] {d['id']}: its toolsmith wrote {d['subject']} v{det.get('version')} "
+                    f"({det.get('purpose')}); nothing it wrote runs until a person approves it (/approve {d['id']})")
         perms = ", ".join(d["detail"].get("permissions", []))
+        if d["detail"].get("author") == "neuromesh":
+            return (f"[approval] {d['id']}: '{d['subject']}' was written by its own toolsmith; a person must approve "
+                    f"these exact files before it runs (/approve {d['id']})")
         return f"[approval] {d['id']}: {d['kind']} '{d['subject']}' needs a human decision (permissions: {perms})"
     if t == "approval.decided":
         return f"[approval] {d['id']} {d['status']} by {d['by']}"
@@ -168,6 +175,21 @@ def describe_event(ev: Event) -> str | None:
         return f"[director] {d['director']} gave up on '{d['text'][:50]}' after {d['attempts']} attempts: {d['why'][:80]}"
     if t == "director.memory":
         return f"[director] {d['director']} did not store '{d['ask'][:60]}' in memory: {d['why']}"
+    if t == "tool.drafted":
+        return (f"[code]     {d['by']} wrote {d['tool']} v{d['version']} ({d['recipe']}) for '{d['need'][:60]}'; "
+                f"asked permission to use it ({d['approval']})")
+    if t == "tool.unsafe":
+        return f"[code]     {d['tool']} v{d['version']} was not offered: {'; '.join(d['problems'])[:120]}"
+    if t == "tool.installed":
+        return f"[code]     {d['by']} approved {d['tool']} v{d['version']}: installed; vetting and self-tests next"
+    if t == "tool.declined":
+        return f"[code]     {d['by']} declined {d['tool']} v{d['version']}"
+    if t == "tool.experimented":
+        what = "proven" if d["proven"] else "needs work"
+        ref = f"; refined into v{d['refined']} (asks again)" if d.get("refined") else ""
+        taught = f"; the router learned {d['taught']}" if d.get("taught") else ""
+        return (f"[code]     {d['by']} tried out {d['tool']} v{d['version']}: {d['right']}/{d['runs']} right, "
+                f"{what}{taught}{ref}")
     if t == "dream.sleep":
         idle = f" after {d['idle']}s with no orders" if d.get("idle") else ""
         return (f"[sleep]    fell asleep{idle} ({d['reason']}): dreaming about {d['material']} things it remembers; "
@@ -280,6 +302,15 @@ def render_status(st: dict) -> str:
             lines.append(f"director: mode {ag['pinned']}, chosen by the {who}; last: "
                          + (f"{last['mode']} {last['target']}".strip() if last else "nothing yet")
                          + f"; {len(ag['self_tasks'])} self-set tasks; {ag['decisions_last_hour']}/{ag['limit']} decisions this hour")
+    ts = st.get("toolsmith")
+    if ts and ts["enabled"] and (ts["drafts"] or ts["needs"]):
+        waiting = [d for d in ts["drafts"] if d["status"] == "awaiting approval"]
+        made = [d for d in ts["drafts"] if d.get("live")]
+        lines.append(f"toolsmith: {len(made)} tools it wrote installed"
+                     + (f" ({', '.join(d['name'] + ' ' + d['status'] for d in made[:4])})" if made else "")
+                     + (f"; waiting for approval: {', '.join(d['name'] + ' ' + d['approval'] for d in waiting)}" if waiting else "")
+                     + (f"; {sum(len(g['texts']) for g in ts['needs'])} unmet requests it could write a tool for"
+                        if ts["needs"] else ""))
     mem = st.get("memory")
     if mem and mem["enabled"] and mem["nodes"]:
         tests = sum(n["total"] for n in mem["nodes"])

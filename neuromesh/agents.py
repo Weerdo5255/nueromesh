@@ -34,6 +34,8 @@ from .nodes import Architecture, NeuralNode
 from .tasks import DIRECT, DISPATCH, Order, Result, imagine_prompt, parse_order, skill_payload
 from .evolution import judge as evolution_judge
 from .tools import ACTIVE, APPROVED, PENDING, QUARANTINED, REJECTED, Tool, ToolRun, outputs_match
+from .codelib import RECIPES
+from .toolsmith import tool_request
 from . import voice
 
 
@@ -111,6 +113,10 @@ class Orchestrator(Agent):
                         self.sys.mind.observe(order, result)
                     except Exception:
                         self.log.exception("the mind could not observe %s", order.id)
+                    if not result.ok and result.route == DIRECT and self.sys.toolsmith.claims(order.text):
+                        recipe = self.sys.toolsmith.classify(order.text)[0]
+                        result.trace.append(f"no tool meets requests like this yet; the toolsmith could write one from "
+                                            f"the '{recipe}' recipe, and would ask you before it ran (P15)")
                 except Exception as exc:
                     self.log.exception("order %s failed", order.id)
                     result = Result(order.id, order.text, None, None, 0.0, ok=False, note=f"internal error: {exc}")
@@ -162,6 +168,9 @@ class Orchestrator(Agent):
                     res.ok, res.note = False, made[0]
                 res.trace.append(made[1])
                 return res
+        asked = tool_request(order.text) if not order.background and s.toolsmith.enabled else None
+        if asked is not None:  # "make a tool that ...": the toolsmith writes it, and asks before it runs (P15)
+            return await self.make_tool(order, res, asked)
         prompt = imagine_prompt(order.text) if s.dreams.enabled else None
         if prompt is not None:  # "imagine ...": its dream nodes, labelled as imagination (P13)
             self.imagine(res, prompt)
@@ -358,6 +367,30 @@ class Orchestrator(Agent):
         return res
 
     # ------------------------------------------------------------- imagining
+    async def make_tool(self, order, res: Result, asked: str) -> Result:
+        """A person asked for a tool: the coder node picks a recipe from the code library (or an LLM
+        teacher writes one), the toolsmith checks it and asks permission. Nothing it wrote runs yet."""
+        s = self.sys
+        smith = s.toolsmith
+        res.route, res.confidence, res.served_by = "toolsmith", 1.0, "explicit"
+        recipe = smith.classify(asked)[0]
+        like = [u.text for u in s.mind.unmet.values() if not tool_request(u.text)
+                and smith.classify(u.text)[0] == recipe] if recipe in RECIPES else []
+        made = await smith.build(like, f"{order.source} asked for a tool that {asked}", "toolsmith", asked=asked)
+        if made is None:
+            last = smith.history[-1]["line"] if smith.history else "it could not write one"
+            res.ok, res.note = False, f"I couldn't write a tool for that: {last}"
+            res.trace.append(f"the toolsmith could not write it ({last})")
+            return res
+        inq = f" (or /reply {made['inquiry']} yes)" if made.get("inquiry") else ""
+        res.output = (f"I wrote {made['name']} v{made['version']} to {made['title']}. Nothing it wrote runs until you "
+                      f"approve it: /approve {made['approval']}{inq}. Its code and self-tests are in {made['folder']}.")
+        res.trace.append(f"the toolsmith wrote {made['name']} v{made['version']} from "
+                         + (f"the '{made['recipe']}' recipe" if made["recipe"] != "custom" else "an LLM teacher's code")
+                         + (f", also for {len(like)} earlier request{'s' if len(like) != 1 else ''} like it" if like else "")
+                         + f"; {made['approval']} asks permission (P15)")
+        return res
+
     def imagine(self, res: Result, prompt: str) -> None:
         s = self.sys
         res.route, res.knowledge = "dream:imagine", "imagined"
@@ -902,6 +935,13 @@ class Explorer(Agent):
         if decision.verdict == Verdict.DENY:
             tool.state, tool.note = REJECTED, decision.reason
             s.bus.publish("tool.rejected", tool=manifest.name, reason=decision.reason)
+        elif manifest.author == "neuromesh" and not s.toolsmith.approved(manifest.name, manifest.digest):
+            # code the mesh wrote itself runs only once a person has approved exactly these files (P15)
+            tool.state, tool.note = PENDING, "written by its own toolsmith: a person must approve these files first (P15)"
+            approval = s.guardian.request_approval("tool", manifest.name, {
+                "permissions": list(manifest.permissions), "version": manifest.version,
+                "description": manifest.description, "author": "neuromesh"})
+            tool.approval_id = approval.id
         elif decision.verdict == Verdict.NEEDS_APPROVAL:
             tool.state, tool.note = PENDING, decision.reason
             approval = s.guardian.request_approval("tool", manifest.name, {
@@ -919,10 +959,13 @@ class Explorer(Agent):
         if approval is None:  # e.g. after a restart: ask again
             approval = s.guardian.request_approval("tool", tool.name, {
                 "permissions": list(tool.manifest.permissions), "version": tool.manifest.version,
-                "description": tool.manifest.description})
+                "description": tool.manifest.description,
+                **({"author": "neuromesh"} if tool.manifest.author == "neuromesh" else {})})
             tool.approval_id = approval.id
         elif approval.status == "approved":
             tool.state, tool.note = APPROVED, f"approved by {approval.decided_by}"
+            if tool.manifest.author == "neuromesh":  # these exact files are approved (P15)
+                s.toolsmith.record_approval(tool.name, tool.manifest.digest, approval.decided_by or "a person")
             s.bus.publish("tool.approved", tool=tool.name, by=approval.decided_by)
             s.tools.persist(tool)
         elif approval.status == "denied":

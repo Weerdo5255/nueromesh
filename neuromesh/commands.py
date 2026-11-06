@@ -6,6 +6,7 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .background import every
 
@@ -34,12 +35,16 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /memory forget <question>       forget a fact (its tests go too)
   /memory merge [node node]       try merging two compressed memory nodes now (random pair if none given)
   /director                       its own initiative: mode, who chose it, the tasks it set itself, what paid off
-  /director mode <auto|research|practise|examine|improve|consolidate|rest>   pin a mode (auto: the agency node chooses)
+  /director mode <auto|research|practise|examine|improve|consolidate|build|experiment|rest>   pin a mode
   /director now | on | off        take initiative now, or turn its initiative on or off
   /directors                      the director nodes at both ends of every order: who is doing what, the
                                   stance its mood gives them, recent reviews, what memory was not given
   /directors spawn | retire <id>  add a duplicate director now, or retire one (never director-0)
   /directors attempts <n>         how many ways a director tries an unanswered order before it gives up
+  /toolsmith                      tools it wrote itself: the coder node, drafts waiting for approval, experiments
+  /toolsmith build <what it should do>   have it write a tool now (it asks before the tool runs; P15)
+  /toolsmith show <tool>          a made tool's code, tests and experiments    /toolsmith recipes   its code library
+  /toolsmith try <tool>           have it experiment with a tool it made now
   /dreams                         sleep and dreams: the dream nodes, last night's dreams, what checked out
   /sleep    /wake                 send it to sleep (dreaming) now, or wake it
   /imagine <prompt>               its dream nodes imagine something (also: "imagine ...", "what if ...")
@@ -328,6 +333,69 @@ def directors_command(system, rest: str) -> list[str]:
     return pool.lines()
 
 
+async def toolsmith_command(system, rest: str) -> list[str]:
+    smith = system.toolsmith
+    sub, _, arg = rest.strip().partition(" ")
+    by = os.environ.get("USER", "operator")
+    arg = arg.strip()
+    if not smith.enabled and sub:
+        return ["  the toolsmith is off ([toolsmith] enabled = false in the directives)"]
+    if sub == "build":
+        if not arg:
+            return ["  usage: /toolsmith build <what the tool should do>   e.g. /toolsmith build reverse a word"]
+        from .toolsmith import tool_request
+        asked = tool_request(arg) or arg
+        recipe = smith.classify(asked)[0]
+        like = [u.text for u in system.mind.unmet.values() if not tool_request(u.text)
+                and smith.classify(u.text)[0] == recipe] if recipe != "none" else []
+        made = await smith.build(like, f"{by} asked for a tool that {asked}", "toolsmith", asked=asked)
+        if made is None:
+            last = smith.history[-1]["line"] if smith.history else "it could not write one"
+            return [f"  it couldn't write that tool: {last}"]
+        return [f"  wrote {made['name']} v{made['version']} ({made['recipe']}): {made['title']}",
+                f"  its code and {len(made['tests'])} self-tests: {made['folder']}",
+                f"  nothing it wrote runs until you approve it: /approve {made['approval']}   (/toolsmith show {made['name']})"]
+    if sub in ("try", "experiment"):
+        if arg not in smith.drafts:
+            return [f"  no tool it made called '{arg}' (/toolsmith lists them)"]
+        rep = await smith.experiment(arg, by)
+        if rep is None:
+            return [f"  {arg} is not active yet (it runs only once a person approves it, and it passes its self-tests)"]
+        out = [f"  {rep['line']}"]
+        for r in rep.get("results", [])[:12]:
+            want = f" (want {r['want']})" if r["want"] is not None and not r["ok"] else ""
+            out.append(f"    {'ok ' if r['ok'] else 'NO '} [{r['kind']}] {r['input'][:60]} -> {r['got'][:50]}{want}")
+        return out
+    if sub == "show":
+        d = smith.drafts.get(arg)
+        if d is None:
+            return [f"  no tool it made called '{arg}' (/toolsmith lists them)"]
+        out = [f"  {d['name']} v{d['version']} [{d['status']}]: {d['title']} (recipe {d['recipe']}, by {d['by']})",
+               f"  why: {d['why']}", f"  files: {d['folder']}/tool.py, manifest.toml, TESTS.md"]
+        if d.get("live") and d["live"] != d["version"]:
+            out.append(f"  installed: v{d['live']} (v{d['version']} waits for approval)")
+        if d["status"] == "awaiting approval":
+            out.append(f"  waiting for you: /approve {d['approval']}  or  /deny {d['approval']}")
+        out.append("  made for: " + ("; ".join(t[:60] for t in d["needs"][:4]) or f"a person asked for a tool that {d.get('asked', '')}"))
+        out.append(f"  self-tests ({len(d['tests'])}):")
+        out += [f"    {t['input'][:70]!r} -> {str(t['expect'])[:40]!r}" for t in d["tests"][:8]]
+        for e in d.get("experiments", [])[-3:]:
+            out.append(f"  experiment ({time.strftime('%H:%M', time.localtime(e['ts']))}, v{e.get('version', '?')}): "
+                       f"{e['score']:.0%} of {e['runs']}" + (f"; failed: {', '.join(repr(f['input'][:30]) for f in e['failed'][:3])}"
+                                                             if e["failed"] else ""))
+        try:
+            code = (Path(d["folder"]) / "tool.py").read_text().splitlines()
+            body = [ln for ln in code if ln.startswith("def ")]
+            out.append(f"  tool.py: {len(code)} lines; functions: {', '.join(ln[4:ln.index('(')] for ln in body)}")
+        except (OSError, ValueError):
+            pass
+        return out
+    if sub == "recipes":
+        from .codelib import RECIPES
+        return [f"  {r.id:<15} -> {r.name:<20} {r.title}" for r in RECIPES.values()]
+    return smith.lines()
+
+
 def dream_lines(system) -> list[str]:
     d = system.dreams
     if not d.enabled:
@@ -571,6 +639,8 @@ async def execute(system, line: str) -> Output:
             out = await director_command(system, rest)
         elif cmd == "directors":
             out = directors_command(system, rest)
+        elif cmd in ("toolsmith", "coder"):
+            out = await toolsmith_command(system, rest)
         elif cmd in ("memorize", "memorise", "remember"):
             ask, sep, answer = rest.partition("::")
             if not sep or not ask.strip() or not answer.strip():
@@ -634,11 +704,16 @@ async def execute(system, line: str) -> Output:
         elif cmd == "forget":
             out = [f"  forgot '{rest}'" if system.knowledge.forget(rest) else f"  nothing retained under '{rest}'"]
         elif cmd == "approvals":
-            out = [f"  {a.id}: {a.kind} '{a.subject}' {a.detail}" for a in g.pending_approvals()] or ["  none pending"]
+            out = [(f"  {a.id}: a tool its toolsmith wrote, {a.subject} v{a.detail.get('version')} - "
+                    f"{a.detail.get('purpose')} (code and tests: {a.detail.get('folder')})" if a.kind == "tool.made" else
+                    f"  {a.id}: {a.kind} '{a.subject}' {a.detail}") for a in g.pending_approvals()] or ["  none pending"]
         elif cmd in ("approve", "deny"):
             aid, _, note = rest.partition(" ")
             a = g.decide(aid, cmd == "approve", by=os.environ.get("USER", "operator"), note=note)
             out = [f"  {a.id} {a.status}" if a else "  no pending approval with that id"]
+            if a is not None and a.kind == "tool.made" and a.status == "approved":
+                out.append(f"  installed {a.subject} in plugins/: it is vetted and self-tested next, then it tries it out "
+                           f"on its own (/toolsmith show {a.subject})")
         elif cmd == "questions":
             out = [f"  {q['id']}: [{q['capability']}] {q['text'][:90]!r}  ({q['reason']})"
                    for q in system.teachers.human.questions] or ["  no open questions"]

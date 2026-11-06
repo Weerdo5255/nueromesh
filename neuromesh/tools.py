@@ -56,6 +56,7 @@ class ToolManifest:
     templates: list = field(default_factory=list)
     fillers: dict = field(default_factory=dict)
     config: dict = field(default_factory=dict)  # passed to the tool on every run
+    author: str = ""                            # "neuromesh": its own toolsmith wrote it (P15)
 
     @property
     def route(self) -> str:
@@ -71,7 +72,8 @@ class ToolManifest:
                    keywords=tuple(m.get("keywords", [])), timeout_s=m.get("timeout_s"),
                    supersedes=m.get("supersedes") or None, provides=m.get("provides", ""),
                    examples=list(m.get("examples", [])), templates=list(m.get("templates", [])),
-                   fillers=dict(m.get("fillers", {})), config=dict(m.get("config", {})))
+                   fillers=dict(m.get("fillers", {})), config=dict(m.get("config", {})),
+                   author=str(m.get("author", "")))
 
 
 @dataclass

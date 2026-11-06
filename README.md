@@ -30,7 +30,10 @@ alongside when it needs a second opinion, when work waits, or when it has two th
 at once, and its mood shapes how carefully it works. Any tool can ask a director for facts it
 needs before it answers. When a director decides an order was not answered, it tries other ways,
 up to a limit you set. The calculator does real mathematics: equations, calculus, primes,
-statistics and matrices.
+statistics and matrices. And it writes tools of its own: when requests go unmet, a coder node
+picks building blocks from its code library, a toolsmith writes a tool from them with self-tests,
+and asks you before any of it runs. Once you approve it, the mesh tries the tool out on its own,
+teaches its router what the tool can do, and refines what falls short, asking you again.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
@@ -256,6 +259,8 @@ looks at its situation and picks a mode:
 | examine | sits a benchmark exam now, to measure itself |
 | improve | sets itself an improve task for its weakest skill (the Trainer and the Architect work on it first) |
 | consolidate | runs every memory node against its test file, and relearns what fails |
+| build | has the toolsmith write a tool for requests no tool could meet, and asks you for permission to use it (see [Tools it writes](#tools-it-writes-the-toolsmith-and-coder-nodes)) |
+| experiment | tries out a tool it wrote that you approved, and refines it if it falls short |
 | rest | nothing is worth its budget right now |
 
 **The agency node** sits in front of the Director. It is an internal capability like the
@@ -276,6 +281,8 @@ promoted like any other.
 | examine | a first measurement, or a change since the last one |
 | improve | held-out accuracy gained, or the target reached |
 | consolidate | faults found in memory nodes (finding none is worth a little) |
+| build | a tool written and offered for approval (nothing, if no recipe fits) |
+| experiment | the share of the tool's answers that were right |
 
 A choice that paid off is reinforced in that situation, even against the policy. One that did
 not, or a so-so one it keeps repeating, is relabelled with the policy's next best. The topic,
@@ -293,7 +300,8 @@ and checks its memory nodes, all with no orders.
 - `/director` shows its mode, who chose it, what has paid off, its tasks and recent decisions.
   `/director mode practise` pins a mode (`auto` hands the choice back to the agency node),
   `/director now` takes initiative now, and `/director off` turns it off (kept across restarts).
-- Its initiative never adds capabilities or approves tools (P10).
+- Its initiative never adds capabilities or approves tools (P10). A tool it writes runs only
+  once you approve it (P15).
 
 ### Directors: at both ends of every order
 The director is the mesh's executive. Every order passes a director twice:
@@ -421,6 +429,65 @@ exact where it can (fractions, big integers, surds):
 A quantity it does not know ("the number of bones in the human body times 2") becomes a question
 for a director. Word problems ("Sam has 23 apples and gives away 9") are not its job: a director
 sends those to the direct answer, so a teacher that can read them answers them.
+
+### Tools it writes: the toolsmith and coder nodes
+When requests go unmet, the mesh can write a tool for them. Nothing it writes runs until a person
+approves it (P15).
+
+```
+"reverse the word lantern"   no tool can do it: the order goes unmet
+   -> coder node      which recipe in the code library would meet it? (reverse)
+   -> toolsmith       fits the recipe to the request, writes tool.py, manifest.toml and TESTS.md
+                      into state/workshop/reverser/1.0.0/, checks the code, and asks you
+   -> you approve     /approve apv-1, /reply inq-3 yes, or Approve in the web interface
+   -> plugins/        vetted and self-tested like any tool (P3); its requests teach the router
+   -> experiment      on its own initiative: the requests it was made for, new ones like them, and
+                      fresh probes with known answers; what falls short is refined into v1.1.0,
+                      which asks you again
+"reverse the word lantern"   -> nretnal   [tool:reverser]
+```
+
+**The code library** (`neuromesh/codelib.py`) is 17 building blocks, each a plain readable
+function: reverse text, change case, count letters or vowels, palindromes, acronyms, sort words or
+numbers, Caesar/ROT13, base64, Morse code, Roman numerals, numbers in words, days between dates,
+the day of the week, extracting emails/links/hashtags, unit conversion, the most common word, and
+find-and-replace. A tool's `tool.py` is the block's own source and the helpers it calls, copied in
+with the parameters fitted for its requests, so the code you approve is code you can read. Each
+recipe also carries probes: request templates whose right answers are worked out independently of
+the block, so self-tests and experiments check it honestly.
+
+**The coder node** is an internal capability (`coder` in `capabilities.toml`), so it is grown,
+trained, evolved and promoted like any node. Its labels are the recipes, plus `none`. The coder
+teacher (the recipes' cues and practice requests) teaches it first; people teach it too, and so
+does every tool a person approves. Until it is trusted, the recipes' cues decide.
+
+**Before it asks,** the toolsmith checks the code: standard library only, and no files, network,
+processes, `eval`, `exec` or `__import__`. A made tool has no permissions, and its manifest says
+`author = "neuromesh"`. The Explorer runs a tool like that only if a person approved exactly
+those files: copy a made tool into `plugins/` by hand, or change its code after approval, and it
+waits for approval again.
+
+**Experiments** run only when it is idle and within budget (`experiments_per_hour`). It tries the
+tool on the requests it was made for, on new unmet requests the coder node says are alike, and on
+fresh probes. Every request it gets right teaches the router (source `experiment`) and comes off
+the list of unmet requests. When a request fails and the right answer is known (a probe, or an
+answer a person gave), it searches for the change that makes the block give that answer, checks
+the change against every probe, and offers it as a new version. The installed version keeps
+running until you approve the new one. Decline it and that version is not refined again. A failure
+with no known answer is reported, not guessed at.
+
+**Asking for one:** "make a tool that converts numbers to roman numerals" as an order,
+`/toolsmith build reverse a word`, or `POST /toolsmith {"build": "..."}`. With an LLM teacher (and
+`llm_code = true`), a request no recipe fits can be written by the teacher. That code is checked
+the same way and asks the same permission.
+
+`/toolsmith` shows the coder node, the requests it could write a tool for, every tool it made and
+its status, and recent work. `/toolsmith show reverser` shows a tool's files, self-tests and
+experiments, and `/toolsmith try reverser` runs an experiment now. In the web interface, the
+Mind tab has the same, with Approve, Decline and Try it out buttons. `[toolsmith]` in the
+directives sets its budgets (`builds_per_hour`, `max_waiting`, `experiments_per_hour`), how sure
+the coder node must be (`need_confidence`), what counts as proven (`proven_score`), and how long a
+declined recipe rests (`retry_after_seconds`).
 
 ### Sleep and dreams: dream nodes, and imagination
 When no one has given it an order for a while (`sleep_after_idle_seconds`), the mesh has a chance
@@ -785,6 +852,7 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P11 tested memory | knowledge lives in a memory node checked by its external test file; a smaller node is accepted only if all its answers still match; a merged node only if it passes at least 90% of both nodes' tests, and the ones it fails are never served and are relearned; people's edits to the tests are retrained to |
 | P12 accountable initiative | the mesh takes initiative only when idle and within its own budget; every decision is audited and logged; the tasks it sets itself can be paused or removed; people can pin its mode or turn it off; it never adds capabilities or approves tools |
 | P14 directed orders | there is always at least one director node (director-0 never retires, and is restarted if it stops); every order passes a director on the way in and on the way out; nothing enters long-term memory without a director's review; duplicates stay within `max_directors`; a director only adds disclosed notes (P8), always keeps a person's word (P1), never stores imagination (P13); an unanswered order is tried other ways at most `max_attempts` times, and a reply that gives up says what was tried (P7) |
+| P15 self-made tools | no code the mesh wrote runs before a person approves it (the Explorer runs an `author = "neuromesh"` tool only if those exact files were approved, so changed code asks again); its code is standard library only and checked before it is offered (no files, network, processes, `eval` or `exec`); made tools never get permissions and are self-tested like any tool (P3); experiments run only when idle and within budget; every draft, approval, experiment and refinement is audited |
 | P13 dreams are not facts | dreaming uses only what the mesh already holds, never a research tool or a teacher; an imagined response always says so and names the dream node it came from; imagination is never stored as a fact or used to answer an ordinary question |
 
 **Goals** are measured continuously and shown on the scorecard (`/status`): competence
@@ -880,6 +948,7 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /director    /director mode examine    /director mode auto    /director now    /director off
 /dreams    /sleep    /wake    /imagine a city on Mars    what if Ada Lovelace painted the Mona Lisa
 /directors    /directors spawn    /directors retire director-1    /directors attempts 5
+make a tool that reverses text    /toolsmith    /toolsmith build count the vowels    /toolsmith show reverser    /toolsmith try reverser    /toolsmith recipes
 solve x^2 - 5x + 6 = 0    derivative of ln(x^2+1)    integrate x^2 from 0 to 3    is 91 prime
 /memorize What is the capital of Australia? :: Canberra is the capital of Australia.    /memory    /memory mem-0001    /memory test    /memory merge    /memory forget <question>
 what do you think of the calculator tool?    are you hiding anything?    what do you know about me?
@@ -908,7 +977,8 @@ it next to the live console, run `python -m neuromesh run --web` (or `--web 9000
   forget a fact.
 - **Mind**: the directors (each director node and what it is doing, the stance its mood gives
   them, add or retire a duplicate, recent reviews and their second opinions, what was kept out
-  of memory), its initiative (turn it on or off, pin a mode, take initiative now, recent decisions,
+  of memory), the tools it writes (ask for one, approve or decline a draft, try one out, the
+  requests it could write a tool for), its initiative (turn it on or off, pin a mode, take initiative now, recent decisions,
   what has paid off, the tasks it set itself), sleep and dreams (send it to sleep or wake it,
   imagine something, its dream nodes, last night, recent dreams), questions for you (reply), proposals (adopt or decline), the opinions and notes it
   shares, investigate something, the temperament.
@@ -956,6 +1026,8 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | POST | `/director` | `{"mode": "auto" \| "research" \| ..., "enabled": true \| false, "decide": true}` |
 | GET | `/directors` | the director nodes, their stance, recent reviews, what was kept out of memory |
 | POST | `/directors` | `{"action": "spawn"}`, `{"action": "retire", "id": "director-1"}`, or `{"attempts": 5}` |
+| GET | `/toolsmith` | the coder node, the tools it wrote (drafts awaiting approval, installed, proven), unmet requests it could write a tool for, recent work |
+| POST | `/toolsmith` | `{"build": "reverse a word"}` writes a tool and asks permission; `{"try": "reverser"}` experiments with one it made. Approve a draft with `POST /approve` |
 | GET | `/dreams` | asleep or awake, the dream nodes and their fitness, last night, recent dreams |
 | POST | `/dreams` | `{"action": "sleep" \| "wake"}` |
 | POST | `/imagine` | `{"prompt": "a city on Mars"}`: an imagined response (labelled, never stored) |
@@ -1185,6 +1257,12 @@ derivations, moving weights between devices). They are skipped where no GPU libr
 - **Self-improvement is bounded on purpose**: the system can create, train, promote and delete
   nodes, and test and activate *approved* tools. It cannot grant itself permissions, approve
   its own tools, change its directives, or exceed its budgets.
+- **The tools it writes** are assembled from its code library, so offline they can only do what
+  those 17 blocks do; the coder node chooses among them, it does not invent algorithms. Refinement
+  adjusts how a tool reads a request, checked against known answers. The code check is a static
+  allow-list, not a proof: the approval is the real safeguard, which is why nothing runs before it
+  and why the code is written to be read. With an LLM teacher it can write other tools, and those
+  deserve the same careful reading before you approve them.
 - **Research reaches the internet** only through the approved wikipedia tool, within hourly
   budgets, and background curiosity stays within `max_depth` of what users asked. The kiwix tool
   talks only to the server you configure; it is exempt from the budgets because that server is yours. Retained
@@ -1214,7 +1292,8 @@ derivations, moving weights between devices). They are skipped where no GPU libr
 ```
 directives.toml          constitution: prime directives, goals, policy
 capabilities.toml        seed skills
-plugins/                 installed tools (calculator with mathsolver.py, word_stats, wikipedia, kiwix)
+plugins/                 installed tools (calculator with mathsolver.py, word_stats, wikipedia, kiwix), and
+                         tools it wrote once you approve them (drafts wait in state/workshop/)
 challenges/              challenge suites (small samples; fetched benchmarks go to state/challenges/)
 memory_tests/            the memory nodes' test files (written by the mesh, editable by people)
 examples/incoming_plugins/  tools the demo installs at runtime
@@ -1241,11 +1320,13 @@ neuromesh/
   memory.py              memory nodes: facts compressed into small networks, their test files, compression (P11)
   agency.py              independent agency: the Director, its modes, the drive policy and the agency node (P12)
   directors.py           the directors: intake, review, second opinions, the memory gate, duplicates, the stance (P14)
+  toolsmith.py           the toolsmith: the coder teacher, writing, checking and offering tools, approval, experiments, refinement (P15)
+  codelib.py             the code library: the building blocks made tools are written from, with probes to test them
   dreams.py              sleep and dreams: dream synthesis, dream nodes, waking review, their genetic algorithm, imagination (P13)
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   174 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   186 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -1259,6 +1340,9 @@ tests/                   174 tests: nodes, guardian, LLM wire formats and a mock
                          imagination labelled and never stored), directors (always one, both ends of
                          every order, the memory gate, disclosed disagreements, duplicates, the mood,
                          tools asking directors, retries up to max_attempts), the calculator's mathematics,
+                         the toolsmith (every recipe's code passes its probes, the code check, nothing
+                         runs before approval, changed code asks again, experiments and refinement,
+                         initiative that builds and experiments, the coder node taking over),
                          temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,
                          questions, proposals, investigations), background tasks, full system,

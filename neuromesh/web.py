@@ -72,7 +72,7 @@ def mesh(system) -> dict:
         routes.append(item)
     waiting = [{"name": t.name, "state": t.state, "note": t.note, "route": t.manifest.route}
                for t in s.tools.tools.values() if t.manifest.route not in spec.labels]
-    engines = ([_family(s, c) for c, sp in s.capabilities.items() if sp.internal and sp.kind != "agency"]
+    engines = ([_family(s, c) for c, sp in s.capabilities.items() if sp.internal and sp.kind not in ("agency", "coder")]
                if s.affect.enabled else [])
     mem = s.memory
     memory = [{"id": n.id, "facts": len(n.facts()), "bytes": n.bytes, "first_bytes": n.first_bytes,
@@ -101,10 +101,28 @@ def mesh(system) -> dict:
                  "nodes": [{"id": n.id, "role": n.role, "parent": n.parent, "doing": n.doing(),
                             "busy": n.state != "idle" or bool(n.initiative), "handled": dict(n.handled)}
                            for n in pool.nodes.values()]}
-    return {"directors": directors, "dreams": dreams, "director": director, "router": _family(s, DISPATCH), "routes": routes, "waiting": waiting, "engines": engines,
+    sm = s.toolsmith
+    coder = s.registry.champion("coder") if "coder" in s.capabilities else None
+    toolsmith = {"enabled": sm.enabled, "node": node_brief(coder) if coder else None,
+                 "trusted": bool(coder and (coder.metrics.get("holdout_acc") or 0) >= s.directives.nodes.serve_min_accuracy),
+                 "recipes": len(sm_recipes()),
+                 "needs": [{"recipe": g["recipe"], "count": len(g["texts"]), "example": g["texts"][0][:80]}
+                           for g in sm.needs()[:4]] if sm.enabled else [],
+                 "tools": [{"name": d["name"], "version": d["version"], "status": d["status"], "title": d["title"],
+                            "recipe": d["recipe"], "approval": d.get("approval") if d["status"] == "awaiting approval" else None,
+                            "score": d.get("score"), "live": d.get("live"),
+                            "state": s.tools.tools[d["name"]].state if d["name"] in s.tools.tools else None}
+                           for d in sm.drafts.values()],
+                 "recent": [h["line"] for h in list(sm.history)[-3:]]}
+    return {"directors": directors, "toolsmith": toolsmith, "dreams": dreams, "director": director, "router": _family(s, DISPATCH), "routes": routes, "waiting": waiting, "engines": engines,
             "memory": memory, "memory_enabled": mem.enabled,
             "guard": {"checked": sum(a.decisions.values()), "changed": sum(v for k, v in a.decisions.items() if k != "pass"),
                       "held": len(a.held), "withheld": a.decisions.get("block", 0)} if a.enabled else None}
+
+
+def sm_recipes():
+    from .codelib import RECIPES
+    return RECIPES
 
 
 def work(system) -> dict:

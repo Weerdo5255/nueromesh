@@ -377,6 +377,33 @@ class LLMTeacher(Teacher):
                   "reasoning, caveats or sources after it, never before. Be concise and say if you are unsure.")
         return await self._ask(system, text)
 
+    async def write_tool(self, requests: list[str]) -> dict | None:
+        """Write a small tool (Python, standard library only) for requests the mesh could not meet."""
+        schema = {"type": "object", "required": ["name", "description", "code", "examples"],
+                  "properties": {"name": {"type": "string"}, "description": {"type": "string"},
+                                 "code": {"type": "string"},
+                                 "examples": {"type": "array", "items": {"type": "object", "required": ["input", "expect"],
+                                              "properties": {"input": {"type": "string"}, "expect": {"type": "string"}}}}}}
+        system = ("You write small, safe command-line tools for a multi-agent system. Reply with a single JSON object "
+                  "and nothing else.")
+        user = ("Write ONE Python tool that meets requests like these:\n" + "\n".join(f"- {r[:200]}" for r in requests)
+                + "\n\nRules: the code reads one JSON object from stdin ({\"input\": \"<the request text>\"}) and prints "
+                'one JSON object: {"output": <answer>, "say": "<one sentence>"} or {"error": "<why>"}. Use only these '
+                "modules: json, re, sys, math, string, datetime, base64, collections, itertools, statistics, textwrap, "
+                "unicodedata. No files, no network, no subprocesses, no eval or exec. Give 3 to 5 examples "
+                '(input and the expected output). JSON: {"name": "<snake_case>", "description": "...", "code": "...", '
+                '"examples": [{"input": "...", "expect": "..."}]}')
+        data = _extract_json(await self._ask(system, user, schema) or "")
+        if not data or not isinstance(data.get("code"), str):
+            return None
+        name = _clean_label(str(data.get("name", "")))
+        examples = [{"input": str(e.get("input", ""))[:300], "expect": str(e.get("expect", ""))[:300]}
+                    for e in (data.get("examples") or []) if isinstance(e, dict) and e.get("input")][:6]
+        if not re.fullmatch(r"[a-z][a-z0-9_]{1,30}", name or "") or not examples:
+            return None
+        return {"name": name, "description": str(data.get("description", ""))[:200], "code": data["code"][:20000],
+                "examples": examples}
+
     async def propose(self, examples: list[str], known: list[str], hint: str = "") -> dict | None:
         """Draft one new capability from requests the mesh could not fulfil."""
         schema = {"type": "object", "required": ["kind", "name", "description"],
@@ -604,6 +631,21 @@ class TeacherPool:
                 draft = await teacher.propose(examples, known, hint)
             if draft:
                 return draft, teacher.name
+        return None
+
+    def has_llm(self) -> bool:
+        """An LLM teacher is listed and available."""
+        return any(isinstance(t, LLMTeacher) for t in self.ranked())
+
+    async def write_tool(self, requests: list[str]) -> tuple[dict, str] | None:
+        """Have the first available LLM teacher write a tool's code (None offline)."""
+        for teacher in self.ranked():
+            if not isinstance(teacher, LLMTeacher):
+                continue
+            with self._track(teacher, f"writing a tool for {len(requests)} requests"):
+                made = await teacher.write_tool(requests)
+            if made:
+                return made, teacher.name
         return None
 
     async def answer(self, text: str) -> tuple[str, str] | None:

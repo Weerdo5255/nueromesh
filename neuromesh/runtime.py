@@ -35,6 +35,7 @@ from .store import Store
 from .tasks import DIRECT, DISPATCH, CapabilitySpec, Inference, Order, Result
 from .teachers import HeuristicTeacher, HumanTeacher, LLMTeacher, TeacherPool
 from .temperament import Affect, TemperamentTeacher
+from .toolsmith import CoderTeacher, Toolsmith
 from .tools import ACTIVE, APPROVED, QUARANTINED, RETIRED, Sandbox, Tool, ToolRegistry, ToolRun
 
 log = logging.getLogger("neuromesh")
@@ -81,6 +82,7 @@ class System:
         teachers["temperament"] = TemperamentTeacher(seed)  # specialist: teaches only the disposition engine
         teachers["challenge"] = ChallengeTeacher(seed)  # benchmark suites: gold answers for practice items
         teachers["agency"] = AgencyTeacher(seed)        # specialist: the drive policy for the agency node
+        teachers["coder"] = CoderTeacher(seed)          # specialist: the code library's cues, for the coder node
         self.teachers = TeacherPool(teachers, tp.order, tp.weights)
         self.teachers.activity, self.teachers.bus = self.activity, self.bus
 
@@ -99,6 +101,8 @@ class System:
         self.bus.listen(self.evolution.on_event)
         self.memory = MemoryBank(self)      # what it learns, compressed into memory nodes checked by test files
         self.dreams = DreamBank(self)       # sleep, dream nodes, and imagination
+        self.toolsmith = Toolsmith(self)    # coder nodes write tools, ask permission, and experiment with them (P15)
+        self.bus.listen(self.toolsmith.on_event)
 
         self.orders: asyncio.Queue = asyncio.Queue()
         self.inflight = 0
@@ -123,6 +127,7 @@ class System:
         self.started_at = time.time()
         self.guardian.check_kill_switch()
         await self.teachers.refresh(force=True)  # find local model servers before the first order
+        self.toolsmith.resume()  # tools it wrote that were waiting for approval ask again
         explorer = next(a for a in self.agents if isinstance(a, Explorer))
         try:  # vet and activate installed tools before the first order is taken
             await explorer.step()
@@ -603,6 +608,7 @@ class System:
             "memory": self.memory.status(),
             "agency": self.director.status(),
             "directors": self.directors.status(),
+            "toolsmith": self.toolsmith.status(),
             "dreams": self.dreams.status(),
             "scorecard": self.scorecard(),
             "agents": {a.name: dict(a.stats) for a in self.agents},

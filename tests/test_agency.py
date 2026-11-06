@@ -24,7 +24,8 @@ AGENCY_ON = {**FAST,
 
 def flags(**kw):
     f = {"skills": "ok", "gap": "none", "topics": "none", "research": "off", "exams": "none", "scores": "none",
-         "memory": "none", "last": "none", "streak": "one", "budget": "ok", "selftasks": "none", "mood": "steady"}
+         "memory": "none", "last": "none", "streak": "one", "budget": "ok", "selftasks": "none", "mood": "steady",
+         "needs": "none", "newtools": "none"}
     f.update(kw)
     return f
 
@@ -51,6 +52,12 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(policy(flags(skills="weak", gap="large", topics="some", research="ready", last="improve",
                                       streak="many"))[0], "research")
         self.assertEqual(policy(flags(skills="weak", gap="large"), exclude=("improve",))[0], "rest")
+        # the toolsmith (P15): requests nothing met, and tools it made but has not tried out yet
+        self.assertEqual(policy(flags(needs="some"))[0], "build")
+        self.assertEqual(policy(flags(newtools="fresh", needs="many"))[0], "experiment")
+        self.assertEqual(policy(flags(needs="some", memory="failing"))[0], "consolidate")
+        self.assertEqual(policy(flags(needs="some", mood="wary"))[0], "rest")   # wary: it makes nothing new
+        self.assertEqual(policy(flags(needs="some", mood="wary"))[1], "it is wary, so it checks what it already holds instead of reaching outside")
 
     def test_what_is_possible(self):
         self.assertEqual(feasible(flags()), {"rest"})
@@ -59,6 +66,7 @@ class PolicyTests(unittest.TestCase):
         self.assertNotIn("examine", feasible(flags(exams="fresh")))
         self.assertNotIn("improve", feasible(flags(skills="weak", selftasks="full")))
         self.assertEqual(_clean_topic("  the Krebs cycle every 2m?"), "the Krebs cycle")
+        self.assertEqual(feasible(flags(needs="some", newtools="fresh")), {"rest", "build", "experiment"})
 
     def test_the_policy_teaches_the_agency_node(self):
         spec = type("Spec", (), {"name": AGENCY})()
@@ -189,7 +197,7 @@ class AgencyNodeTests(unittest.IsolatedAsyncioTestCase):
             teacher = s.teachers.teachers[AGENCY]
             spec = s.capabilities[AGENCY]
             for mode in MODES:
-                for text in await teacher.generate(spec, mode, 14):
+                for text in await teacher.generate(spec, mode, 20):
                     s.learn(AGENCY, text, mode, "agency")
 
             def trusted():

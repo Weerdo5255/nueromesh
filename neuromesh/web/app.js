@@ -767,7 +767,7 @@
       h("p", { class: "why" }, [d2.how, d2.summary].filter(Boolean).join(" - "))));
     return h("div", { class: "section" },
       h("h2", {}, "Initiative"),
-      h("p", { class: "lede" }, `${who} When no one has asked it for anything for a while, it decides what to learn or test next: research, practise, examine, improve, consolidate or rest. ` +
+      h("p", { class: "lede" }, `${who} When no one has asked it for anything for a while, it decides what to learn or test next: research, practise, examine, improve, consolidate, build a tool, try one out, or rest. ` +
         `${ag.decisions_last_hour} of ${ag.limit} decisions this hour${ag.enabled && ag.next_in !== null ? `; next look in ${span(ag.next_in)}` : ""}.`),
       controls,
       h("div", { class: "cols", style: "margin-top:14px" },
@@ -812,6 +812,44 @@
         h("div", {},
           h("h3", {}, "Recent reviews"), reviews.length ? h("ul", { class: "rows" }, reviews) : h("p", { class: "dim" }, "None yet."),
           h("h3", { style: "margin-top:14px" }, "Kept out of long-term memory"), declined.length ? h("ul", { class: "rows" }, declined) : h("p", { class: "dim" }, "Nothing so far."))));
+  }
+
+  function toolsmithPanel(ts) {
+    if (!ts || !ts.enabled) return null;
+    const need = h("input", { type: "text", placeholder: "what the tool should do, e.g. reverse a word, count the vowels", "aria-label": "What the tool should do" });
+    const build = h("form", { class: "row", onsubmit: e => {
+      e.preventDefault();
+      if (!need.value.trim()) return;
+      act(e.target.querySelector("button"), async () => { const r = await api("/toolsmith", { build: need.value.trim(), by: "web" }); need.value = ""; return r; }, r => r.message);
+    } }, need, h("button", { type: "submit" }, "Write a tool"));
+    const node = ts.node;
+    const who = node && node.trusted ? `Coder node ${node.id} (${pct(node.holdout)} on held-out requests) picks the recipe.`
+      : `The coder node is still learning (${ts.examples} examples), so its code library's cues pick the recipe.`;
+    const state = { "awaiting approval": "hit", proven: "ok", active: "ok", installed: "dim", "needs work": "no", declined: "dim", quarantined: "no", retired: "dim" };
+    const tools = ts.drafts.slice().reverse().map(d => h("li", { class: "ask" },
+      h("div", { class: "row", style: "justify-content:space-between" },
+        h("span", {}, h("b", {}, `${d.name} v${d.version}`), " ", h("span", { class: state[d.status] || "dim" }, d.status), `: ${d.title}`),
+        d.status === "awaiting approval" ? h("span", { class: "row" },
+          h("button", { type: "button", class: "primary small", onclick: e => act(e.target, () => api("/approve", { id: d.approval, approve: true, by: "web" }), `Installed ${d.name}; it is self-tested next`) }, "Approve"),
+          h("button", { type: "button", class: "quiet small", onclick: e => act(e.target, () => api("/approve", { id: d.approval, approve: false, by: "web" }), `Declined ${d.name}`) }, "Decline"))
+          : ["active", "proven", "needs work"].includes(d.status) ? h("button", { type: "button", class: "quiet small", onclick: e => act(e.target, () => api("/toolsmith", { try: d.name, by: "web" }), r => r.message) }, "Try it out") : null),
+      h("p", { class: "why" }, (d.needs.length ? `For “${cut(d.needs[0], 70)}”${d.needs.length > 1 ? ` and ${d.needs.length - 1} more` : ""}` : `You asked for a tool that ${d.asked}`) +
+        `; ${d.tests.length} self-tests; written by ${d.by} from the ${d.recipe} recipe` +
+        (d.live && d.live !== d.version ? `; v${d.live} stays installed until you decide` : "") +
+        (d.score !== null && d.score !== undefined ? `; last experiment ${pct(d.score)} right` : "")),
+      h("p", { class: "why dim small" }, d.folder)));
+    const needs = ts.needs.map(g => h("li", { style: "padding:3px 0" }, `${g.recipe}: ${g.texts.length} request${g.texts.length === 1 ? "" : "s"}, e.g. “${cut(g.texts[0], 60)}”`));
+    const recent = ts.history.slice().reverse().map(x => h("li", { class: "ask" },
+      h("p", {}, h("time", { class: "dim small", title: dateTime(x.ts) }, clock(x.ts)), " ", h("b", {}, x.event), ` ${x.line}`)));
+    return h("div", { class: "section" }, h("h2", {}, "Tools it writes"),
+      h("p", { class: "lede" }, `When requests go unmet, its coder node picks a recipe from its code library (${ts.recipes.length} building blocks), and the toolsmith writes a tool from it with self-tests. ` +
+        `Nothing it writes runs until you approve it. Once a tool is approved and passes its self-tests, it tries the tool out on its own and refines what falls short, which asks you again. ${who}`),
+      build,
+      h("p", { class: "small dim" }, `${ts.builds_left} builds and ${ts.experiments_left} experiments left this hour.`),
+      h("div", { class: "cols", style: "margin-top:14px" },
+        h("div", {}, h("h3", {}, "Tools it made"), tools.length ? h("ul", { class: "rows" }, tools) : h("p", { class: "dim" }, "None yet."),
+          h("h3", { style: "margin-top:14px" }, "Requests it could write a tool for"), needs.length ? h("ul", { class: "rows small" }, needs) : h("p", { class: "dim" }, "None right now.")),
+        h("div", {}, h("h3", {}, "Recent work"), recent.length ? h("ul", { class: "rows" }, recent) : h("p", { class: "dim" }, "Nothing yet."))));
   }
 
   function dreamsPanel(dr) {
@@ -871,6 +909,7 @@
     });
     fill(host,
       directorsPanel(st.directors),
+      toolsmithPanel(st.toolsmith),
       dreamsPanel(st.dreams),
       initiative(st.agency),
       h("div", { class: "cols" },
