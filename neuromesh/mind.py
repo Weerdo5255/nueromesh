@@ -361,8 +361,9 @@ class Mind:
             if res.route == DIRECT:
                 routes = [r for r in s.dispatch.active_labels() if r != DIRECT]
                 short = " ".join(order.text.split())[:80]
-                inq = self.ask("clarify", f"I couldn't fulfil '{short}'. What did you mean? Say it another way, "
-                               f"or name a route: {', '.join(routes)}.", "an order nothing could fulfil",
+                tell = " or tell me the answer ('answer: ...')," if s.memory.allows("people") else ""
+                inq = self.ask("clarify", f"I couldn't fulfil '{short}'. What did you mean? Say it another way,"
+                               f"{tell} or name a route: {', '.join(routes)}.", "an order nothing could fulfil",
                                options=routes, order_id=res.order_id)
                 if inq is not None:
                     res.inquiry = {"id": inq.id, "question": inq.question}
@@ -503,6 +504,15 @@ class Mind:
         if q.kind == "clarify":
             record = s.store.get_order(q.order_id)
             original = record["text"] if record else ""
+            told = re.match(r"^\s*(?:answer|the answer is)\s*[:=-]?\s*(.+)$", a, re.I | re.S)
+            if told and original and s.memory.allows("people"):  # they told it the answer: remember it
+                made = s.memory.learn(original, told.group(1), f"you told me ({q.id})", by=by, kind="people")
+                self._close(q, "answered", a, by)
+                self.unmet.pop(q.order_id, None)
+                if made is None:
+                    return False, ["  thanks - but I couldn't keep that as an answer"]
+                return True, [f"  thanks - I'll remember that: compressing it into memory node {made[0]} "
+                              f"(tests in {s.memory.tests_dir.name}/{made[0]}.toml)"]
             labels = s.dispatch.labels
             route = next((r for r in (a, f"tool:{low}", f"skill:{low}") if r in labels), None)
             if route and original:

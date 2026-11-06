@@ -49,6 +49,10 @@ text = "The mesh may keep private notes and opinions and decline to share them w
 id = "P10-human-adopted-growth"
 text = "The mesh may ask users questions and propose new skills, labels and tools, but a proposal takes effect only when a human adopts it. It never adopts its own proposals or approves its own tool permissions; when it wants a tool that needs approval, it asks."
 
+[[prime]]
+id = "P11-tested-memory"
+text = "Knowledge compressed into a memory node is checked by that node's external, human-readable test file. A smaller node replaces a larger one only if every answer still matches the tests; the tests belong to people as much as to the mesh: an edited test is retrained to, a deleted test is forgotten. (Enforced in code by neuromesh/memory.py.)"
+
 # ------------------------------------------------------------------------- goals
 [[goals]]
 id = "G1-competence"
@@ -177,6 +181,35 @@ idle_cooldown_factor = 4.0              # how much more slowly
 min_neurons = 8
 max_params = 1500000                    # largest node it may breed
 archive_size = 40                       # genomes remembered per capability
+
+[memory]
+# Memory nodes: everything the mesh learns - facts from retained articles, teacher answers, what
+# people tell it, challenge practice answers - is compressed into small neural networks. As it
+# does this it writes an external, human-readable test file per node (tests_dir/<node>.toml): the
+# questions with the answers the node must give, and questions it must not answer. The compressor
+# then keeps trying smaller nodes - fewer input features, neurons, layers and bits per weight -
+# and a smaller node replaces the current one only if every test still passes (P11). Edit a test
+# file and the node is retrained to match; delete a test or the file and it forgets.
+enabled = true
+learn_from = ["knowledge", "teachers", "people", "challenges"]
+serve = true                            # answer questions from memory nodes before anything else
+answer_threshold = 0.6                  # confidence a node needs to answer
+test_margin = 0.1                       # a test passes only with a margin: answers at >= 0.7, unknowns below 0.5
+tests_dir = "memory_tests"              # relative to the root
+facts_per_node = 40
+start_hidden = [64]                     # the shape a node first learns in; then it is compressed
+max_hidden = 256                        # how far a node may grow when it cannot hold its facts
+compress = true
+min_fold = 32                           # fewest hashed input features a node may fold down to
+min_neurons = 4
+min_bits = 8                            # 32, 16 or 8 bits per weight
+unknown_tests = 30                      # other nodes' questions each test file says it must not answer
+probe_tests = 6                         # tool / skill / small-talk questions it must not answer
+near_miss_tests = 1                     # per fact: the question with a key word swapped, not to be answered
+learn_epochs = 400
+compress_epochs = 250
+interval_seconds = 0.5
+sync_seconds = 2.0                      # how often the test files are checked for people's edits
 
 [challenges]
 # Open-source LLM benchmarks as a teacher. Each suite is split once into practice (graded, and

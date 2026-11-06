@@ -14,7 +14,9 @@ It also has a mind of its own: opinions formed from experience, private notes it
 itself, questions it asks you, capabilities it proposes for you to adopt, and investigations
 it starts on its own with its tools and nodes. You can give it background tasks that it keeps
 working on continuously: study a topic, train a skill to a target, or repeat an order and tell
-you when the result changes.
+you when the result changes. What it learns is compressed into memory nodes, small neural
+networks that each come with an external test file you can read and edit, and which it keeps
+shrinking for as long as every test still passes.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
@@ -23,6 +25,7 @@ python -m neuromesh run       # live console: node network, lessons in progress,
 python -m neuromesh serve     # daemon + HTTP API on 127.0.0.1:8765
 python -m neuromesh bench     # CPU vs GPU speed for node training and inference
 python -m neuromesh teachers  # which teachers are available (Ollama, Claude); --test for a live lesson
+python -m neuromesh memory test   # run every memory node against its test file
 ```
 
 Requirements: Python 3.11+ and numpy. Optional: [Ollama](https://ollama.com) for a local
@@ -110,6 +113,101 @@ fitness, how many genomes were tried and promoted, and the champion's size over 
 `/evolution sentiment` lists its recent genomes with their parents, changes and outcomes. The
 archive survives restarts. Turn it off with `[evolution] enabled = false` to go back to the
 fixed derivations above.
+
+### Memory nodes: what it learns, compressed and tested
+Everything the mesh learns as a fact (a question and the answer it came to) is compressed into a
+**memory node**: a small neural network that maps the question, and other ways of asking it, to
+the answer. Facts come from:
+
+| learned from | example |
+|---|---|
+| research | every retained article ("Tell me about Ada Lovelace"), and every answer it gave from retained or researched passages |
+| teachers | an LLM teacher's direct answer to a question (the source says it was a language model) |
+| people | `/memorize <question> :: <answer>`, `POST /memorize`, replying `answer: ...` when it asks what you meant, or a test file you write |
+| challenges | the practice answers of numeric, short-answer, yes/no and multiple-choice suites (never the exam's) |
+
+Skills and routes already live in skill nodes and the router; memory nodes hold the facts.
+
+**The tests.** As it compresses a fact, the mesh writes an external, human-readable test file
+for the node, `memory_tests/<node>.toml`:
+
+```toml
+# Memory node mem-0001: what NeuroMesh has learned, compressed into a small neural network.
+# These tests are the contract: the node must give exactly these answers, and must not answer
+# the [[unknown]] questions. A smaller node replaces it only if it passes every test.
+node = "mem-0001"
+facts = 10
+size = "440 bytes: 32 inputs, hidden none, 8-bit (first 265,260 bytes)"
+passing = "31/31"
+history = [
+  "2026-11-06 09:41 learned: 10 facts in 265,260 bytes (1024 inputs, hidden 64, 32-bit); 31/31 tests pass",
+  "2026-11-06 09:41 compressed: 265,260 -> 45,100 bytes (no hidden layer (linear)); all 31 tests pass",
+  ...
+]
+
+[[test]]
+ask = "What is the capital of Australia?"
+answer = "Canberra is the capital of Australia."
+source = "the operator"
+
+[[test]]
+ask = "capital of Australia"
+answer = "Canberra is the capital of Australia."
+variant_of = "What is the capital of Australia?"
+
+[[unknown]]
+ask = "What is the capital of Lantern?"
+reason = "auto: a near miss of 'What is the capital of Australia?' - must not be answered as if it were"
+```
+
+Each fact gets a test as it was asked, plus the bare subject for "what is / who was / tell me
+about" questions. The `[[unknown]]` tests are questions the node must **not** answer: tool,
+skill and small-talk questions, every other node's questions, and a near miss of each of its own
+questions (a key word swapped), so a node cannot pass by keying off the shape of a question.
+A test passes only with a margin: an answer needs confidence of at least 0.7 (it is served at
+0.6), and an unknown must stay below 0.5.
+
+**Compression.** A node first learns in a roomy shape (1,024 hashed input features, a hidden
+layer of 64, 32-bit weights). The Compressor then keeps trying smaller nodes, the biggest saving
+first:
+
+| step | what it does |
+|---|---|
+| fold inputs | hash the features into half as many inputs (1024 -> 512 -> ... -> 32) |
+| narrow a layer | prune the least important neurons |
+| drop a layer | fold a hidden layer into the next (down to a linear model) |
+| fewer bits | 32-bit -> 16-bit floats -> 8-bit integers per weight |
+
+Each candidate is fine-tuned and then run against the node's tests. **It replaces the node only
+if every test passes** (P11, enforced in `neuromesh/memory.py`); otherwise it is discarded and the
+next step is tried. When no step passes, the node is as small as its tests allow. New facts make
+it grow again if they need room (back to 32-bit, more inputs, more neurons), then compression
+resumes. In the demo, ten facts first learned in 265,260 bytes end up in 440 bytes (32 inputs,
+no hidden layer, 8-bit weights) with all 31 tests passing, and the node still answers questions
+asked in other words ("what's the capital of Australia?"). More facts need more room: 22 facts
+stop at 128 inputs (about 3 KB), where a smaller node starts failing their tests.
+
+**People own the tests too.** The mesh checks the files every couple of seconds:
+- change an answer: the node is retrained to give the new one (the old answer is not served meanwhile);
+- add a `[[test]]` (ask + answer) or an `[[unknown]]`: it is learned;
+- delete a test: that fact is forgotten; delete the file: the node is forgotten (its weights are
+  moved to `state/memory/forgotten/`);
+- write a new `.toml` file in `memory_tests/`: a new node learns it.
+
+**Answering.** Memory nodes are asked first, before routing: when one is confident (0.6) the
+answer comes from it, with its source:
+
+```
+> what's the capital of Australia?
+Canberra is the capital of Australia.
+Source: memory node mem-0001 (440 bytes, from 265,260; 31/31 tests pass), learned from the operator  [answer:direct | conf 0.91 | nodes]
+```
+
+`/memory` lists the nodes (facts, size now and when first learned, shape, tests), `/memory <node>`
+shows one with its compression history, `/memory test` runs every node against its file now, and
+`python -m neuromesh memory test` does the same from outside the mesh without changing anything
+(exit code 1 if a test fails). `/memory forget <question>` forgets a fact. Tune it in
+`[memory]` in `directives.toml`; `enabled = false` turns it off.
 
 ### Replies: the result first, in its own words
 Every reply leads with the result, said in the mesh's own words. Sources come after it, then
@@ -393,6 +491,7 @@ All run concurrently (asyncio) and coordinate through a message bus, the registr
 | Researcher | reads up in the background (own hourly budget) on articles linked from what users asked about, and refreshes retained knowledge that has aged |
 | Investigator | the mesh's own initiative: re-forms opinions, drafts proposals, and investigates goals with its tools and nodes (own hourly budget); follows up on orders it couldn't fulfil |
 | TaskRunner | runs the background tasks you set (learn / improve / run), one at a time, on background capacity and its own hourly budget |
+| Compressor | compresses learned facts into memory nodes, writes their test files, keeps trying smaller nodes (accepted only if every test passes), and retrains to people's edits of the tests |
 | Sentinel | watches the kill switch, re-checks local teacher servers (Ollama), lets the mood settle and saves it, publishes heartbeats with the directive scorecard |
 
 Background agents yield whenever an order is in flight and stay within a compute duty cycle.
@@ -413,6 +512,7 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P8 never lie | the temperament may withhold, delay, shorten or add context or a gentler tone, never change an answer; every change is disclosed; distressed people are never kept waiting (the honesty guard in `neuromesh/temperament.py`) |
 | P9 discretion | private notes and opinions are declined, never denied or faked; opinions about people are always private; the operator sees everything (`/mind`, audited) |
 | P10 human-adopted growth | the mesh proposes skills, labels and tools and asks questions; only a human adopts a proposal or approves a tool |
+| P11 tested memory | knowledge lives in a memory node only while that node passes every test in its external test file; a smaller node is accepted only if all its answers still match; people's edits to the tests are retrained to |
 
 **Goals** are measured continuously and shown on the scorecard (`/status`): competence
 (held-out accuracy), autonomy (share of orders served by nodes), tool fluency, economy.
@@ -504,6 +604,7 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /task learn jazz    /task improve urgency to 0.95    /task every 10m: what is 2+2    /tasks    /task pause task-1
 /challenges    /challenge run sample-sentiment    /challenge practice gsm8k 50    /challenge fetch sst2 500    /task challenge gsm8k every 30m
 /evolution    /evolution sentiment
+/memorize What is the capital of Australia? :: Canberra is the capital of Australia.    /memory    /memory mem-0001    /memory test    /memory forget <question>
 what do you think of the calculator tool?    are you hiding anything?    what do you know about me?
 /feedback ord-3f2a91c0 disposition=pass    /feedback ord-3f2a91c0 affect=frustrated
 ```
@@ -529,8 +630,10 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | POST | `/challenge` | `{"suite": "gsm8k", "mode": "exam" \| "practice", "n": 50}` |
 | POST | `/challenge/fetch` | `{"benchmark": "gsm8k", "rows": 300, "split": "test"}` |
 | POST | `/task` | `{"id": "task-1", "action": "pause" \| "resume" \| "remove"}` |
+| POST | `/memorize` | `{"ask": "...", "answer": "..."}`: a fact for a memory node |
+| POST | `/memory/test` | run every memory node against its test file now |
 | POST | `/halt`, `/resume`, `/pause`, `/rollback` | |
-| GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions`, `/knowledge?q=...`, `/temperament`, `/why?order=...`, `/inquiries`, `/proposals`, `/opinions`, `/notes`, `/tasks`, `/challenges`, `/evolution` | |
+| GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions`, `/knowledge?q=...`, `/temperament`, `/why?order=...`, `/inquiries`, `/proposals`, `/opinions`, `/notes`, `/tasks`, `/challenges`, `/evolution`, `/memory` | |
 | GET | `/mind` | operator: every note, private ones included (audited) |
 
 ```
@@ -770,6 +873,11 @@ derivations, moving weights between devices). They are skipped where no GPU libr
   sentiment skill reads retained passages. Offline, proposals are drafted from shared keywords; an
   LLM teacher drafts much better ones. "Private" means private from users. The operator always
   has full access by design.
+- A memory node picks among the answers it has stored (the answer texts are its outputs); the
+  network holds which question goes with which answer. It is only as reliable as its tests: a
+  question unlike any test can still be answered, which is why every answer names the node and
+  where the fact came from, and why near misses are tested. Facts an LLM teacher gave are kept
+  with that source and are not checked against anything.
 - The offline heuristic teacher is a stand-in so the system and its tests run anywhere; labels
   from it are only as good as its lexicon.
 
@@ -779,13 +887,14 @@ directives.toml          constitution: prime directives, goals, policy
 capabilities.toml        seed skills
 plugins/                 installed tools (calculator, word_stats, wikipedia, kiwix)
 challenges/              challenge suites (small samples; fetched benchmarks go to state/challenges/)
+memory_tests/            the memory nodes' test files (written by the mesh, editable by people)
 examples/incoming_plugins/  tools the demo installs at runtime
 neuromesh/
   runtime.py             System: wiring, cascade, learning, tool activation, status
   live.py                live console (curses): network, work in progress, activity log, prompt
   activity.py            work-in-flight tracker and the activity log
   commands.py            orders and /commands shared by the live and plain consoles
-  agents.py              the ten agents (plus the challenge runner in challenges.py)
+  agents.py              the eleven agents (plus the challenge runner in challenges.py)
   nodes.py               NeuralNode + derivations (expand / widen / deepen / retune / fresh)
   backend.py             compute backends: numpy (CPU), PyTorch (CUDA / ROCm / MPS), CuPy
   bench.py               CPU vs GPU benchmark
@@ -800,14 +909,16 @@ neuromesh/
   background.py          background tasks: learn a topic, improve a skill, repeat an order, practise a challenge
   challenges.py          open-source LLM benchmarks: suites, Hugging Face fetch, grading, the challenge teacher
   evolution.py           the genetic algorithm: genome operators (grow/shrink neurons and layers), selection, judging
+  memory.py              memory nodes: facts compressed into small networks, their test files, compression (P11)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   121 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   130 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
                          evolution (exact growth, pruning, growth bias, promotion rules, a node
-                         that evolves larger in a running system),
+                         that evolves larger in a running system), memory nodes (test files,
+                         compression that never accepts a failing node, people's edits, answers),
                          temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,
                          questions, proposals, investigations), background tasks, full system,

@@ -151,6 +151,14 @@ class Orchestrator(Agent):
         route, payload = parse_order(order.text, s.capabilities)
         kinds: list[str] = []
         conf = 1.0
+        if route is None and is_question(order.text):  # memory nodes first: what it already learned
+            remembered = s.memory.recall(order.text)
+            if remembered is not None:
+                res.route = DIRECT
+                res.trace.append("memory nodes are asked before routing")
+                self.answer_from_memory_node(res, remembered)
+                res.confidence, res.served_by = round(remembered.confidence, 3), "nodes"
+                return res
         if route is None:
             inf = await s.infer(DISPATCH, order.text, learn=order.learn)
             res.steps.append({"capability": DISPATCH, "input": order.text, "label": inf.label,
@@ -171,7 +179,7 @@ class Orchestrator(Agent):
             if not decision.allowed:
                 res.ok, res.note = False, f"tool refused: {decision.reason}"
             elif tool.manifest.provides == "knowledge":
-                await self.knowledge_order(res, payload, tool, background=order.background)
+                await self.knowledge_order(res, payload, tool, background=order.background, learn=order.learn)
             else:
                 timeout = tool.manifest.timeout_s or s.directives.tools.default_timeout_s
                 run = await s.sandbox.run(tool, payload, timeout, s.tool_config(tool))
@@ -200,12 +208,19 @@ class Orchestrator(Agent):
                     res.answer = voice.skill_phrase(s.capabilities[cap], inf.label)
         else:
             pol = s.directives.research
-            hits, confidence = s.knowledge.recall(order.text, pol.recall_threshold)
-            tool = s.knowledge_tool()
-            if hits and confidence >= pol.recall_threshold:
-                await self.answer_from_memory(res, order.text, hits, confidence)
+            remembered = s.memory.recall(order.text)  # memory nodes first: what it learned, compressed
+            hits, confidence, tool = [], 0.0, None
+            if remembered is None:
+                hits, confidence = s.knowledge.recall(order.text, pol.recall_threshold)
+                tool = s.knowledge_tool()
+            if remembered is not None:
+                self.answer_from_memory_node(res, remembered)
+                kinds.append("node")
+                conf *= remembered.confidence
+            elif hits and confidence >= pol.recall_threshold:
+                await self.answer_from_retained(res, order.text, hits, confidence, learn=order.learn)
             elif tool is not None and pol.research_questions and is_question(order.text):
-                await self.knowledge_order(res, order.text, tool, background=order.background)
+                await self.knowledge_order(res, order.text, tool, background=order.background, learn=order.learn)
             else:
                 reply = await s.teachers.answer(order.text)
                 if reply:
@@ -214,6 +229,9 @@ class Orchestrator(Agent):
                     res.sources.append(f"the {reply[1]} teacher (a language model; not checked against a source)")
                     res.trace.append(f"answered directly by the {reply[1]} teacher")
                     kinds.append("teacher")
+                    if order.learn and is_question(order.text):  # compressed into a memory node
+                        s.memory.learn(order.text, res.answer, f"the {reply[1]} teacher (a language model)",
+                                       by=reply[1], kind="teachers")
                 else:
                     res.ok = False
                     res.note = "no tool, skill or teacher can fulfil this yet; queued for a human teacher"
@@ -235,7 +253,23 @@ class Orchestrator(Agent):
 
 
     # ------------------------------------------------------------- knowledge
-    async def answer_from_memory(self, res: Result, question: str, hits, confidence: float) -> None:
+    def answer_from_memory_node(self, res: Result, rec) -> None:
+        """An answer a memory node holds: knowledge it learned earlier, compressed into its weights."""
+        node = rec.node
+        res.output, res.answer, res.knowledge = rec.answer, rec.answer, "memory"
+        was = f", from {node.first_bytes:,}" if node.first_bytes and node.first_bytes != node.bytes else ""
+        source = (f"memory node {node.id} ({node.bytes:,} bytes{was}; {node.passed}/{node.total} tests pass)"
+                  + (f", learned from {rec.source}" if rec.source else ""))
+        res.sources.append(source)
+        res.trace.append(f"answered by memory node {node.id} (confidence {rec.confidence:.2f}; {node.spec()})")
+        self.sys.bus.publish("memory.recalled", node=node.id, question=res.text[:200], confidence=rec.confidence)
+
+    def _remember(self, question: str, answer: str, source: str) -> None:
+        if answer:
+            self.sys.memory.learn(question, answer, source.split(' ("', 1)[0], by="research", kind="knowledge")
+
+    async def answer_from_retained(self, res: Result, question: str, hits, confidence: float,
+                                   learn: bool = True) -> None:
         s = self.sys
         doc = hits[0].doc
         s.knowledge.touch(doc)
@@ -246,16 +280,23 @@ class Orchestrator(Agent):
                          f"retained {_ago(doc.age)} ago; {how})")
         s.bus.publish("knowledge.recalled", question=question[:200], title=doc.title,
                       confidence=confidence, how=how)
+        if learn:  # exam questions are never learned from
+            self._remember(question, answer, source)
 
-    async def knowledge_order(self, res: Result, question: str, tool: Tool, background: bool = False) -> None:
+    async def knowledge_order(self, res: Result, question: str, tool: Tool, background: bool = False,
+                              learn: bool = True) -> None:
         """Memory first: answer from retained knowledge when it covers the question,
         otherwise research it (and retain what was learned), then answer."""
         s = self.sys
         pol = s.directives.research
+        remembered = s.memory.recall(question)
+        if remembered is not None:
+            self.answer_from_memory_node(res, remembered)
+            return
         hits, confidence = s.knowledge.recall(question, pol.recall_threshold)
         fresh = bool(hits) and hits[0].doc.age < pol.refresh_days * 86400
         if hits and confidence >= pol.recall_threshold and fresh:
-            await self.answer_from_memory(res, question, hits, confidence)
+            await self.answer_from_retained(res, question, hits, confidence, learn=learn)
             return
         doc, note = await s.research(question, reason=f"order {res.order_id}", tool=tool, background=background)
         if doc is not None:
@@ -267,6 +308,8 @@ class Orchestrator(Agent):
             n = doc.passages
             res.trace.append(f"researched with {doc.source}: '{doc.title}' ({n} passage{'s' if n != 1 else ''} "
                              f"retained; {how})")
+            if learn:
+                self._remember(question, answer, source)
         elif hits:
             answer, source, how = await s.answer_from_knowledge(question, hits)
             res.output, res.answer, res.knowledge = answer, answer, "recalled"
@@ -1036,6 +1079,41 @@ class TaskRunner(Agent):
             return
         await s.tasks.run(task)
         self.stats["runs"] += 1
+
+
+# ====================================================================== compressor
+class Compressor(Agent):
+    """Compresses what the mesh learns into memory nodes, then keeps trying smaller ones: a smaller
+    node is accepted only if every answer still matches the node's external test file (P11). It
+    notices people's edits to the test files and retrains to match them. Background work: it waits
+    for orders (P2) and stops on /halt or /pause (P1)."""
+    name = "compressor"
+
+    def __init__(self, system):
+        super().__init__(system)
+        self._next = 0.0
+
+    @property
+    def interval(self) -> float:
+        return max(0.05, self.sys.directives.background.tick_seconds)
+
+    async def step(self) -> None:
+        s = self.sys
+        mem = s.memory
+        if not mem.enabled or not s.guardian.background_allowed():
+            return
+        now = time.time()
+        if now < self._next:
+            return
+        self._next = now + mem.pol.interval_seconds
+        mem.sync_files()
+        job = mem.next_job()
+        if job is None:
+            return
+        with s.activity.track("memory", "compressor", job.describe()):
+            result = await self.bg(job.run)
+        mem.finish(job, result)
+        self.stats[job.kind] += 1
 
 
 # ======================================================================== sentinel

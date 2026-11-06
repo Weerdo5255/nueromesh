@@ -627,6 +627,10 @@ class Challenges:
         if suite.kind == "short" and suite.retain:
             self._retain(suite, item)
             rep.learned += 1
+        made = s.memory.learn(order.text, want_text(suite, item), f"challenge {suite.name} (the practice answer)",
+                              by="challenge", kind="challenges")  # compressed into a memory node
+        if made and made[1] != "known":
+            rep.learned += 1
         return {"id": item.id, "verdict": g.verdict, "got": g.got, "want": g.want, "route": route,
                 "detail": g.detail, "input": item.input[:120]}
 

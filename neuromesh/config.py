@@ -288,6 +288,35 @@ class EvolutionPolicy:
 
 
 @dataclass
+class MemoryPolicy:
+    """Memory nodes: what the mesh learns, compressed into small neural networks, each checked by an
+    external, human-readable test file (see memory.py)."""
+    enabled: bool = True
+    learn_from: tuple = ("knowledge", "teachers", "people", "challenges")
+    serve: bool = True                # answer questions from memory nodes before anything else
+    answer_threshold: float = 0.6     # confidence a memory node needs to answer
+    test_margin: float = 0.1          # a test passes only with this margin: >= 0.7 for an answer, < 0.5 to not answer
+    tests_dir: str = "memory_tests"   # the test files, relative to the root
+    facts_per_node: int = 40
+    start_hidden: tuple = (64,)       # the first shape a node learns in (then it is compressed)
+    max_hidden: int = 256             # how far a node may grow when it cannot hold its facts
+    max_growth: int = 3
+    compress: bool = True
+    min_fold: int = 32                # fewest input features a node may fold down to
+    min_neurons: int = 4
+    min_bits: int = 8                 # 32, 16 or 8 bits per weight
+    learn_epochs: int = 400
+    compress_epochs: int = 250
+    learning_rate: float = 0.01
+    unknown_tests: int = 30           # other nodes' questions in each test file as [[unknown]]
+    probe_tests: int = 6              # tool / skill / small-talk questions as [[unknown]]
+    near_miss_tests: int = 1          # near misses of each of its questions as [[unknown]]
+    interval_seconds: float = 0.5
+    sync_seconds: float = 2.0         # how often the test files are checked for edits
+    max_answer_chars: int = 600
+
+
+@dataclass
 class ComputePolicy:
     device: str = "cpu"     # "cpu" | "auto" | "cuda" | "cuda:N" | "mps"
     library: str = "auto"   # "auto" | "numpy" | "torch" | "cupy"
@@ -311,6 +340,7 @@ class Directives:
     tasks: TaskPolicy = field(default_factory=TaskPolicy)
     challenges: ChallengePolicy = field(default_factory=ChallengePolicy)
     evolution: EvolutionPolicy = field(default_factory=EvolutionPolicy)
+    memory: MemoryPolicy = field(default_factory=MemoryPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -332,6 +362,7 @@ class Directives:
             tasks=build(TaskPolicy, d.get("tasks")),
             challenges=build(ChallengePolicy, d.get("challenges")),
             evolution=build(EvolutionPolicy, d.get("evolution")),
+            memory=build(MemoryPolicy, d.get("memory")),
         )
 
     @classmethod

@@ -103,7 +103,8 @@ def _route_target(system, route: str, g: dict) -> tuple[str, str]:
         return f"{g['star']} {_node_detail(s, champ, g)}", "champ"
     if route == DIRECT:
         llm = [t.name for t in s.teachers.ranked() if getattr(t, "provider", None)]
-        return "teachers: " + (", ".join(llm) if llm else "none available (queued for a human)"), "teacher"
+        mem = "memory nodes, then " if s.memory.enabled and s.memory.nodes else ""
+        return mem + "teachers: " + (", ".join(llm) if llm else "none available (queued for a human)"), "teacher"
     return route, "info"
 
 
@@ -154,11 +155,47 @@ def network_lines(system, g: dict) -> list[Line]:
         style = "bad" if t.state in ("rejected", "quarantined") else "warn"
         note = f" ({t.note})" if t.note else ""
         lines.append((f"    {g['dot']} tool {t.name} [{t.state}]{note}", style))
+    lines += memory_lines(s, g)
     lines += engine_lines(s, g)
     lineage = s.registry.lineage.values()
     disposed = sum(1 for m in lineage if m["status"] == "disposed")
     lines.append((f"nodes: {len(s.registry.live())} live {g['dot']} {len(s.registry.lineage)} built "
                   f"{g['dot']} {disposed} disposed", "dim"))
+    return lines
+
+
+def _size(n: int) -> str:
+    return f"{n:,} B" if n < 10_000 else f"{n / 1024:,.1f} KB"
+
+
+def memory_lines(system, g: dict, limit: int = 5) -> list[Line]:
+    """Memory nodes: what the mesh learned, compressed, each checked by its test file."""
+    mem = system.memory
+    if not mem.enabled:
+        return []
+    nodes = sorted(mem.nodes.values(), key=lambda n: n.created)
+    if not nodes:
+        return [("memory nodes: none yet (learned facts are compressed into them; /memorize teaches one)", "dim")]
+    facts = sum(len(n.facts()) for n in nodes)
+    total, first = sum(n.bytes for n in nodes), sum(n.first_bytes for n in nodes)
+    was = f" (from {_size(first)})" if first > total else ""
+    lines: list[Line] = [(f"memory nodes {g['dot']} {facts} facts in {_size(total)}{was} {g['dot']} tests: "
+                          f"{mem.tests_dir.name}/", "title")]
+    shown = nodes[-limit:]
+    for i, n in enumerate(shown):
+        branch = g["end"] if i == len(shown) - 1 else g["tee"]
+        if n.params is None:
+            text, style = f"{n.id} learning {len(n.facts())} facts {g['dot']} {len(n.tests) + len(n.unknowns)} tests", "warn"
+        else:
+            ok = n.total and n.passed == n.total and not n.dirty
+            busy = " learning" if n.dirty else (" smallest" if n.status == "compressed" else "")
+            was = f" (was {_size(n.first_bytes)})" if n.first_bytes > n.bytes else ""
+            text = (f"{n.id}{busy} {len(n.facts())} facts {g['dot']} {_size(n.bytes)}{was} {g['dot']} {n.spec()} "
+                    f"{g['dot']} tests {n.passed}/{n.total}" + (f" {g['dot']} served {n.served}" if n.served else ""))
+            style = "champ" if ok else ("warn" if n.dirty else "bad")
+        lines.append((f" {branch}{g['arrow']} {text}", style))
+    if len(nodes) > limit:
+        lines.append((f"   {g['dot']} {len(nodes) - limit} more (/memory)", "dim"))
     return lines
 
 
@@ -215,7 +252,7 @@ def work_lines(system, g: dict, limit: int = 6) -> list[Line]:
     frame = g["spin"][int(time.time() * 8) % len(g["spin"])]
     style = {"lesson": "lesson", "training": "work", "evaluation": "work", "self-test": "tool",
              "order": "order", "research": "lesson", "investigation": "lesson", "task": "tool",
-             "challenge": "lesson"}
+             "challenge": "lesson", "memory": "work"}
     active = s.activity.current()
     lines: list[Line] = []
     for a in active[-limit:]:

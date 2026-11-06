@@ -9,7 +9,9 @@ of behaviour fit into well under a minute:
                       two are auto-approved, self-tested and learned; calculator2 supersedes
                       calculator; the routing node is expanded, the old one disposed
  4. steady state    - human feedback, background improvement while idle
- 5. kill switch     - the operator halts everything with a STOP file
+ 5. memory          - facts are compressed into memory nodes with human-readable test files, then
+                      into ever smaller nodes that still pass every test; an operator edits a test
+ 6. kill switch     - the operator halts everything with a STOP file
 """
 from __future__ import annotations
 
@@ -38,7 +40,19 @@ DEMO_OVERRIDES = {
                    "synthesis_batch": 8, "health_check_seconds": 3600},
     "tools": {"scan_seconds": 0.5},
     "temperament": {"enabled": False},  # scored on raw answers; the temperament has its own tests
+    "memory": {"interval_seconds": 0.05, "sync_seconds": 0.25},
 }
+
+FACTS = [("What is the capital of Australia?", "Canberra is the capital of Australia."),
+         ("How tall is Mount Everest?", "Mount Everest is 8,849 metres tall."),
+         ("Who wrote Pride and Prejudice?", "Jane Austen wrote Pride and Prejudice, published in 1813."),
+         ("What is the speed of light?", "Light travels at about 299,792 kilometres per second in a vacuum."),
+         ("When did the Berlin Wall fall?", "The Berlin Wall fell on 9 November 1989."),
+         ("What is the largest planet?", "Jupiter is the largest planet in the Solar System."),
+         ("Who painted the Mona Lisa?", "Leonardo da Vinci painted the Mona Lisa."),
+         ("What is the boiling point of water?", "Water boils at 100 degrees Celsius at sea level."),
+         ("How many bones are in the human body?", "An adult human body has 206 bones."),
+         ("What is the chemical symbol for gold?", "Au is the chemical symbol for gold.")]
 
 IMPLICIT = {"sentiment": ["how does this review sound: ", "what's the tone of this review: ", "review check: "],
             "urgency": ["how urgent is this: ", "triage this: ", "what priority is this: "]}
@@ -234,6 +248,31 @@ async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7,
         demo.say("Phase 5 - steady state")
         await demo.run_orders("5 steady", demo.f.batch(60, NEW_MIX))
         await demo.idle(2, "")
+
+        demo.say("Phase 6 - memory: what it learns is compressed into memory nodes, each with a test file")
+        mem = system.memory
+        for q, a in FACTS:
+            mem.learn(q, a, "the demo operator", by="demo-operator", kind="people")
+        settled = lambda: mem.nodes and all(not n.dirty and n.status == "compressed" for n in mem.nodes.values())  # noqa: E731
+        await demo.wait_for(settled, 30, "the memory node to compress")
+        node = next(iter(mem.nodes.values()))
+        print(f"  {node.id}: {len(node.facts())} facts, first learned in {node.first_bytes:,} bytes, now {node.bytes:,} "
+              f"bytes ({node.spec()}); {node.passed}/{node.total} tests pass")
+        for q in ("what's the capital of Australia?", "how tall is mount everest", "What is the capital of Austria?"):
+            res = await system.submit(q)
+            print(f"  > {q}\n      " + res.summary().replace("\n", "\n      "))
+        path = mem.tests_path(node)
+        print(f"  test file {path.relative_to(work)} (human readable; excerpt):")
+        text = path.read_text()
+        for line in text.splitlines()[7:12] + text.split("\n[[test]]\n")[1].strip().splitlines()[:2]:
+            print(f"    {line}")
+        print("  the operator edits the test file: Mount Everest's height changes to 8,848.86 metres")
+        path.write_text(text.replace('answer = "Mount Everest is 8,849 metres tall."',
+                                     'answer = "Mount Everest is 8,848.86 metres tall."'))
+        edited = "Mount Everest is 8,848.86 metres tall."
+        await demo.wait_for(lambda: edited in node.answers and settled(), 30, "the memory node to relearn the edit")
+        res = await system.submit("How tall is Mount Everest?")
+        print("  > How tall is Mount Everest?\n      " + res.summary().replace("\n", "\n      "))
 
         demo.say("Results")
         print(f"{'phase':<14} {'orders':>6} {'correct':>8} {'by nodes':>9} {'by teachers':>12} {'mixed':>6} {'avg ms':>7}")

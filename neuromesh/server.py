@@ -50,6 +50,8 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, system.challenges.status()
         if path == "/evolution":
             return 200, {**system.evolution.status(), "archive": system.evolution.archive}
+        if path == "/memory":
+            return 200, system.memory.status()
         if path == "/inquiries":
             return 200, [asdict(q) for q in system.mind.open_inquiries()]
         if path == "/proposals":
@@ -100,6 +102,15 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                 return 400, {"ok": False, "message": str(exc)}
             return 200, {"summary": rep.line(), "score": rep.score, "learned": rep.learned, "rerouted": rep.rerouted,
                          "results": rep.results}
+        if path == "/memorize":  # {"ask": "...", "answer": "..."}
+            made = system.memory.learn(body.get("ask", ""), body.get("answer", ""), body.get("source") or "the operator",
+                                       by=body.get("by", "api"), kind="people")
+            return (200, {"node": made[0], "status": made[1]}) if made else (400, {"error": "not kept (memory off, or "
+                                                                                           "not a question with an answer)"})
+        if path == "/memory/test":
+            system.memory.sync_files(force=True)
+            results = [await asyncio.to_thread(system.memory.run_tests, n) for n in list(system.memory.nodes.values())]
+            return 200, {"nodes": results, "passing": all(r["passed"] == r["total"] for r in results)}
         if path == "/challenge/fetch":  # {"benchmark": "gsm8k", "rows": 200, "split": "test"}
             try:
                 suite = await asyncio.to_thread(system.challenges.fetch, body["benchmark"], int(body.get("rows", 0)),

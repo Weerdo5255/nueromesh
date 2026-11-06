@@ -28,6 +28,10 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /task every 10m: <order>                    repeat an order; you are told when its result changes
   /tasks    /task show|pause|resume|remove <task-id>     (also: "keep learning about X" as an order)
   /evolution [skill]              how each skill's nodes have evolved: generations, shapes, sizes, fitness
+  /memory [node-id]               memory nodes: what it learned, compressed; sizes, tests, compression history
+  /memory test                    run every memory node against its test file now
+  /memorize <question> :: <answer>   teach it a fact (compressed into a memory node with tests)
+  /memory forget <question>       forget a fact (its tests go too)
   /challenges                     benchmark suites, exam scores and trends
   /challenge run <suite> [n]      sit the exam now (graded, never learned from)
   /challenge practice <suite> [n] practise now: every graded answer teaches the mesh
@@ -152,6 +156,62 @@ def evolution_lines(system, capability: str = "") -> list[str]:
                 out.append(f"    gen {e['generation']:<3} {'x'.join(map(str, e['hidden'])):<14} {e['params']:>9,} weights "
                            f"held-out {acc:<6} {e.get('outcome', 'candidate'):<9} {change[:70]}")
     return out
+
+
+def _kb(n: int) -> str:
+    return f"{n:,} B" if n < 10_000 else f"{n / 1024:,.1f} KB"
+
+
+def memory_lines(system, rest: str = "") -> list[str]:
+    mem = system.memory
+    if not mem.enabled:
+        return ["  memory nodes are off ([memory] enabled = false in the directives)"]
+    p = mem.pol
+    st = mem.status()
+    head = (f"memory: {len(st['nodes'])} node(s), {st['facts']} facts in {_kb(st['bytes'])}"
+            + (f" (first learned in {_kb(st['first_bytes'])})" if st["first_bytes"] > st["bytes"] else "")
+            + f"; answers at confidence >= {p.answer_threshold:g}; tests in {mem.tests_dir}/")
+    if rest and rest in mem.nodes:
+        n = mem.nodes[rest]
+        out = [f"  {n.id} [{n.status}] {len(n.facts())} facts, {len(n.expected_answers())} answers, {_kb(n.bytes)} "
+               f"({n.spec()}), {n.passed}/{n.total} tests pass, served {n.served}x",
+               f"  test file: {mem.tests_path(n)}"]
+        out += [f"    {mem._history_line(h)}" for h in n.history[-15:]]
+        out.append("  facts:")
+        out += [f"    {t.ask[:60]!r} -> {t.answer[:70]!r}" for t in n.facts()[:20]]
+        if n.failing:
+            out.append("  failing: " + ", ".join(repr(a[:50]) for a in n.failing[:8]))
+        return out
+    out = [head]
+    if not st["nodes"]:
+        return out + ["  nothing learned yet - it learns from research, teachers, challenges and /memorize"]
+    for x in st["nodes"]:
+        was = f" (was {_kb(x['first_bytes'])})" if x["first_bytes"] > x["bytes"] else ""
+        tests = f"{x['passed']}/{x['total']} tests" if x["total"] else f"{x['tests']} tests, not checked yet"
+        out.append(f"  {x['id']} [{x['status']}] {x['facts']} facts {_kb(x['bytes'])}{was} - {x['spec']} - {tests}"
+                   + (f" - served {x['served']}x" if x["served"] else ""))
+    return out
+
+
+async def memory_command(system, rest: str) -> list[str]:
+    mem = system.memory
+    sub, _, arg = rest.partition(" ")
+    if sub == "test":
+        if not mem.enabled:
+            return ["  memory nodes are off"]
+        mem.sync_files(force=True)
+        out = []
+        for node in list(mem.nodes.values()):
+            r = await asyncio.to_thread(mem.run_tests, node)
+            mark = "pass" if r["passed"] == r["total"] else "FAIL"
+            out.append(f"  {node.id}: {r['passed']}/{r['total']} {mark}  ({mem.tests_path(node).name})")
+            for x in [x for x in r["results"] if not x["pass"]][:5]:
+                out.append(f"    x {x['ask'][:60]!r}: wanted {x['want'][:50]!r}, got {x['got'][:50]!r} ({x['confidence']:.2f})")
+        return out or ["  no memory nodes yet"]
+    if sub == "forget":
+        nid = mem.forget(arg.strip())
+        return [f"  forgot '{arg.strip()}' (from {nid})" if nid else f"  no memory node knows '{arg.strip()}'"]
+    return memory_lines(system, rest)
 
 
 def _pct(x) -> str:
@@ -353,6 +413,23 @@ async def execute(system, line: str) -> Output:
                        f"/task remove {t.id} stops it)"]
         elif cmd == "evolution":
             out = evolution_lines(system, rest)
+        elif cmd == "memory":
+            out = await memory_command(system, rest)
+        elif cmd in ("memorize", "memorise", "remember"):
+            ask, sep, answer = rest.partition("::")
+            if not sep or not ask.strip() or not answer.strip():
+                out = ["  usage: /memorize <question> :: <answer>"]
+            elif not system.memory.allows("people"):
+                out = ["  memory nodes are off, or not learning from people ([memory] learn_from)"]
+            else:
+                made = system.memory.learn(ask.strip(), answer.strip(), "the operator",
+                                           by=os.environ.get("USER", "operator"), kind="people")
+                if made is None:
+                    out = ["  that can't be kept as a fact (too short, empty, or a tool/skill question)"]
+                else:
+                    verb = {"new": "learning", "updated": "updating", "known": "already knows"}[made[1]]
+                    out = [f"  {verb} it in memory node {made[0]}; tests in {system.memory.tests_dir.name}/{made[0]}.toml "
+                           f"(/memory {made[0]})"]
         elif cmd == "challenges" or (cmd == "challenge" and not rest):
             out = challenge_lines(system)
         elif cmd == "challenge":

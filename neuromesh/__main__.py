@@ -258,6 +258,9 @@ def main(argv: list[str] | None = None) -> None:
     p_chal.add_argument("--split", default="", help="dataset split (default: the benchmark's usual evaluation split)")
     p_chal.add_argument("--name", default="", help="suite name (default: the benchmark's name)")
     p_chal.add_argument("--root", type=Path, default=Path("."))
+    p_mem = sub.add_parser("memory", help="run the memory nodes against their test files (without starting the mesh)")
+    p_mem.add_argument("action", choices=["test"], help="test: every memory node against memory_tests/<node>.toml")
+    p_mem.add_argument("--root", type=Path, default=Path("."))
     p_bench = sub.add_parser("bench", help="compare CPU and GPU speed for node training and inference")
     p_bench.add_argument("--input-dim", type=int, default=1024, help="encoder width (directives: input_dim)")
     p_bench.add_argument("--hidden", default="64", help="hidden layer sizes, e.g. 64 or 512,256")
@@ -310,6 +313,9 @@ def main(argv: list[str] | None = None) -> None:
                                  ollama=args.ollama, ollama_url=args.ollama_url))
         elif args.cmd == "challenge":
             _challenge(args)
+        elif args.cmd == "memory":
+            from .memory import check_files
+            sys.exit(1 if check_files(args.root) else 0)
         elif args.cmd == "bench":
             from .bench import run_bench
             hidden = tuple(int(h) for h in args.hidden.replace(" ", "").split(",") if h)

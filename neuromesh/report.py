@@ -93,6 +93,37 @@ def describe_event(ev: Event) -> str | None:
                 f"{d['failed']} fail{extra}")
     if t == "challenge.fetched":
         return f"[challenge] fetched {d['suite']}: {d['items']} items from {d['source']}"
+    if t == "memory.fact":
+        verb = "learned" if d["kind"] == "new" else "corrected"
+        src = f" from {_cut(d['source'], 50)}" if d.get("source") else ""
+        return f"[memory]   {verb} '{_cut(d['ask'], 50)}' -> '{_cut(d['answer'], 50)}'{src}; compressing into {d['node']}"
+    if t == "memory.learned":
+        grew = f"; grew: {d['grew']}" if d.get("grew") else ""
+        return (f"[memory]   {d['node']} holds {d['facts']} facts in {d['bytes']:,} bytes ({d['spec']}); "
+                f"{d['passed']}/{d['total']} tests pass{grew}")
+    if t == "memory.failing":
+        return (f"[memory]   {d['node']} could not pass every test even after growing ({d['passed']}/{d['total']}); "
+                f"failing: {', '.join(repr(a[:40]) for a in d['failing'])}")
+    if t == "memory.compressed":
+        return (f"[memory]   {d['node']} compressed {d['before']:,} -> {d['after']:,} bytes ({d['step']}); "
+                f"all {d['total']} tests still pass")
+    if t == "memory.rejected":
+        eg = f", e.g. {d['example']!r}" if d.get("example") else ""
+        return (f"[memory]   {d['node']}: a smaller node ({d['step']}, {d['bytes']:,} bytes) failed {d['failed']}/{d['total']} "
+                f"tests{eg}; kept the {d['current']:,}-byte node")
+    if t == "memory.smallest":
+        first = f" (first {d['first']:,})" if d.get("first") and d["first"] != d["bytes"] else ""
+        return f"[memory]   {d['node']} is as small as its tests allow: {d['bytes']:,} bytes{first}, {d['spec']}"
+    if t == "memory.edited":
+        if d.get("new"):
+            return f"[memory]   new test file {d['node']}.toml from a person: learning its {d['added']} facts"
+        bad = f", {d['malformed']} unreadable" if d.get("malformed") else ""
+        return (f"[memory]   {d['node']} tests edited by a person: {d['added']} added, {d['removed']} removed, "
+                f"{d['changed']} answers changed{bad}; retraining to match")
+    if t == "memory.forgotten":
+        return f"[memory]   forgot {d['node']}: {d['why']}"
+    if t == "memory.unreadable":
+        return f"[memory]   {d['node']}.toml can't be read ({d['error'][:80]}); keeping the node as it is"
     if t == "teacher.status":
         verb = "ready" if d["state"] == "ready" else f"unavailable ({d['state']})"
         return f"[teacher]  {d['teacher']} {verb}: {d['detail']}"
@@ -101,6 +132,11 @@ def describe_event(ev: Event) -> str | None:
     if t == "system.resume":
         return f"[resume]   by {d['by']}"
     return None
+
+
+def _cut(text, n: int) -> str:
+    text = " ".join(str(text).split())
+    return text if len(text) <= n else text[: n - 1] + "…"
 
 
 def _acc(v) -> str:
@@ -156,6 +192,13 @@ def render_status(st: dict) -> str:
             if sm["champion"]:
                 parts.append(f"{cap} gen {sm['champion']['generation']} {'x'.join(map(str, sm['champion']['hidden']))}")
         lines.append(f"evolution (grows {ev['growth_bias']:.0%} of the time): " + ", ".join(parts))
+    mem = st.get("memory")
+    if mem and mem["enabled"] and mem["nodes"]:
+        tests = sum(n["total"] for n in mem["nodes"])
+        passed = sum(n["passed"] for n in mem["nodes"])
+        was = f" (first {mem['first_bytes']:,})" if mem["first_bytes"] > mem["bytes"] else ""
+        lines.append(f"memory: {len(mem['nodes'])} nodes, {mem['facts']} facts in {mem['bytes']:,} bytes{was}; "
+                     f"{passed}/{tests} tests pass" + (f"; {mem['pending']} learning" if mem["pending"] else ""))
     chs = st.get("challenges")
     if chs and any(r["exams"] for r in chs["suites"]):
         lines.append("challenge exams: " + ", ".join(f"{r['suite']} {r['last_exam']:.0%}" for r in chs["suites"]

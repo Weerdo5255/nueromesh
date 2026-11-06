@@ -21,6 +21,7 @@ FAST = {
     "tools": {"scan_seconds": 0.2},
     "teachers": {"order": ["human", "heuristic"]},
     "temperament": {"enabled": False},  # answers unshaped, so tests can compare outputs (see test_temperament)
+    "memory": {"enabled": False},       # answers come from where each test expects (see test_memory)
 }
 
 

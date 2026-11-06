@@ -14,8 +14,8 @@ from pathlib import Path
 import numpy as np
 
 from .activity import ActivityLog, ActivityTracker
-from .agents import (Architect, Curator, Evaluator, Explorer, Investigator, Orchestrator, Researcher, Sentinel,
-                     TaskRunner, Trainer)
+from .agents import (Architect, Compressor, Curator, Evaluator, Explorer, Investigator, Orchestrator, Researcher,
+                     Sentinel, TaskRunner, Trainer)
 from .background import BackgroundTasks
 from .challenges import ChallengeTeacher, Challenges
 from .evolution import Evolution
@@ -25,6 +25,7 @@ from .config import Directives, load_toml
 from .encoding import HashingEncoder
 from .guardian import Guardian
 from .knowledge import Hit, KnowledgeStore, restate
+from .memory import MemoryBank
 from .mind import Mind
 from .registry import NodeRegistry
 from .store import Store
@@ -89,6 +90,7 @@ class System:
         self.challenges = Challenges(self)  # open-source LLM benchmarks: practice teaches, exams measure
         self.evolution = Evolution(self)    # the genetic algorithm that breeds each capability's challengers
         self.bus.listen(self.evolution.on_event)
+        self.memory = MemoryBank(self)      # what it learns, compressed into memory nodes checked by test files
 
         self.orders: asyncio.Queue = asyncio.Queue()
         self.inflight = 0
@@ -104,7 +106,8 @@ class System:
         self.investigator = Investigator(self)
         self.orchestrator = Orchestrator(self)
         self.agents = [self.orchestrator, Architect(self), Trainer(self), Evaluator(self), Curator(self),
-                       Explorer(self), self.researcher, self.investigator, TaskRunner(self), Sentinel(self)]
+                       Explorer(self), self.researcher, self.investigator, TaskRunner(self), Compressor(self),
+                       Sentinel(self)]
 
     # ------------------------------------------------------------- lifecycle
     async def start(self) -> "System":
@@ -499,6 +502,7 @@ class System:
             doc = self.knowledge.add(k, reason)
             self.guardian.audit(actor, "knowledge.learned", doc.title, source=doc.source, url=doc.url,
                                 passages=doc.passages, reason=reason)
+            self.memory.learn_article(doc)  # and compressed into a memory node
             self.bus.publish("knowledge.learned", title=doc.title, url=doc.url, source=doc.source,
                              passages=doc.passages, reason=reason, background=background, topic=topic[:200])
             pol = self.directives.research
@@ -586,6 +590,7 @@ class System:
             "tasks": self.tasks.status(),
             "challenges": self.challenges.status(),
             "evolution": self.evolution.status(),
+            "memory": self.memory.status(),
             "scorecard": self.scorecard(),
             "agents": {a.name: dict(a.stats) for a in self.agents},
         }
