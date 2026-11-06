@@ -1,6 +1,7 @@
 """Operator commands and orders, shared by the plain console and the live view."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -26,6 +27,12 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /task improve <skill> [to 0.97]             keep training a skill until it reaches the target
   /task every 10m: <order>                    repeat an order; you are told when its result changes
   /tasks    /task show|pause|resume|remove <task-id>     (also: "keep learning about X" as an order)
+  /challenges                     benchmark suites, exam scores and trends
+  /challenge run <suite> [n]      sit the exam now (graded, never learned from)
+  /challenge practice <suite> [n] practise now: every graded answer teaches the mesh
+  /challenge show <suite>         the last exam, question by question
+  /challenge fetch <benchmark> [rows] [split]   download gsm8k, sst2, ag_news, boolq, arc_easy, arc_challenge,
+                                  commonsense_qa or squad from Hugging Face   (/task challenge <suite> every 30m)
   /inquiries                      questions the mesh is asking you      /reply <inq-id> <answer>
   /proposals                      capabilities the mesh would like      /adopt <prop-id> [labels]  /decline <prop-id>
   /opinions   /notes              the opinions and notes it shares (private ones are only counted)
@@ -114,6 +121,73 @@ def _note_line(n, private_shown: bool = False) -> str:
     lock = "[private] " if n.private and private_shown else ""
     stance = f"{n.stance} ({n.strength:.0%}) - " if n.kind == "opinion" else ""
     return f"  {lock}{n.kind:<11} {display(n.subject)[:28]:<28} {stance}{' '.join(n.text.split())[:110]}"
+
+
+def _pct(x) -> str:
+    return "-" if x is None else f"{x:.0%}"
+
+
+def challenge_lines(system) -> list[str]:
+    ch = system.challenges
+    if not ch.enabled:
+        return ["  challenges are off ([challenges] enabled = false in the directives)"]
+    rows = ch.summary()
+    if not rows:
+        return ["  no challenge suites; /challenge fetch gsm8k 200 downloads one"]
+    out = []
+    for r in rows:
+        trend = (f"exam {_pct(r['last_exam'])} (first {_pct(r['first_exam'])}, best {_pct(r['best_exam'])}, "
+                 f"{r['exams']} runs)" if r["exams"] else "not examined yet")
+        what = f"{r['kind']}" + (f" -> {r['capability']}" if r["capability"] else "")
+        out.append(f"  {r['suite']:<22} {what:<20} {r['practice']:>4} practice {r['exam']:>4} exam  {trend}")
+    for name, err in ch.errors.items():
+        out.append(f"  {name}: could not load ({err})")
+    out.append(f"  routes learned from challenges: {ch.status()['routes_learned']}")
+    return out
+
+
+async def challenge_command(system, rest: str) -> list[str]:
+    from .challenges import ADAPTERS
+    ch = system.challenges
+    verb, _, args = rest.partition(" ")
+    parts = args.split()
+    by = os.environ.get("USER", "operator")
+    if verb in ("run", "exam", "practice"):
+        if not parts:
+            return [f"  usage: /challenge {verb} <suite> [n]"]
+        mode = "practice" if verb == "practice" else "exam"
+        n = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        prev = ch.last(parts[0], mode)
+        rep = await ch.run(parts[0], mode, n, by=by)
+        now, before = round(rep.score, 4), prev["score"] if prev else None
+        change = ("" if before is None else f", same as last time" if now == before else
+                  f", {'up' if now > before else 'down'} from {before:.0%}")
+        out = [f"  {rep.line()}{change}"]  # the result first
+        if mode == "practice":
+            out.append(f"  learned: {rep.learned} lessons; better routes found for {rep.rerouted} questions")
+        for r in [r for r in rep.results if r["verdict"] != "pass"][:8]:
+            out.append(f"   {r['verdict']:<5} want {str(r['want'])[:30]!r}, got {str(r['got'])[:40]!r} via {r['route']}: "
+                       f"{r['input'][:60]}")
+        return out
+    if verb == "show":
+        last = ch.last(parts[0] if parts else "", "exam")
+        if last is None:
+            return ["  that suite has not been examined yet (/challenge run <suite>)"]
+        out = [f"  {last['suite']} exam: {last['score']:.0%} ({last['pass']} pass, {last['close']} close, {last['fail']} fail "
+               f"of {last['n']})"]
+        for r in last["results"]:
+            out.append(f"   {r['verdict']:<5} {r['input'][:60]:<60} want {str(r['want'])[:24]!r} got {str(r['got'])[:30]!r}")
+        return out
+    if verb == "fetch":
+        if not parts or parts[0] not in ADAPTERS:
+            return ["  usage: /challenge fetch <benchmark> [rows] [split]; benchmarks: " + ", ".join(ADAPTERS)]
+        rows = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        split = parts[2] if len(parts) > 2 else ""
+        suite = await asyncio.to_thread(ch.fetch, parts[0], rows, split, "", by)
+        return [f"  fetched {suite.name}: {len(suite.items)} items ({len(suite.practice())} practice, "
+                f"{len(suite.exam())} exam) from {suite.source}",
+                f"  /challenge run {suite.name} sits the exam; /challenge practice {suite.name} teaches"]
+    return ["  usage: /challenge run|practice|show|fetch ...  (/challenges lists the suites)"]
 
 
 def mind_lines(system, view: str) -> list[str]:
@@ -246,6 +320,10 @@ async def execute(system, line: str) -> Output:
                 t = system.tasks.add(rest, by=by)
                 out = [f"  {t.id} set: {t.describe()}, every {every(t.interval)} (in the background; "
                        f"/task remove {t.id} stops it)"]
+        elif cmd == "challenges" or (cmd == "challenge" and not rest):
+            out = challenge_lines(system)
+        elif cmd == "challenge":
+            out = await challenge_command(system, rest)
         elif cmd in ("opinions", "notes", "mind"):
             out = mind_lines(system, cmd)
         elif cmd == "inquiries":

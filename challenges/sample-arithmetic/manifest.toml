@@ -1,0 +1,6 @@
+name = "sample-arithmetic"
+kind = "numeric"
+description = "Arithmetic and short word problems (word problems in the style of GSM8K; written for NeuroMesh)"
+exam_percent = 30
+source = "NeuroMesh sample suite"
+license = "same as NeuroMesh"

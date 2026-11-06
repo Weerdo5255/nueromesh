@@ -46,6 +46,8 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                          "notes": [asdict(n) for n in system.mind.inspect(query.get("by", "api-operator"))]}
         if path == "/tasks":
             return 200, system.tasks.status()
+        if path == "/challenges":
+            return 200, system.challenges.status()
         if path == "/inquiries":
             return 200, [asdict(q) for q in system.mind.open_inquiries()]
         if path == "/proposals":
@@ -88,6 +90,21 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                 return 400, {"ok": False, "message": "action is pause, resume or remove"}
             ok, msg = system.tasks.set_status(body["id"], status, by=body.get("by", "api-user"))
             return (200 if ok else 400), {"ok": ok, "message": msg}
+        if path == "/challenge":  # {"suite": "...", "mode": "exam" | "practice", "n": 20}
+            try:
+                rep = await system.challenges.run(body["suite"], body.get("mode", "exam"), body.get("n"),
+                                                  by=body.get("by", "api-operator"))
+            except ValueError as exc:
+                return 400, {"ok": False, "message": str(exc)}
+            return 200, {"summary": rep.line(), "score": rep.score, "learned": rep.learned, "rerouted": rep.rerouted,
+                         "results": rep.results}
+        if path == "/challenge/fetch":  # {"benchmark": "gsm8k", "rows": 200, "split": "test"}
+            try:
+                suite = await asyncio.to_thread(system.challenges.fetch, body["benchmark"], int(body.get("rows", 0)),
+                                                body.get("split", ""), body.get("name", ""), body.get("by", "api-operator"))
+            except (ValueError, RuntimeError) as exc:
+                return 400, {"ok": False, "message": str(exc)}
+            return 200, {"suite": suite.name, "items": len(suite.items), "source": suite.source}
         if path == "/reply":
             ok, lines = await system.mind.reply(body["inquiry_id"], body["answer"], by=body.get("by", "api-user"))
             return (200 if ok else 400), {"ok": ok, "message": "\n".join(x.strip() for x in lines)}

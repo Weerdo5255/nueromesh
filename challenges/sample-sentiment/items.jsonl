@@ -1,0 +1,40 @@
+{"id": "sample-sentiment-001", "input": "A warm, funny and beautifully acted film.", "answer": "positive"}
+{"id": "sample-sentiment-002", "input": "A dull, plodding mess with no sense of direction.", "answer": "negative"}
+{"id": "sample-sentiment-003", "input": "The soundtrack alone is worth the price of admission.", "answer": "positive"}
+{"id": "sample-sentiment-004", "input": "The dialogue is painfully clumsy.", "answer": "negative"}
+{"id": "sample-sentiment-005", "input": "I left the theater smiling from ear to ear.", "answer": "positive"}
+{"id": "sample-sentiment-006", "input": "I checked my watch more times than I can count.", "answer": "negative"}
+{"id": "sample-sentiment-007", "input": "Sharp writing and a terrific lead performance.", "answer": "positive"}
+{"id": "sample-sentiment-008", "input": "Two hours of my life I will never get back.", "answer": "negative"}
+{"id": "sample-sentiment-009", "input": "One of the most moving stories I've seen this year.", "answer": "positive"}
+{"id": "sample-sentiment-010", "input": "The plot makes no sense and the acting is wooden.", "answer": "negative"}
+{"id": "sample-sentiment-011", "input": "The director handles every scene with grace.", "answer": "positive"}
+{"id": "sample-sentiment-012", "input": "Loud, chaotic and utterly forgettable.", "answer": "negative"}
+{"id": "sample-sentiment-013", "input": "A delightful surprise from start to finish.", "answer": "positive"}
+{"id": "sample-sentiment-014", "input": "Even the talented cast cannot save this script.", "answer": "negative"}
+{"id": "sample-sentiment-015", "input": "Clever, heartfelt and never boring.", "answer": "positive"}
+{"id": "sample-sentiment-016", "input": "A tedious slog that drags on far too long.", "answer": "negative"}
+{"id": "sample-sentiment-017", "input": "The cast has wonderful chemistry.", "answer": "positive"}
+{"id": "sample-sentiment-018", "input": "The jokes fall flat every single time.", "answer": "negative"}
+{"id": "sample-sentiment-019", "input": "Gorgeous visuals and a story that really lands.", "answer": "positive"}
+{"id": "sample-sentiment-020", "input": "Lazy, predictable and badly edited.", "answer": "negative"}
+{"id": "sample-sentiment-021", "input": "An absolute joy to watch with the whole family.", "answer": "positive"}
+{"id": "sample-sentiment-022", "input": "I have rarely been so bored in a cinema.", "answer": "negative"}
+{"id": "sample-sentiment-023", "input": "It's the rare sequel that improves on the original.", "answer": "positive"}
+{"id": "sample-sentiment-024", "input": "The special effects look cheap and unfinished.", "answer": "negative"}
+{"id": "sample-sentiment-025", "input": "Thoughtful, tender and quietly brilliant.", "answer": "positive"}
+{"id": "sample-sentiment-026", "input": "A disappointing waste of a great premise.", "answer": "negative"}
+{"id": "sample-sentiment-027", "input": "I would happily watch it again tomorrow.", "answer": "positive"}
+{"id": "sample-sentiment-028", "input": "Characters so thin you stop caring within minutes.", "answer": "negative"}
+{"id": "sample-sentiment-029", "input": "The jokes land and the characters feel real.", "answer": "positive"}
+{"id": "sample-sentiment-030", "input": "The ending is a confusing letdown.", "answer": "negative"}
+{"id": "sample-sentiment-031", "input": "A charming little film with a big heart.", "answer": "positive"}
+{"id": "sample-sentiment-032", "input": "It tries hard to be clever and fails miserably.", "answer": "negative"}
+{"id": "sample-sentiment-033", "input": "Every performance is pitch perfect.", "answer": "positive"}
+{"id": "sample-sentiment-034", "input": "Sloppy pacing ruins whatever tension there was.", "answer": "negative"}
+{"id": "sample-sentiment-035", "input": "Smart, stylish and endlessly entertaining.", "answer": "positive"}
+{"id": "sample-sentiment-036", "input": "A joyless, mean-spirited film.", "answer": "negative"}
+{"id": "sample-sentiment-037", "input": "The ending is genuinely uplifting.", "answer": "positive"}
+{"id": "sample-sentiment-038", "input": "I wanted to walk out halfway through.", "answer": "negative"}
+{"id": "sample-sentiment-039", "input": "A triumph of storytelling.", "answer": "positive"}
+{"id": "sample-sentiment-040", "input": "Bland, lifeless and completely without charm.", "answer": "negative"}

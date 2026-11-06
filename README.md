@@ -106,6 +106,10 @@ Nodes never learn from themselves. They learn from:
   the weakest labels, and answers open-ended orders no node or tool can handle. Use Claude
   (Anthropic API), a **local model on Ollama**, or any OpenAI-compatible server; configure
   as many as you like, each with its own budget, and choose the order they are asked in.
+- **ChallengeTeacher**: open-source LLM benchmarks (GSM8K, SST-2, ARC, ...). Gold answers from
+  their practice questions, the routes that passed them, and real benchmark sentences as training
+  data (see [Challenges](#challenges-open-source-llm-benchmarks-as-a-teacher)). Weighted just below
+  a human.
 - **HeuristicTeacher**: an offline, lexicon-based stand-in so everything runs with no API key.
 
 ### Temperament: emotional engines that never lie
@@ -266,6 +270,63 @@ neuromesh> /tasks        /task show task-1      /task pause task-2     /task res
   `/halt` and `/pause` stop all of them (P1).
 - When you answer the mind's "what should I read up on?" question, each topic becomes a learn task.
 
+### Challenges: open-source LLM benchmarks as a teacher
+The mesh can be tested against open benchmarks, and every graded answer helps it grow.
+
+```
+neuromesh> /challenge fetch gsm8k 300              # from Hugging Face (or: python -m neuromesh challenge fetch gsm8k --rows 300)
+neuromesh> /challenge run gsm8k                     # sit the exam: graded, never learned from
+  gsm8k exam: <score> (<n> pass, <n> close, <n> fail of 90)
+neuromesh> /challenge practice gsm8k 50             # practise: every graded answer teaches it something
+  gsm8k practice: <score> (...)
+  learned: <n> lessons; better routes found for <n> questions
+neuromesh> /task challenge gsm8k every 30m          # keep practising and re-sitting the exam
+neuromesh> /challenges                              # suites, scores, first/best/last exam
+```
+
+Each suite is split once, stably, into **practice** (70%) and **exam** (30%, `exam_percent`). For
+classify suites the split is per label, so every label is examined. Exam answers are graded and
+recorded but never learned from: no training examples, no teacher lessons, no routes. So exam
+scores are honest and comparable from run to run.
+
+| suite kind | graded on | pass | close (half a point) |
+|---|---|---|---|
+| classify (SST-2, AG News) | the label | the gold label | a pair the suite lists, e.g. `neutral` for a clearly positive review |
+| numeric (GSM8K) | the final number | the result itself, or a number stated as the answer (`= 18`, "the answer is 18"), or the reply's last number | the right number is in the reply but not given as the answer, or within 1% |
+| choice (ARC, CommonsenseQA) | the option picked | exactly the right option | the right option among others |
+| yesno (BoolQ) | yes or no | the right one | - |
+| short (SQuAD, trivia) | the reply's first line | contains the gold text or an alias | a partial overlap (token F1 >= 0.5) |
+
+**How practice grows the mesh**
+- **Skill nodes.** In classify suites the node is graded on its own, then taught the gold label as
+  a training example (source `challenge`, weight 2.5). A new skill (AG News's `topic`) is created
+  the first time you run its suite.
+- **The router node.** A close or failed answer starts a route search: the mesh tries its other
+  routes on the same question (tools, an LLM teacher, research, skills). A route that gets it
+  right becomes a router lesson. A passed or close answer reinforces the route that produced it.
+  An unrelated route that only scores "close" (a word count that happens to contain the number)
+  never re-routes anything.
+- **The challenge teacher.** It sits in the teaching order after the human. When a node is unsure
+  about a practice question it gives the gold answer, or the route that passed it. When the Trainer
+  needs more examples of a label, it supplies real benchmark sentences instead of templates. It never
+  knows anything about exam questions.
+- **Retained answers.** Short-answer suites with `retain = true` keep practice answers as retained
+  knowledge, so the same question is recalled later.
+
+**Suites.** `challenges/` has small sample suites written for NeuroMesh in the style of the real
+benchmarks: `sample-sentiment`, `sample-topics`, `sample-arithmetic`, `sample-science`,
+`sample-trivia` and `sample-yesno`. `/challenge fetch <benchmark> [rows] [split]` downloads real
+ones through the Hugging Face dataset viewer API into `state/challenges/`: `gsm8k`, `sst2`,
+`ag_news`, `boolq`, `arc_easy`, `arc_challenge`, `commonsense_qa`, `squad`. Set `HF_TOKEN` if you
+have a token. The format (`manifest.toml` + `items.jsonl`) is described in `challenges/README.md`,
+so you can add your own.
+
+**What to expect.** Offline, the mesh answers only what its tools, skills and lexicon can, so it
+scores low on word problems, multiple choice and reading comprehension. Those need an LLM teacher
+(Ollama or Claude), whose answers are graded and whose routes are learned, or retained knowledge
+(Kiwix). Classify suites are where the nodes themselves improve most, and they improve more with
+real benchmarks (hundreds of practice sentences) than with the small samples.
+
 ### The agents
 All run concurrently (asyncio) and coordinate through a message bus, the registry and the store.
 
@@ -389,6 +450,7 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /inquiries    /reply inq-2 the Eiffel Tower, jazz    /proposals    /adopt prop-1 english,french    /decline prop-2
 /opinions    /notes    /investigate the Krebs cycle    /mind  (operator: everything, audited)
 /task learn jazz    /task improve urgency to 0.95    /task every 10m: what is 2+2    /tasks    /task pause task-1
+/challenges    /challenge run sample-sentiment    /challenge practice gsm8k 50    /challenge fetch sst2 500    /task challenge gsm8k every 30m
 what do you think of the calculator tool?    are you hiding anything?    what do you know about me?
 /feedback ord-3f2a91c0 disposition=pass    /feedback ord-3f2a91c0 affect=frustrated
 ```
@@ -411,9 +473,11 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | POST | `/adopt`, `/decline` | `{"proposal_id": "prop-1", "labels": [...]}` (labels for skills, optional) |
 | POST | `/investigate` | `{"goal": "..."}`: look into something now |
 | POST | `/tasks` | `{"spec": "learn the Krebs cycle every 5m"}`: set a background task |
+| POST | `/challenge` | `{"suite": "gsm8k", "mode": "exam" \| "practice", "n": 50}` |
+| POST | `/challenge/fetch` | `{"benchmark": "gsm8k", "rows": 300, "split": "test"}` |
 | POST | `/task` | `{"id": "task-1", "action": "pause" \| "resume" \| "remove"}` |
 | POST | `/halt`, `/resume`, `/pause`, `/rollback` | |
-| GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions`, `/knowledge?q=...`, `/temperament`, `/why?order=...`, `/inquiries`, `/proposals`, `/opinions`, `/notes`, `/tasks` | |
+| GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions`, `/knowledge?q=...`, `/temperament`, `/why?order=...`, `/inquiries`, `/proposals`, `/opinions`, `/notes`, `/tasks`, `/challenges` | |
 | GET | `/mind` | operator: every note, private ones included (audited) |
 
 ```
@@ -661,13 +725,14 @@ derivations, moving weights between devices). They are skipped where no GPU libr
 directives.toml          constitution: prime directives, goals, policy
 capabilities.toml        seed skills
 plugins/                 installed tools (calculator, word_stats, wikipedia, kiwix)
+challenges/              challenge suites (small samples; fetched benchmarks go to state/challenges/)
 examples/incoming_plugins/  tools the demo installs at runtime
 neuromesh/
   runtime.py             System: wiring, cascade, learning, tool activation, status
   live.py                live console (curses): network, work in progress, activity log, prompt
   activity.py            work-in-flight tracker and the activity log
   commands.py            orders and /commands shared by the live and plain consoles
-  agents.py              the ten agents
+  agents.py              the ten agents (plus the challenge runner in challenges.py)
   nodes.py               NeuralNode + derivations (expand / widen / deepen / retune / fresh)
   backend.py             compute backends: numpy (CPU), PyTorch (CUDA / ROCm / MPS), CuPy
   bench.py               CPU vs GPU benchmark
@@ -679,13 +744,15 @@ neuromesh/
   voice.py               replies: the result first in the mesh's own words, then sources
   temperament.py         emotional engines: temperament, policy teacher, output templates, honesty guard (P8)
   mind.py                opinions, private notes, inquiries, capability proposals, investigation goals (P9, P10)
-  background.py          background tasks: learn a topic, improve a skill, repeat an order
+  background.py          background tasks: learn a topic, improve a skill, repeat an order, practise a challenge
+  challenges.py          open-source LLM benchmarks: suites, Hugging Face fetch, grading, the challenge teacher
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   105 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   114 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
-                         replies, temperament and
+                         replies, challenges (grading, paged fetch, practice vs exam, route search),
+                         temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,
                          questions, proposals, investigations), background tasks, full system,
                          live console (incl. a pseudo-terminal run), compute

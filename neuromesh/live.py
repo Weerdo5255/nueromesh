@@ -213,7 +213,8 @@ def work_lines(system, g: dict, limit: int = 6) -> list[Line]:
     s = system
     frame = g["spin"][int(time.time() * 8) % len(g["spin"])]
     style = {"lesson": "lesson", "training": "work", "evaluation": "work", "self-test": "tool",
-             "order": "order", "research": "lesson", "investigation": "lesson", "task": "tool"}
+             "order": "order", "research": "lesson", "investigation": "lesson", "task": "tool",
+             "challenge": "lesson"}
     active = s.activity.current()
     lines: list[Line] = []
     for a in active[-limit:]:
@@ -255,6 +256,9 @@ def teacher_goal_lines(system, g: dict) -> list[Line]:
         shown = "-" if v is None else (f"{v:.3f}".rstrip("0").rstrip(".") if isinstance(v, float) else str(v))
         op = ">=" if goal["direction"] == "at_least" else "<="
         goals.append(f"{goal['id'].split('-')[0]}:{shown} {op}{goal['target']:g} {g['ok'] if goal['met'] else g['no']}")
+    for r in s.challenges.summary():  # benchmark exam scores sit with the directive goals
+        if r["exams"]:
+            goals.append(f"{r['suite']} {r['last_exam']:.0%}")
     k = s.knowledge.stats()
     r = s.guardian.research_usage()
     tools = s.knowledge_tools()

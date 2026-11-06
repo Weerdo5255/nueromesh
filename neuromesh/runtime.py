@@ -17,6 +17,7 @@ from .activity import ActivityLog, ActivityTracker
 from .agents import (Architect, Curator, Evaluator, Explorer, Investigator, Orchestrator, Researcher, Sentinel,
                      TaskRunner, Trainer)
 from .background import BackgroundTasks
+from .challenges import ChallengeTeacher, Challenges
 from .backend import select_backend
 from .bus import Bus
 from .config import Directives, load_toml
@@ -72,6 +73,7 @@ class System:
             teachers[name] = LLMTeacher(name, cfg, self.guardian, self.bus)
         teachers["heuristic"] = HeuristicTeacher(seed)
         teachers["temperament"] = TemperamentTeacher(seed)  # specialist: teaches only the disposition engine
+        teachers["challenge"] = ChallengeTeacher(seed)  # benchmark suites: gold answers for practice items
         self.teachers = TeacherPool(teachers, tp.order, tp.weights)
         self.teachers.activity, self.teachers.bus = self.activity, self.bus
 
@@ -82,7 +84,8 @@ class System:
         self.bus.listen(self.affect.on_event)
         self.mind = Mind(self)      # opinions, private notes, inquiries, proposals (P9, P10)
         self.bus.listen(self.mind.on_event)
-        self.tasks = BackgroundTasks(self)  # background tasks people set (learn / improve / run)
+        self.tasks = BackgroundTasks(self)  # background tasks people set (learn / improve / run / challenge)
+        self.challenges = Challenges(self)  # open-source LLM benchmarks: practice teaches, exams measure
 
         self.orders: asyncio.Queue = asyncio.Queue()
         self.inflight = 0
@@ -577,6 +580,7 @@ class System:
             "temperament": self.affect.status(),
             "mind": self.mind.status(),
             "tasks": self.tasks.status(),
+            "challenges": self.challenges.status(),
             "scorecard": self.scorecard(),
             "agents": {a.name: dict(a.stats) for a in self.agents},
         }

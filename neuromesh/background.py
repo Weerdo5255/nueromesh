@@ -24,22 +24,24 @@ from dataclasses import asdict, dataclass, field, fields
 
 from .tasks import Order
 
-KINDS = ("learn", "improve", "run")
+KINDS = ("learn", "improve", "run", "challenge")
 NOTIFY = ("change", "always", "never")
 USAGE = ("background tasks: learn <topic> [every 2m] [max 30] [depth 2] | improve <skill> [to 0.97] | "
-         "every 10m: <order> | run <order> every 10m [notify change|always|never]")
+         "every 10m: <order> | run <order> every 10m [notify change|always|never] | "
+         "challenge <suite> [every 30m] [practice 20] [exam 50]")
 
 _UNITS = {"s": 1, "sec": 1, "secs": 1, "second": 1, "seconds": 1, "m": 60, "min": 60, "mins": 60, "minute": 60,
           "minutes": 60, "h": 3600, "hr": 3600, "hrs": 3600, "hour": 3600, "hours": 3600, "d": 86400,
           "day": 86400, "days": 86400}
 _DURATION = r"\d+(?:\.\d+)?\s*(?:" + "|".join(sorted(_UNITS, key=len, reverse=True)) + r")\b"
-_OPTION = re.compile(r"\s+(every\s+" + _DURATION + r"|max\s+\d+(?:\s+articles?)?|depth\s+\d+|"
+_OPTION = re.compile(r"\s+(every\s+" + _DURATION + r"|max\s+\d+(?:\s+articles?)?|depth\s+\d+|practice\s+\d+|exam\s+\d+|"
                      r"(?:to|until)\s+\d+(?:\.\d+)?%?|notify\s+(?:always|changes?|never))\s*$", re.I)
 _EVERY_FIRST = re.compile(r"^every\s+(?P<dur>" + _DURATION + r")\s*[:,]\s*(?P<order>.+)$", re.I | re.S)
 _LEARN = re.compile(r"^(?:keep\s+(?:on\s+)?(?:learning|studying|reading(?:\s+up)?)\s+(?:about|on)\s+|"
                     r"learn(?:\s+about)?\s+|study\s+|read\s+up\s+on\s+)", re.I)
 _IMPROVE = re.compile(r"^(?:keep\s+)?(?:improving|improve|training|train|practi[cs]ing|practi[cs]e)\s+", re.I)
 _RUN = re.compile(r"^(?:keep\s+)?(?:run|running|watch|watching|check|checking|repeat|monitor|monitoring)\s+", re.I)
+_CHALLENGE = re.compile(r"^(?:keep\s+)?(?:challenge|benchmark|testing\s+against|test\s+against)\s+", re.I)
 _ORDER_PHRASE = re.compile(r"^\s*(?:please\s+)?(?:in\s+the\s+background,?\s+)?(?P<spec>keep\s+(?:on\s+)?"
                            r"(?:learning|studying|reading(?:\s+up)?|improving|training|watching|checking|"
                            r"monitoring)\s+.+|every\s+" + _DURATION + r"\s*[:,]\s*.+)$", re.I | re.S)
@@ -78,9 +80,11 @@ def parse_spec(text: str) -> dict:
         elif word in ("to", "until"):
             number = float(value.rstrip("%"))
             spec["threshold"] = number / 100 if value.endswith("%") or number > 1 else number
+        elif word in ("practice", "exam"):
+            spec[word] = int(value)
         elif word == "notify":
             spec["notify"] = "change" if value.startswith("change") else value
-    for kind, prefix in (("learn", _LEARN), ("improve", _IMPROVE), ("run", _RUN)):
+    for kind, prefix in (("learn", _LEARN), ("improve", _IMPROVE), ("challenge", _CHALLENGE), ("run", _RUN)):
         m = prefix.match(t)
         if m:
             target = t[m.end():].strip().strip("'\"")
@@ -119,6 +123,8 @@ class BackgroundTask:
     max_articles: int = 0           # learn
     depth: int = 0                  # learn
     notify: str = "change"          # run: change | always | never
+    practice: int = 0               # challenge: practice items per run (0 = [challenges] practice_batch)
+    exam: int = 0                   # challenge: exam items per run (0 = the whole exam)
     status: str = "active"          # active | paused
     note: str = ""                  # what it is doing / waiting for, in a few words
     created_by: str = "user"
@@ -136,6 +142,8 @@ class BackgroundTask:
             return f"learn '{self.target}'"
         if self.kind == "improve":
             return f"improve {self.target} to {self.threshold:.2f}"
+        if self.kind == "challenge":
+            return f"challenge {self.target}"
         return f"every {every(self.interval)}: {self.target}"
 
 
@@ -167,7 +175,8 @@ class BackgroundTasks:
         if len(self.tasks) >= pol.max_tasks:
             raise ValueError(f"already {len(self.tasks)} background tasks (max {pol.max_tasks}); remove one first")
         kind = spec["kind"]
-        default = {"learn": pol.learn_interval_seconds, "improve": pol.improve_interval_seconds}.get(kind, 0)
+        default = {"learn": pol.learn_interval_seconds, "improve": pol.improve_interval_seconds,
+                   "challenge": pol.challenge_interval_seconds}.get(kind, 0)
         interval = float(spec.get("interval", default))
         if interval < pol.min_interval_seconds:
             raise ValueError(f"the shortest interval allowed is {every(pol.min_interval_seconds)} "
@@ -179,6 +188,8 @@ class BackgroundTasks:
                 target = "dispatch"
             if target not in s.capabilities:
                 raise ValueError(f"no skill called '{target}' (skills: {', '.join(sorted(s.capabilities))})")
+        if kind == "challenge" and target not in s.challenges.suites:
+            raise ValueError(f"no challenge suite '{target}' (/challenges lists them)")
         same = next((t for t in self.tasks.values() if (t.kind, t.target.lower()) == (kind, target.lower())), None)
         if same is not None:
             raise ValueError(f"{same.id} already does that ({same.describe()})")
@@ -189,8 +200,8 @@ class BackgroundTasks:
             f"task-{next(self._ids)}", kind, target, interval, spec=text.strip(), threshold=threshold,
             max_articles=int(spec.get("max_articles", pol.learn_max_articles)) if kind == "learn" else 0,
             depth=int(spec.get("depth", pol.learn_depth)) if kind == "learn" else 0,
-            notify=spec.get("notify", "change"), created_by=by, created_at=self.clock(), next_run=self.clock(),
-            note="starting")
+            notify=spec.get("notify", "change"), practice=int(spec.get("practice", 0)), exam=int(spec.get("exam", 0)),
+            created_by=by, created_at=self.clock(), next_run=self.clock(), note="starting")
         if kind == "learn":
             task.progress = {"frontier": [target], "depth": {target: 0}, "read": [], "failed": []}
         self.tasks[task.id] = task
@@ -260,6 +271,8 @@ class BackgroundTasks:
                     await self._learn(task)
                 elif task.kind == "improve":
                     self._improve(task)
+                elif task.kind == "challenge":
+                    await self._challenge(task)
                 else:
                     await self._run_order(task)
         except Exception as exc:  # a broken task never takes the runner down
@@ -381,6 +394,26 @@ class BackgroundTasks:
                 task.met = False
                 self._tell(task, f"My {task.target} skill slipped to {acc:.3f}, below the target of "
                                  f"{task.threshold:.2f}. ({task.id}; working on it again.)")
+
+    async def _challenge(self, task: BackgroundTask) -> None:
+        """Practise on part of a benchmark suite (learning from every grade), then re-sit its exam."""
+        s = self.sys
+        ch = s.challenges
+        if task.target not in ch.suites:
+            task.note = f"the suite '{task.target}' is gone"
+            return
+        practice = await ch.run(task.target, "practice", task.practice or None, by=f"task:{task.id}")
+        exam = await ch.run(task.target, "exam", task.exam or None, by=f"task:{task.id}")
+        prev = task.progress.get("exam")
+        task.progress.update(exam=round(exam.score, 4), best=round(max(exam.score, task.progress.get("best", 0.0)), 4),
+                             practice=round(practice.score, 4), learned=task.progress.get("learned", 0) + practice.learned)
+        task.history.append([round(self.clock(), 1), True, f"exam {exam.score:.0%}, practice {practice.score:.0%}"])
+        del task.history[:-20]
+        task.note = f"{exam.line()}; practice {practice.score:.0%}, {practice.learned} lessons"
+        if prev is None or round(prev, 4) != round(exam.score, 4):
+            change = "" if prev is None else f", {'up' if exam.score > prev else 'down'} from {prev:.0%}"
+            self._tell(task, f"{exam.line()}{change}. ({task.id}; practice {practice.score:.0%}, "
+                             f"{practice.learned} lessons, {practice.rerouted} better routes found.)")
 
     async def _run_order(self, task: BackgroundTask) -> None:
         s = self.sys

@@ -85,6 +85,14 @@ def describe_event(ev: Event) -> str | None:
     if t in ("task.paused", "task.active", "task.removed"):
         verb = {"task.active": "resumed"}.get(t, t.split(".")[1])
         return f"[task]     {d['id']} ({d['what']}) {verb} by {d['by']}"
+    if t == "challenge.done":
+        prev = d.get("previous")
+        change = "" if prev is None else f" (was {prev:.0%})"
+        extra = f"; {d['learned']} lessons, {d['rerouted']} better routes" if d["mode"] == "practice" else ""
+        return (f"[challenge] {d['suite']} {d['mode']}: {d['score']:.0%}{change} - {d['passed']} pass, {d['close']} close, "
+                f"{d['failed']} fail{extra}")
+    if t == "challenge.fetched":
+        return f"[challenge] fetched {d['suite']}: {d['items']} items from {d['source']}"
     if t == "teacher.status":
         verb = "ready" if d["state"] == "ready" else f"unavailable ({d['state']})"
         return f"[teacher]  {d['teacher']} {verb}: {d['detail']}"
@@ -141,6 +149,10 @@ def render_status(st: dict) -> str:
         lines.append(f"mind: {md['opinions']} opinions, {sum(md['note_counts'].values())} notes ({md['private']} private); "
                      f"{len(md['inquiries'])} questions for you, {len(md['proposals'])} open proposals; "
                      f"investigations {inv['last_hour']}/{inv['limit']} this hour")
+    chs = st.get("challenges")
+    if chs and any(r["exams"] for r in chs["suites"]):
+        lines.append("challenge exams: " + ", ".join(f"{r['suite']} {r['last_exam']:.0%}" for r in chs["suites"]
+                                                    if r["exams"]))
     tk = st.get("tasks")
     if tk and tk["tasks"]:
         lines.append(f"background tasks ({tk['usage']['last_hour']}/{tk['usage']['limit']} runs this hour):")

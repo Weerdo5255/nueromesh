@@ -1,0 +1,7 @@
+name = "sample-trivia"
+kind = "short"
+description = "General-knowledge questions with short answers (written for NeuroMesh)"
+retain = true          # practice answers are kept as retained knowledge, so later questions can recall them
+exam_percent = 30
+source = "NeuroMesh sample suite"
+license = "same as NeuroMesh"

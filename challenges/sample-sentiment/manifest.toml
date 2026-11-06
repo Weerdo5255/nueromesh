@@ -1,0 +1,9 @@
+name = "sample-sentiment"
+kind = "classify"
+description = "Movie-review sentences, positive or negative (in the style of SST-2; written for NeuroMesh)"
+capability = "sentiment"
+labels = ["negative", "positive"]
+close = [["neutral", "positive"], ["neutral", "negative"]]   # "neutral" for a clear review is half right
+exam_percent = 30
+source = "NeuroMesh sample suite"
+license = "same as NeuroMesh"

@@ -1,0 +1,12 @@
+{"id": "sample-science-001", "input": "Which of these is a renewable source of energy?", "choices": [["A", "coal"], ["B", "natural gas"], ["C", "wind"], ["D", "oil"]], "answer": "C"}
+{"id": "sample-science-002", "input": "What part of a plant takes in water from the soil?", "choices": [["A", "leaves"], ["B", "roots"], ["C", "flowers"], ["D", "seeds"]], "answer": "B"}
+{"id": "sample-science-003", "input": "Which state of matter has a definite volume but no definite shape?", "choices": [["A", "solid"], ["B", "liquid"], ["C", "gas"], ["D", "plasma"]], "answer": "B"}
+{"id": "sample-science-004", "input": "What causes day and night on Earth?", "choices": [["A", "Earth's revolution around the Sun"], ["B", "Earth's rotation on its axis"], ["C", "the Moon's orbit"], ["D", "the tilt of Earth's axis"]], "answer": "B"}
+{"id": "sample-science-005", "input": "Which tool is best for measuring the mass of a rock?", "choices": [["A", "ruler"], ["B", "thermometer"], ["C", "balance"], ["D", "graduated cylinder"]], "answer": "C"}
+{"id": "sample-science-006", "input": "A student stirs salt into water until it can no longer be seen. What has formed?", "choices": [["A", "a solution"], ["B", "a new element"], ["C", "a gas"], ["D", "a solid"]], "answer": "A"}
+{"id": "sample-science-007", "input": "Which animal is a mammal?", "choices": [["A", "shark"], ["B", "frog"], ["C", "whale"], ["D", "lizard"]], "answer": "C"}
+{"id": "sample-science-008", "input": "What force pulls objects toward the center of the Earth?", "choices": [["A", "magnetism"], ["B", "friction"], ["C", "gravity"], ["D", "electricity"]], "answer": "C"}
+{"id": "sample-science-009", "input": "Which of these is the best conductor of electricity?", "choices": [["A", "rubber"], ["B", "copper"], ["C", "glass"], ["D", "wood"]], "answer": "B"}
+{"id": "sample-science-010", "input": "What do we call animals that eat only plants?", "choices": [["A", "carnivores"], ["B", "herbivores"], ["C", "omnivores"], ["D", "decomposers"]], "answer": "B"}
+{"id": "sample-science-011", "input": "When water vapor cools and becomes liquid, the process is called", "choices": [["A", "evaporation"], ["B", "condensation"], ["C", "melting"], ["D", "freezing"]], "answer": "B"}
+{"id": "sample-science-012", "input": "Which planet is closest to the Sun?", "choices": [["A", "Venus"], ["B", "Earth"], ["C", "Mercury"], ["D", "Mars"]], "answer": "C"}

@@ -1,0 +1,6 @@
+name = "sample-science"
+kind = "choice"
+description = "Grade-school science, multiple choice (in the style of ARC; written for NeuroMesh)"
+exam_percent = 30
+source = "NeuroMesh sample suite"
+license = "same as NeuroMesh"

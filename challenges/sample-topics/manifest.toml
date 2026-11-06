@@ -1,0 +1,9 @@
+name = "sample-topics"
+kind = "classify"
+description = "News headlines by topic (in the style of AG News; written for NeuroMesh)"
+capability = "topic"
+labels = ["world", "sports", "business", "sci_tech"]
+label_descriptions = { world = "world news and politics", sports = "sport", business = "business and the economy", sci_tech = "science and technology" }
+exam_percent = 30
+source = "NeuroMesh sample suite"
+license = "same as NeuroMesh"

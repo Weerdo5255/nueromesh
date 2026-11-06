@@ -149,9 +149,10 @@ PROVIDER_DEFAULTS: dict[str, dict] = {
 
 @dataclass
 class TeacherPolicy:
-    order: tuple = ("human", "ollama", "llm", "heuristic")
+    order: tuple = ("human", "challenge", "ollama", "llm", "heuristic")
     weights: dict = field(default_factory=lambda: {
-        "human": 3.0, "tool-manifest": 2.0, "llm": 1.5, "ollama": 1.2, "heuristic": 1.0, "temperament": 1.0})
+        "human": 3.0, "challenge": 2.5, "tool-manifest": 2.0, "llm": 1.5, "ollama": 1.2, "heuristic": 1.0,
+        "temperament": 1.0})
     models: dict = field(default_factory=dict)  # teacher name -> LLMConfig, from [teachers.<name>]
 
     @property
@@ -249,7 +250,22 @@ class TaskPolicy:
     learn_links_per_article: int = 3
     learn_burst_unlimited: int = 10        # articles per run when the research tool is your own server (kiwix)
     improve_interval_seconds: float = 30.0
+    challenge_interval_seconds: float = 1800.0  # default pace of a challenge task (practice, then the exam)
     pause_after_failures: int = 5          # a run task that keeps failing is paused
+
+
+@dataclass
+class ChallengePolicy:
+    """Open-source LLM benchmarks as a teacher: practice items teach, exam items measure."""
+    enabled: bool = True
+    folders: tuple = ("challenges",)        # suite folders (relative to the root); fetched suites go to state/challenges
+    exam_percent: int = 30                  # share of each suite held out as the exam (never learned from)
+    practice_batch: int = 20                # practice items per run (rotating through the suite)
+    max_route_trials: int = 4               # other routes tried on a question the mesh missed
+    close_tolerance: float = 0.01           # numeric answers within 1% count as close
+    api_url: str = "https://datasets-server.huggingface.co"  # where /challenge fetch downloads benchmarks
+    fetch_limit: int = 500                  # rows fetched per benchmark by default
+    token_env: str = "HF_TOKEN"             # environment variable with a Hugging Face token (optional)
 
 
 @dataclass
@@ -274,6 +290,7 @@ class Directives:
     temperament: TemperamentPolicy = field(default_factory=TemperamentPolicy)
     mind: MindPolicy = field(default_factory=MindPolicy)
     tasks: TaskPolicy = field(default_factory=TaskPolicy)
+    challenges: ChallengePolicy = field(default_factory=ChallengePolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -293,6 +310,7 @@ class Directives:
             temperament=build(TemperamentPolicy, d.get("temperament")),
             mind=build(MindPolicy, d.get("mind")),
             tasks=build(TaskPolicy, d.get("tasks")),
+            challenges=build(ChallengePolicy, d.get("challenges")),
         )
 
     @classmethod

@@ -191,6 +191,37 @@ def _order(args) -> None:
           f"[{res['route']} | conf {res['confidence']:.2f} | {res['served_by']}]")
 
 
+def _challenge(args) -> None:
+    """Download a benchmark into state/challenges/ without starting the mesh."""
+    from .challenges import ADAPTERS, convert, fetch_rows, load_suite, save_suite
+    from .config import Directives
+    root = args.root.resolve()
+    pol = Directives.load(root / "directives.toml").challenges
+    if args.action == "list":
+        print("benchmarks you can fetch:")
+        for name, a in ADAPTERS.items():
+            print(f"  {name:<15} {a['kind']:<9} {a['dataset']} ({a['config']}/{a['split']}): {a['description']}")
+        folders = [root / f for f in pol.folders] + [root / "state" / "challenges"]
+        suites = [d for base in folders if base.is_dir() for d in sorted(base.iterdir()) if (d / "manifest.toml").exists()]
+        print("suites:" if suites else "no suites yet")
+        for d in suites:
+            s = load_suite(d)
+            print(f"  {s.name:<22} {s.kind:<9} {len(s.items):>5} items ({len(s.exam())} exam)  {s.source}")
+        return
+    if args.benchmark not in ADAPTERS:
+        sys.exit(f"choose a benchmark: {', '.join(ADAPTERS)}")
+    a = ADAPTERS[args.benchmark]
+    split = args.split or a["split"]
+    import os
+    rows = fetch_rows(a["dataset"], a["config"], split, args.rows or pol.fetch_limit, api=pol.api_url,
+                      token=os.environ.get(pol.token_env) if pol.token_env else None)
+    name = args.name or (args.benchmark if split == a["split"] else f"{args.benchmark}-{split}")
+    suite = convert(args.benchmark, rows, name, f"huggingface:{a['dataset']} {a['config']}/{split} (first {len(rows)} rows)")
+    suite.exam_percent = pol.exam_percent
+    folder = save_suite(root / "state" / "challenges" / name, suite)
+    print(f"fetched {name}: {len(suite.items)} items ({len(suite.exam())} held out as the exam) -> {folder}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="neuromesh", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -219,6 +250,14 @@ def main(argv: list[str] | None = None) -> None:
     p_demo.add_argument("--llm", action="store_true", help="also use the configured LLM teachers (Claude, Ollama, ...)")
     p_demo.add_argument("--keep", action="store_true", help="keep the demo's working folder")
     p_demo.add_argument("--seed", type=int, default=7)
+    p_chal = sub.add_parser("challenge", help="download benchmark suites (GSM8K, SST-2, ...) to test the mesh against")
+    p_chal.add_argument("action", choices=["fetch", "list"], help="fetch a benchmark, or list adapters and suites")
+    p_chal.add_argument("benchmark", nargs="?", help="gsm8k, sst2, ag_news, boolq, arc_easy, arc_challenge, "
+                                                     "commonsense_qa or squad")
+    p_chal.add_argument("--rows", type=int, default=0, help="rows to download (default: [challenges] fetch_limit)")
+    p_chal.add_argument("--split", default="", help="dataset split (default: the benchmark's usual evaluation split)")
+    p_chal.add_argument("--name", default="", help="suite name (default: the benchmark's name)")
+    p_chal.add_argument("--root", type=Path, default=Path("."))
     p_bench = sub.add_parser("bench", help="compare CPU and GPU speed for node training and inference")
     p_bench.add_argument("--input-dim", type=int, default=1024, help="encoder width (directives: input_dim)")
     p_bench.add_argument("--hidden", default="64", help="hidden layer sizes, e.g. 64 or 512,256")
@@ -269,6 +308,8 @@ def main(argv: list[str] | None = None) -> None:
             asyncio.run(run_demo(use_llm=args.llm, keep=args.keep, seed=args.seed,
                                  device=args.device, library=args.gpu_library,
                                  ollama=args.ollama, ollama_url=args.ollama_url))
+        elif args.cmd == "challenge":
+            _challenge(args)
         elif args.cmd == "bench":
             from .bench import run_bench
             hidden = tuple(int(h) for h in args.hidden.replace(" ", "").split(",") if h)

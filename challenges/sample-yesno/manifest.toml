@@ -1,0 +1,6 @@
+name = "sample-yesno"
+kind = "yesno"
+description = "Yes/no questions about a short passage (in the style of BoolQ; written for NeuroMesh)"
+exam_percent = 30
+source = "NeuroMesh sample suite"
+license = "same as NeuroMesh"

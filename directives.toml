@@ -156,6 +156,22 @@ learn_links_per_article = 3
 improve_interval_seconds = 30           # how often an improve task checks progress
 pause_after_failures = 5                # a repeating order that keeps failing is paused
 
+[challenges]
+# Open-source LLM benchmarks as a teacher. Each suite is split once into practice (graded, and
+# learned from: gold labels train skill nodes, missed questions teach the router a better route)
+# and exam (graded only, never learned from). Answers score pass 1, close 1/2, fail 0.
+#   /challenges   /challenge run <suite>   /challenge practice <suite>   /challenge fetch gsm8k 200
+#   /task challenge <suite> every 30m      practise and re-sit the exam continuously
+enabled = true
+folders = ["challenges"]                # suite folders; fetched benchmarks go to state/challenges
+exam_percent = 30                       # share of each suite held out as the exam
+practice_batch = 20                     # practice items per run, rotating through the suite
+max_route_trials = 4                    # other routes tried on a question the mesh missed
+close_tolerance = 0.01                  # numeric answers within 1% count as close
+api_url = "https://datasets-server.huggingface.co"   # the Hugging Face dataset viewer (/rows)
+fetch_limit = 500                       # rows per benchmark fetched by default
+token_env = "HF_TOKEN"                  # optional Hugging Face token, read from this environment variable
+
 [orders]
 confidence_threshold = 0.75     # below this a node defers to a teacher
 audit_sample_rate = 0.1         # fraction of node answers spot-checked by a teacher
@@ -198,7 +214,7 @@ health_check_seconds = 300
 # Who is asked, in order, when a node is unsure. Teachers that are unavailable (no API key,
 # Ollama not running, model not pulled) are skipped automatically. A teacher that is not
 # listed here is never used, so to add one of your own, define [teachers.<name>] and list it.
-order = ["human", "ollama", "llm", "heuristic"]
+order = ["human", "challenge", "ollama", "llm", "heuristic"]   # "challenge": gold answers from benchmark practice items
 
 [teachers.weights]                      # how much each source's examples count in training,
 human = 3.0                             # and which source wins when two label the same text
@@ -207,6 +223,7 @@ llm = 1.5
 ollama = 1.2
 heuristic = 1.0
 temperament = 1.0                       # the temperament policy (teaches only the disposition engine)
+challenge = 2.5                         # gold labels from benchmark suites (curated, so trusted)
 
 # Each [teachers.<name>] table with a `provider` is an LLM teacher with its own budget.
 [teachers.ollama]

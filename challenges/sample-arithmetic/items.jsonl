@@ -1,0 +1,30 @@
+{"id": "sample-arithmetic-001", "input": "What is 15 times 4?", "answer": 60}
+{"id": "sample-arithmetic-002", "input": "Calculate 144 / 12.", "answer": 12}
+{"id": "sample-arithmetic-003", "input": "What is 238 + 417?", "answer": 655}
+{"id": "sample-arithmetic-004", "input": "What is 1000 minus 357?", "answer": 643}
+{"id": "sample-arithmetic-005", "input": "What is 7 plus 8 times 2?", "answer": 23}
+{"id": "sample-arithmetic-006", "input": "What is 12 squared?", "answer": 144}
+{"id": "sample-arithmetic-007", "input": "What is 3.5 times 4?", "answer": 14}
+{"id": "sample-arithmetic-008", "input": "What is (20 - 5) * 3?", "answer": 45}
+{"id": "sample-arithmetic-009", "input": "What is 81 divided by 9?", "answer": 9}
+{"id": "sample-arithmetic-010", "input": "What is 25% of 80?", "answer": 20}
+{"id": "sample-arithmetic-011", "input": "What is 9 * 9 * 9?", "answer": 729}
+{"id": "sample-arithmetic-012", "input": "What is 56 + 44 - 30?", "answer": 70}
+{"id": "sample-arithmetic-013", "input": "What is 6 times 7 minus 2?", "answer": 40}
+{"id": "sample-arithmetic-014", "input": "What is 2 to the power of 10?", "answer": 1024}
+{"id": "sample-arithmetic-015", "input": "What is 400 divided by 16?", "answer": 25}
+{"id": "sample-arithmetic-016", "input": "A box holds 12 eggs. How many eggs are in 5 boxes?", "answer": 60}
+{"id": "sample-arithmetic-017", "input": "Sam has 23 apples and gives away 9. How many apples does Sam have left?", "answer": 14}
+{"id": "sample-arithmetic-018", "input": "A train travels 60 miles per hour for 3 hours. How far does it travel in miles?", "answer": 180}
+{"id": "sample-arithmetic-019", "input": "Mia buys 4 notebooks at $3 each. How much does she spend in dollars?", "answer": 12}
+{"id": "sample-arithmetic-020", "input": "There are 30 students in a class and half of them wear glasses. How many students wear glasses?", "answer": 15}
+{"id": "sample-arithmetic-021", "input": "A baker makes 48 cookies and packs them into bags of 6. How many bags does she fill?", "answer": 8}
+{"id": "sample-arithmetic-022", "input": "Tom reads 15 pages a day. How many pages does he read in a week?", "answer": 105}
+{"id": "sample-arithmetic-023", "input": "A rectangle is 8 cm long and 5 cm wide. What is its area in square centimetres?", "answer": 40}
+{"id": "sample-arithmetic-024", "input": "Lena saved $120 and spent $45 on a jacket. How many dollars does she have left?", "answer": 75}
+{"id": "sample-arithmetic-025", "input": "A pizza is cut into 8 slices and 3 friends eat 2 slices each. How many slices are left?", "answer": 2}
+{"id": "sample-arithmetic-026", "input": "Each of 7 shelves holds 25 books. How many books are there in total?", "answer": 175}
+{"id": "sample-arithmetic-027", "input": "A car uses 6 litres of fuel per 100 km. How many litres does it use for 250 km?", "answer": 15}
+{"id": "sample-arithmetic-028", "input": "Jake is 4 years older than Ana, who is 9. How old is Jake?", "answer": 13}
+{"id": "sample-arithmetic-029", "input": "A shop sells pens in packs of 10. How many packs are needed for 85 pens?", "answer": 9}
+{"id": "sample-arithmetic-030", "input": "The temperature was -3 degrees and rose by 8 degrees. What is the temperature now?", "answer": 5}

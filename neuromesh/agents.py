@@ -151,7 +151,7 @@ class Orchestrator(Agent):
         kinds: list[str] = []
         conf = 1.0
         if route is None:
-            inf = await s.infer(DISPATCH, order.text)
+            inf = await s.infer(DISPATCH, order.text, learn=order.learn)
             res.steps.append({"capability": DISPATCH, "input": order.text, "label": inf.label,
                               "provenance": inf.provenance, "confidence": round(inf.confidence, 3)})
             res.trace.append(f"dispatch -> {inf.label} via {inf.provenance} ({inf.confidence:.2f})")
@@ -186,7 +186,7 @@ class Orchestrator(Agent):
             if cap not in s.capabilities:
                 res.ok, res.note = False, f"unknown capability '{cap}'"
             else:
-                inf = await s.infer(cap, payload)
+                inf = await s.infer(cap, payload, learn=order.learn)
                 res.steps.append({"capability": cap, "input": payload, "label": inf.label,
                                   "provenance": inf.provenance, "confidence": round(inf.confidence, 3)})
                 res.trace.append(f"{cap} -> {inf.label} via {inf.provenance} ({inf.confidence:.2f})")
