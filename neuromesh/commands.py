@@ -27,6 +27,7 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /task improve <skill> [to 0.97]             keep training a skill until it reaches the target
   /task every 10m: <order>                    repeat an order; you are told when its result changes
   /tasks    /task show|pause|resume|remove <task-id>     (also: "keep learning about X" as an order)
+  /evolution [skill]              how each skill's nodes have evolved: generations, shapes, sizes, fitness
   /challenges                     benchmark suites, exam scores and trends
   /challenge run <suite> [n]      sit the exam now (graded, never learned from)
   /challenge practice <suite> [n] practise now: every graded answer teaches the mesh
@@ -121,6 +122,36 @@ def _note_line(n, private_shown: bool = False) -> str:
     lock = "[private] " if n.private and private_shown else ""
     stance = f"{n.stance} ({n.strength:.0%}) - " if n.kind == "opinion" else ""
     return f"  {lock}{n.kind:<11} {display(n.subject)[:28]:<28} {stance}{' '.join(n.text.split())[:110]}"
+
+
+def evolution_lines(system, capability: str = "") -> list[str]:
+    evo = system.evolution
+    if not evo.enabled:
+        return ["  evolution is off ([evolution] enabled = false); challengers are bred by fixed mutations"]
+    p = evo.pol
+    out = [f"evolution: mutations grow {p.growth_bias:.0%} of the time; a larger challenger that is at least as "
+           f"accurate wins{'' if p.promote_larger_on_tie else ' (off)'}; bounds {system.directives.nodes.max_depth} layers "
+           f"x {system.directives.nodes.max_hidden} neurons, {p.max_params:,} weights"]
+    caps = [capability] if capability else [c for c in system.capabilities if evo.archive.get(c)]
+    if not caps:
+        return out + ["  nothing evolved yet"]
+    for cap in caps:
+        sm = evo.summary(cap)
+        ch = sm["champion"]
+        if ch is None:
+            out.append(f"  {cap}: no node yet")
+            continue
+        trend = " -> ".join(f"{n / 1000:.0f}k" for n in sm["sizes"]) or "-"
+        out.append(f"  {cap}: champion {ch['id']} gen {ch['generation']} {'x'.join(map(str, ch['hidden']))} "
+                   f"({ch['params']:,} weights, fitness {ch['fitness'] if ch['fitness'] is None else round(ch['fitness'], 3)}); "
+                   f"{sm['tried']} genomes tried, {sm['promoted']} promoted; champion sizes {trend}")
+        if capability:
+            for e in sorted(evo.archive.get(cap, []), key=lambda e: e["created"])[-15:]:
+                acc = "-" if e.get("acc") is None else f"{e['acc']:.3f}"
+                change = "; ".join(e.get("changes") or []) or e.get("origin", "")
+                out.append(f"    gen {e['generation']:<3} {'x'.join(map(str, e['hidden'])):<14} {e['params']:>9,} weights "
+                           f"held-out {acc:<6} {e.get('outcome', 'candidate'):<9} {change[:70]}")
+    return out
 
 
 def _pct(x) -> str:
@@ -320,6 +351,8 @@ async def execute(system, line: str) -> Output:
                 t = system.tasks.add(rest, by=by)
                 out = [f"  {t.id} set: {t.describe()}, every {every(t.interval)} (in the background; "
                        f"/task remove {t.id} stops it)"]
+        elif cmd == "evolution":
+            out = evolution_lines(system, rest)
         elif cmd == "challenges" or (cmd == "challenge" and not rest):
             out = challenge_lines(system)
         elif cmd == "challenge":

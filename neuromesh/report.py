@@ -149,6 +149,13 @@ def render_status(st: dict) -> str:
         lines.append(f"mind: {md['opinions']} opinions, {sum(md['note_counts'].values())} notes ({md['private']} private); "
                      f"{len(md['inquiries'])} questions for you, {len(md['proposals'])} open proposals; "
                      f"investigations {inv['last_hour']}/{inv['limit']} this hour")
+    ev = st.get("evolution")
+    if ev and ev["enabled"] and ev["capabilities"]:
+        parts = []
+        for cap, sm in ev["capabilities"].items():
+            if sm["champion"]:
+                parts.append(f"{cap} gen {sm['champion']['generation']} {'x'.join(map(str, sm['champion']['hidden']))}")
+        lines.append(f"evolution (grows {ev['growth_bias']:.0%} of the time): " + ", ".join(parts))
     chs = st.get("challenges")
     if chs and any(r["exams"] for r in chs["suites"]):
         lines.append("challenge exams: " + ", ".join(f"{r['suite']} {r['last_exam']:.0%}" for r in chs["suites"]

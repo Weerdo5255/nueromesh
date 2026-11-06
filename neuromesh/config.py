@@ -95,7 +95,7 @@ class NodePolicy:
     max_candidate_slices: int = 12
     batch_size: int = 32
     max_hidden: int = 512           # widest hidden layer the architect may breed
-    max_depth: int = 3              # most hidden layers the architect may breed
+    max_depth: int = 4              # most hidden layers the architect may breed
     challenger_cooldown_seconds: float = 30.0
     retired_grace_seconds: float = 120.0
     candidate_max_age_seconds: float = 600.0
@@ -269,6 +269,25 @@ class ChallengePolicy:
 
 
 @dataclass
+class EvolutionPolicy:
+    """The genetic algorithm that breeds each capability's challengers (see evolution.py)."""
+    enabled: bool = True
+    growth_bias: float = 0.7          # chance a mutation grows (neurons or a layer) rather than shrinks
+    layer_rate: float = 0.3           # chance a mutation changes the number of layers rather than neurons
+    double_mutation: float = 0.3      # chance of a second mutation in the same child
+    crossover_rate: float = 0.25      # chance a child recombines its parent with another good genome
+    lr_rate: float = 0.2              # chance the learning rate mutates too
+    tournament: int = 2               # parents are the fittest of this many live nodes
+    complexity_weight: float = 0.004  # fitness bonus per doubling of size: equal accuracy -> the larger is fitter
+    promote_larger_on_tie: bool = True  # a larger challenger at least as accurate as the champion replaces it
+    keep_evolving: bool = True        # keep breeding (more slowly) once the champion meets its target
+    idle_cooldown_factor: float = 4.0 # how much more slowly, then
+    min_neurons: int = 8
+    max_params: int = 1_500_000       # largest node it may breed (with [nodes] max_hidden and max_depth)
+    archive_size: int = 40            # genomes remembered per capability
+
+
+@dataclass
 class ComputePolicy:
     device: str = "cpu"     # "cpu" | "auto" | "cuda" | "cuda:N" | "mps"
     library: str = "auto"   # "auto" | "numpy" | "torch" | "cupy"
@@ -291,6 +310,7 @@ class Directives:
     mind: MindPolicy = field(default_factory=MindPolicy)
     tasks: TaskPolicy = field(default_factory=TaskPolicy)
     challenges: ChallengePolicy = field(default_factory=ChallengePolicy)
+    evolution: EvolutionPolicy = field(default_factory=EvolutionPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -311,6 +331,7 @@ class Directives:
             mind=build(MindPolicy, d.get("mind")),
             tasks=build(TaskPolicy, d.get("tasks")),
             challenges=build(ChallengePolicy, d.get("challenges")),
+            evolution=build(EvolutionPolicy, d.get("evolution")),
         )
 
     @classmethod

@@ -31,6 +31,7 @@ from .guardian import Verdict
 from .knowledge import Hit
 from .nodes import Architecture, NeuralNode
 from .tasks import DIRECT, DISPATCH, Result, parse_order, skill_payload
+from .evolution import judge as evolution_judge
 from .tools import ACTIVE, APPROVED, PENDING, QUARANTINED, REJECTED, Tool, outputs_match
 from . import voice
 
@@ -332,16 +333,25 @@ class Architect(Agent):
                                 f"new labels {missing}: growing {champ.id}'s output layer")
                 continue
             focus = s.tasks.focus()  # improve tasks: their skills get challengers first, to their own target
-            cooldown = npol.challenger_cooldown_seconds / (2 if cap in focus else 1)
-            if time.time() - self.last_spawn.get(cap, 0.0) < cooldown:
-                continue
+            evo = s.evolution
             acc = champ.metrics.get("holdout_acc")
             target = max(npol.target_accuracy, focus.get(cap, 0.0))
-            if (acc is not None and acc < target
-                    and len(cands) < npol.max_candidates_per_capability):
-                child, kind = self._mutate(champ, spec)
-                why = f"target {target}" + (" (a background task)" if cap in focus else "")
-                self._spawn(child, f"champion at {acc:.3f} < {why}: {kind} challenger")
+            below = acc is not None and acc < target
+            # below target: breed at the normal pace; at target, evolution keeps going more slowly
+            idle = evo.enabled and evo.pol.keep_evolving and acc is not None and not below
+            cooldown = npol.challenger_cooldown_seconds / (2 if cap in focus else 1)
+            if idle:
+                cooldown *= evo.pol.idle_cooldown_factor
+            if time.time() - self.last_spawn.get(cap, 0.0) < cooldown:
+                continue
+            if (below or idle) and len(cands) < npol.max_candidates_per_capability:
+                if evo.enabled:
+                    child, kind = evo.breed(champ, spec)
+                else:
+                    child, kind = self._mutate(champ, spec)
+                why = (f"champion at {acc:.3f} < target {target}" + (" (a background task)" if cap in focus else "")
+                       if below else f"champion at {acc:.3f} meets its target; evolution continues")
+                self._spawn(child, f"{why}: {kind}")
 
     def _mutate(self, champ: NeuralNode, spec) -> tuple[NeuralNode, str]:
         kind = "fresh"
@@ -584,22 +594,34 @@ class Evaluator(Agent):
             # labels with data that the champion structurally cannot output (e.g. a new tool)
             uncovered = {lab for lab in s.capabilities[cap].active_labels()
                          if counts.get(lab, 0) > 0 and lab not in champ.labels}
-            for cand in sorted(cands, key=lambda n: n.metrics.get("holdout_acc") or 0.0, reverse=True):
+            evo = s.evolution
+            for n in nodes:
+                evo.record(n)
+            # fittest first: accuracy, then (with the growth trend) size
+            for cand in sorted(cands, key=lambda n: (n.metrics.get("holdout_acc") or 0.0, n.param_count), reverse=True):
                 ok = oks[cand.id]
                 wins, losses = int((ok & ~c_ok).sum()), int((~ok & c_ok).sum())
                 z = (wins - losses) / math.sqrt(wins + losses) if wins + losses else 0.0
                 margin = float(ok.mean()) - c_acc
                 gain = sorted(uncovered & set(cand.labels))
-                better = margin >= npol.promotion_margin and z >= npol.promotion_z
-                if better or (gain and margin >= 0):
+                promote, why = evolution_judge(c_ok, ok, champ.param_count, cand.param_count,
+                                               margin=npol.promotion_margin, z_needed=npol.promotion_z,
+                                               larger_on_tie=evo.enabled and evo.pol.promote_larger_on_tie)
+                better = why == "better"
+                grown = promote and not better and cand.train_steps >= npol.min_train_steps_before_eval * 2
+                if better or grown or (gain and margin >= 0):
                     decision = s.guardian.authorize_promotion(cap, c_acc, float(ok.mean()))
                     if decision.allowed:
                         evidence = {"candidate_acc": round(float(ok.mean()), 4), "champion_acc": round(c_acc, 4),
                                     "wins": wins, "losses": losses, "z": round(z, 2), "holdout_n": len(labels),
                                     "labels_gained": gain}
                         reason = (f"beat the champion on held-out data ({ok.mean():.3f} vs {c_acc:.3f}, z={z:.2f})"
-                                  if better else f"adds {gain} with no held-out regression "
-                                                 f"({ok.mean():.3f} vs {c_acc:.3f})")
+                                  if better else
+                                  f"at least as accurate on held-out data ({ok.mean():.3f} vs {c_acc:.3f}) and larger "
+                                  f"({cand.arch.describe()}, {cand.param_count:,} weights vs {champ.param_count:,}): "
+                                  f"evolution favours more capacity" if grown else
+                                  f"adds {gain} with no held-out regression ({ok.mean():.3f} vs {c_acc:.3f})")
+                        evidence["evolution"] = cand.metrics.get("evolution")
                         s.registry.promote(cand.id, reason, evidence)
                         self.stats["promotions"] += 1
                         break
@@ -1036,5 +1058,6 @@ class Sentinel(Agent):
         if time.time() - self.last_beat >= 30:
             self.last_beat = time.time()
             s.affect.tick()  # feelings settle towards the baseline; the mood is persisted
+            s.evolution.save()
             s.bus.publish("system.heartbeat", scorecard=s.scorecard(), live_nodes=len(s.registry.live()),
                           duty_cycle=round(s.guardian.duty_cycle(), 3))

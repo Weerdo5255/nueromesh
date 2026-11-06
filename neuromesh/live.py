@@ -78,7 +78,8 @@ def header_text(system, g: dict, extra: str = "") -> tuple[str, str]:
 
 def _node_detail(system, node, g: dict | None = None) -> str:
     dot = (g or UNICODE)["dot"]
-    return f"{node.id} {node.arch.describe()} {dot} {_acc(node)} {dot} {node.metrics.get('serves', 0)} served"
+    return (f"{node.id} {node.arch.describe()} gen {node.generation} {dot} {_acc(node)} {dot} "
+            f"{node.metrics.get('serves', 0)} served")
 
 
 def _route_target(system, route: str, g: dict) -> tuple[str, str]:

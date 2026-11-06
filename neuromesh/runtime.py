@@ -18,6 +18,7 @@ from .agents import (Architect, Curator, Evaluator, Explorer, Investigator, Orch
                      TaskRunner, Trainer)
 from .background import BackgroundTasks
 from .challenges import ChallengeTeacher, Challenges
+from .evolution import Evolution
 from .backend import select_backend
 from .bus import Bus
 from .config import Directives, load_toml
@@ -86,6 +87,8 @@ class System:
         self.bus.listen(self.mind.on_event)
         self.tasks = BackgroundTasks(self)  # background tasks people set (learn / improve / run / challenge)
         self.challenges = Challenges(self)  # open-source LLM benchmarks: practice teaches, exams measure
+        self.evolution = Evolution(self)    # the genetic algorithm that breeds each capability's challengers
+        self.bus.listen(self.evolution.on_event)
 
         self.orders: asyncio.Queue = asyncio.Queue()
         self.inflight = 0
@@ -128,6 +131,7 @@ class System:
         for node in self.registry.live():
             self.registry.persist(node, weights=True)
         self.affect.save()
+        self.evolution.save()
         self.guardian.audit("system", "system.stop")
         self.store.close()
 
@@ -581,6 +585,7 @@ class System:
             "mind": self.mind.status(),
             "tasks": self.tasks.status(),
             "challenges": self.challenges.status(),
+            "evolution": self.evolution.status(),
             "scorecard": self.scorecard(),
             "agents": {a.name: dict(a.stats) for a in self.agents},
         }

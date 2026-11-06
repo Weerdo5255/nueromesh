@@ -156,6 +156,28 @@ learn_links_per_article = 3
 improve_interval_seconds = 30           # how often an improve task checks progress
 pause_after_failures = 5                # a repeating order that keeps failing is paused
 
+[evolution]
+# A genetic algorithm breeds each capability's challengers. The genome is the architecture: the
+# hidden layers (how many, and how many neurons each) and the learning rate. Children are mutated
+# from a fit parent - growing or shrinking neurons or whole layers - inherit its weights morphed
+# to the new shape, and train like any challenger. Evolution trends larger: growth is more
+# likely, a larger challenger that is at least as accurate replaces the champion, and a smaller
+# one must be clearly better. Bounded by [nodes] max_hidden / max_depth and max_params below.
+enabled = true
+growth_bias = 0.7                       # chance a mutation grows rather than shrinks (0.5 = no trend)
+layer_rate = 0.3                        # chance a mutation adds/removes a layer rather than neurons
+double_mutation = 0.3                   # chance of a second mutation in the same child
+crossover_rate = 0.25                   # chance a child recombines its parent with another good genome
+lr_rate = 0.2                           # chance the learning rate mutates too
+tournament = 2                          # parents are the fittest of this many live nodes
+complexity_weight = 0.004               # fitness bonus per doubling of size (equal accuracy -> larger is fitter)
+promote_larger_on_tie = true            # a larger challenger at least as accurate as the champion wins
+keep_evolving = true                    # keep breeding, more slowly, once the champion meets its target
+idle_cooldown_factor = 4.0              # how much more slowly
+min_neurons = 8
+max_params = 1500000                    # largest node it may breed
+archive_size = 40                       # genomes remembered per capability
+
 [challenges]
 # Open-source LLM benchmarks as a teacher. Each suite is split once into practice (graded, and
 # learned from: gold labels train skill nodes, missed questions teach the router a better route)
@@ -184,7 +206,7 @@ default_hidden = [64]
 default_lr = 0.01
 batch_size = 32
 max_hidden = 512                # widest hidden layer the architect may breed
-max_depth = 3                   # most hidden layers the architect may breed
+max_depth = 4                   # most hidden layers the architect may breed
 input_dim = 1024                # encoder width; changing it retires saved nodes (they are rebuilt)
 min_examples_to_spawn = 12      # experience needed before a capability gets its first node
 serve_min_accuracy = 0.8        # held-out accuracy a champion needs before it may answer orders

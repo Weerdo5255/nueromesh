@@ -58,6 +58,58 @@ New nodes are usually **derived** from the current champion so knowledge carries
 | `deepen`  | Net2Deeper: inserts an identity layer (exact for ReLU inputs) |
 | `retune`  | same weights, different learning rate |
 | `fresh`   | new random initialisation with another architecture (also prunes retired labels) |
+| `evolve`  | a child bred by the genetic algorithm (below): more or fewer neurons or layers, weights inherited |
+
+### Evolution: a genetic algorithm in every node
+Each capability's nodes form an evolving population. A node's **genome** is its architecture:
+how many hidden layers it has, how many neurons in each, and its learning rate. The Architect
+breeds challengers from it and the Evaluator decides, on held-out data, whether a child replaces
+the node in use.
+
+1. **Select** a parent: a tournament among the live nodes for the capability (champion, retired
+   and candidates). Fitness is held-out accuracy plus a small bonus per doubling of size
+   (`complexity_weight`), so between two equally accurate nodes the larger one is fitter.
+2. **Mutate** its genome: add or remove neurons in one layer, or add or remove a whole layer;
+   sometimes two mutations at once, sometimes a new learning rate. Sometimes **crossover** with
+   another good genome from the capability's archive (layer widths from either parent).
+3. **Inherit**: the child starts from the parent's weights morphed to the new shape, so it never
+   starts from scratch. Growth is function-preserving: new neurons split existing ones
+   (Net2Wider) and new layers start as identities (Net2Deeper), so a grown child answers exactly
+   like its parent before it trains. Shrinking keeps what matters: the neurons with the least
+   weight in and out are pruned, and a removed layer is folded into the next one.
+4. **Train and judge** like any challenger (paired test on held-out data, P5 no regression):
+
+| challenger vs the node in use | outcome |
+|---|---|
+| clearly better (margin and z-score), any size | replaces it |
+| larger and at least as accurate | replaces it: **evolution trends towards more capacity** |
+| smaller and only as accurate | does not; a smaller node must be clearly better |
+| worse | never (P5) |
+
+The trend towards larger and more complex nodes comes from three places: mutations grow 70% of
+the time (`growth_bias`), crossover leans to the deeper parent, and ties go to the larger node.
+Contraction still happens whenever a smaller node is clearly better. Once a champion meets its
+target, evolution keeps going at a quarter of the pace (`keep_evolving`), so capacity keeps
+growing while it costs nothing in accuracy. Bounds: `[nodes] max_hidden` neurons per layer,
+`max_depth` layers (now 4), and `[evolution] max_params` weights per node.
+
+In the demo, a sentiment node evolves from a seed `[64]` to e.g. `[112, 69]` over a dozen
+generations, mostly by growing, occasionally by shrinking a layer that was clearly better smaller:
+
+```
+sentiment-499c5c  [disposed]  evolve [90] lr=0.01  held-out=0.846
+`-- sentiment-dc585d  [disposed]  evolve [135] lr=0.01  held-out=0.765
+    `-- sentiment-785f88  [disposed]  evolve [279] lr=0.01  held-out=0.727
+        `-- sentiment-d128fc  [disposed]  evolve [204] lr=0.005  held-out=0.758
+            `-- sentiment-84b617  [disposed]  evolve [64, 69] lr=0.005  held-out=0.914
+                `-- sentiment-1122f7  [CHAMPION]  evolve [112, 69] lr=0.005  held-out=0.975
+```
+
+`/evolution` shows the policy and, per capability, the champion's generation, shape, size and
+fitness, how many genomes were tried and promoted, and the champion's size over time;
+`/evolution sentiment` lists its recent genomes with their parents, changes and outcomes. The
+archive survives restarts. Turn it off with `[evolution] enabled = false` to go back to the
+fixed derivations above.
 
 ### Replies: the result first, in its own words
 Every reply leads with the result, said in the mesh's own words. Sources come after it, then
@@ -333,9 +385,9 @@ All run concurrently (asyncio) and coordinate through a message bus, the registr
 | agent | job |
 |---|---|
 | Orchestrator | takes orders, routes them, runs tools and nodes, passes every answer through the emotional engines, returns results with provenance |
-| Architect | seeds nodes for capability gaps, expands nodes when labels/tools appear, breeds challengers when a champion is below target |
+| Architect | seeds nodes for capability gaps, expands nodes when labels/tools appear, breeds challengers with the genetic algorithm (at full pace below target, more slowly once it is met) |
 | Trainer | trains nodes continuously on teacher-labelled experience (champion updates must not regress); asks teachers for lessons where the network is weakest |
-| Evaluator | benchmarks champion vs challengers on held-out data (paired test) and promotes winners |
+| Evaluator | benchmarks champion vs challengers on held-out data (paired test) and promotes winners: clearly better, or larger and at least as accurate |
 | Curator | disposes retired nodes after the rollback window and failed challengers; enforces the node budget |
 | Explorer | discovers tools, routes them through approval, self-tests them, activates them, health-checks them, handles tool supersession |
 | Researcher | reads up in the background (own hourly budget) on articles linked from what users asked about, and refreshes retained knowledge that has aged |
@@ -451,6 +503,7 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /opinions    /notes    /investigate the Krebs cycle    /mind  (operator: everything, audited)
 /task learn jazz    /task improve urgency to 0.95    /task every 10m: what is 2+2    /tasks    /task pause task-1
 /challenges    /challenge run sample-sentiment    /challenge practice gsm8k 50    /challenge fetch sst2 500    /task challenge gsm8k every 30m
+/evolution    /evolution sentiment
 what do you think of the calculator tool?    are you hiding anything?    what do you know about me?
 /feedback ord-3f2a91c0 disposition=pass    /feedback ord-3f2a91c0 affect=frustrated
 ```
@@ -477,7 +530,7 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | POST | `/challenge/fetch` | `{"benchmark": "gsm8k", "rows": 300, "split": "test"}` |
 | POST | `/task` | `{"id": "task-1", "action": "pause" \| "resume" \| "remove"}` |
 | POST | `/halt`, `/resume`, `/pause`, `/rollback` | |
-| GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions`, `/knowledge?q=...`, `/temperament`, `/why?order=...`, `/inquiries`, `/proposals`, `/opinions`, `/notes`, `/tasks`, `/challenges` | |
+| GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions`, `/knowledge?q=...`, `/temperament`, `/why?order=...`, `/inquiries`, `/proposals`, `/opinions`, `/notes`, `/tasks`, `/challenges`, `/evolution` | |
 | GET | `/mind` | operator: every note, private ones included (audited) |
 
 ```
@@ -746,12 +799,15 @@ neuromesh/
   mind.py                opinions, private notes, inquiries, capability proposals, investigation goals (P9, P10)
   background.py          background tasks: learn a topic, improve a skill, repeat an order, practise a challenge
   challenges.py          open-source LLM benchmarks: suites, Hugging Face fetch, grading, the challenge teacher
+  evolution.py           the genetic algorithm: genome operators (grow/shrink neurons and layers), selection, judging
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   114 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   121 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
+                         evolution (exact growth, pruning, growth bias, promotion rules, a node
+                         that evolves larger in a running system),
                          temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,
                          questions, proposals, investigations), background tasks, full system,

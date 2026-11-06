@@ -48,6 +48,8 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, system.tasks.status()
         if path == "/challenges":
             return 200, system.challenges.status()
+        if path == "/evolution":
+            return 200, {**system.evolution.status(), "archive": system.evolution.archive}
         if path == "/inquiries":
             return 200, [asdict(q) for q in system.mind.open_inquiries()]
         if path == "/proposals":
