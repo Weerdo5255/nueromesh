@@ -130,6 +130,7 @@ class ToolsmithTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("a tool its toolsmith wrote, reverser v1.0.0", "\n".join(lines))
         out = (await execute(s, f"/approve {made['approval']}")).lines
         self.assertIn("installed reverser in plugins/", "\n".join(out))
+        self.assertFalse(any(q.approval_id == made["approval"] for q in s.mind.open_inquiries()))  # its question is answered
         self.assertTrue(await self.active("reverser"))
         self.assertEqual(smith.drafts["reverser"]["status"], "active")
         self.assertEqual(smith.fresh(), ["reverser"])

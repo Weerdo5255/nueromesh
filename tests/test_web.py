@@ -47,6 +47,18 @@ class StaticFileTests(unittest.TestCase):
                 continue
             self.assertIsNone(web.static_file(bad), bad)
 
+    def test_the_mind_view_is_divided_into_tabs(self):
+        import re
+        page = (web.WEB_DIR / "index.html").read_text()
+        script = (web.WEB_DIR / "app.js").read_text()
+        tabs = re.findall(r'id="mind-tab-(\w+)" data-mind="(\w+)" aria-controls="mind"', page)
+        self.assertTrue(tabs and all(a == b for a, b in tabs), tabs)
+        listed = re.search(r"const MIND_TABS = \[([^\]]+)\]", script).group(1)
+        self.assertEqual([t for t, _ in tabs], re.findall(r'"(\w+)"', listed))  # every tab has a panel, in order
+        for t, _ in tabs:
+            self.assertRegex(script, rf"\n\s+{t}: \(\) =>", t)
+        self.assertIn('role="tabpanel"', page)
+
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_the_script_parses(self):
         out = subprocess.run(["node", "--check", str(web.WEB_DIR / "app.js")], capture_output=True, text=True)

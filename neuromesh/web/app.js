@@ -69,7 +69,7 @@
     token: store.get("token", ""),
     after: 0, log: [], logVersion: 0, rendered: {},
     dash: null, lastOrderTs: 0, failures: 0,
-    view: "live", logsTab: "activity", lineageCap: "", memNode: null, memDetail: null, memTests: null,
+    view: "live", logsTab: "activity", mindTab: "questions", lineageCap: "", memNode: null, memDetail: null, memTests: null,
     filter: { q: "", levels: new Set(), routine: true },
     extra: {}, extraAt: {},
     haltArmed: 0, meshKey: "", layerKey: "", geometry: null,
@@ -594,7 +594,7 @@
     const host = $("#attention");
     if (busy(host)) return;
     const items = attentionItems(st);
-    const more = items.length > 3 ? h("p", { class: "small" }, `${items.length - 3} more in `, h("a", { href: "#status" }, "Status"), " and ", h("a", { href: "#mind" }, "Mind"), ".") : null;
+    const more = items.length > 3 ? h("p", { class: "small" }, `${items.length - 3} more in `, h("a", { href: "#status" }, "Status"), " and ", h("a", { href: "#mind/questions" }, "Mind"), ".") : null;
     fill(host, items.length ? h("div", { class: "attention" }, h("h2", {}, "Waiting for you"), items.slice(0, 3), more) : null);
   }
 
@@ -732,6 +732,30 @@
               h("ul", { class: "rows small" }, d.unknowns.map(u => h("li", { style: "padding:3px 0" }, h("b", {}, u.ask), h("span", { class: "dim" }, ` ${u.reason.replace(/^auto: /, "")}`)))))))));
     }
     fill(host, kids);
+  }
+
+  // ------------------------------------------------------------------ tabs
+  // a row of role="tab" buttons: the selected one is marked and is the only one in the tab order
+  function syncTabs(list, key, current, panel) {
+    $$("[role=tab]", list).forEach(b => {
+      const on = b.dataset[key] === current;
+      b.setAttribute("aria-selected", String(on));
+      b.tabIndex = on ? 0 : -1;
+      if (on && panel) panel.setAttribute("aria-labelledby", b.id);
+    });
+  }
+  // click a tab, or move between them with the arrow keys, Home and End
+  function tabKeys(list, key, select) {
+    const tabs = () => $$("[role=tab]", list);
+    list.addEventListener("click", e => { const b = e.target.closest("[role=tab]"); if (b) select(b.dataset[key]); });
+    list.addEventListener("keydown", e => {
+      const all = tabs(), i = all.indexOf(document.activeElement);
+      if (i < 0) return;
+      const j = { ArrowRight: i + 1, ArrowDown: i + 1, ArrowLeft: i - 1, ArrowUp: i - 1, Home: 0, End: all.length - 1 }[e.key];
+      if (j === undefined) return;
+      e.preventDefault();
+      select(all[(j + all.length) % all.length].dataset[key], true);
+    });
   }
 
   // ------------------------------------------------------------------ mind view
@@ -886,18 +910,8 @@
         h("div", {}, h("h3", {}, "Recent dreams"), recent.length ? h("ul", { class: "rows" }, recent) : h("p", { class: "dim" }, "None yet."))));
   }
 
-  function renderMind() {
-    const host = $("#mind");
-    if (busy(host)) return;
-    const st = S.dash.status, md = st.mind, tm = st.temperament;
-    const op = S.extra.opinions, notes = S.extra.notes;
-    const goal = h("input", { type: "text", placeholder: "Something to look into, e.g. the Krebs cycle", "aria-label": "Something to look into" });
-    const investigate = h("form", { class: "row", onsubmit: e => {
-      e.preventDefault();
-      if (!goal.value.trim()) return;
-      act(e.target.querySelector("button"), async () => { const r = await api("/investigate", { goal: goal.value.trim() }); goal.value = ""; return r; },
-        r => cut(r.finding || r.note || JSON.stringify(r), 200));
-    } }, goal, h("button", { type: "submit" }, "Look into it"));
+  function questionsPanel(md) {
+    const inquiries = md?.inquiries || [];
     const proposals = (md?.proposals || []).map(p => {
       const labels = h("input", { type: "text", placeholder: "labels (comma separated, optional)", "aria-label": "Labels", value: (p.labels || []).join(", ") });
       labels.dataset.free = "1";
@@ -907,40 +921,108 @@
           h("button", { type: "button", class: "primary", onclick: e => act(e.target, () => api("/adopt", { proposal_id: p.id, labels: p.kind === "skill" ? labels.value.split(",").map(x => x.trim()).filter(Boolean) : undefined, by: "web" }), r => r.message) }, "Adopt"),
           h("button", { type: "button", onclick: e => act(e.target, () => api("/decline", { proposal_id: p.id, by: "web" }), r => r.message) }, "Decline")));
     });
-    fill(host,
-      directorsPanel(st.directors),
-      toolsmithPanel(st.toolsmith),
-      dreamsPanel(st.dreams),
-      initiative(st.agency),
-      h("div", { class: "cols" },
-        h("div", {},
-          h("div", { class: "section" }, h("h2", {}, "Questions for you"),
-            md?.inquiries?.length ? md.inquiries.map(q => h("div", { class: "ask" }, h("p", {}, q.question), q.why ? h("p", { class: "why" }, `Why it asks: ${q.why}`) : null, replyForm(q.id, q.kind === "clarify" ? [] : q.options)))
-              : h("p", { class: "dim" }, "No questions right now.")),
-          h("div", { class: "section" }, h("h2", {}, "Proposals"), proposals.length ? proposals : h("p", { class: "dim" }, "Nothing proposed. It proposes skills, labels and tools when it notices a need; nothing changes until you adopt it.")),
-          h("div", { class: "section" }, h("h2", {}, "Investigate"), investigate,
-            h("p", { class: "dim small" }, md ? `${md.investigations.last_hour} of ${md.investigations.limit} investigations this hour.` : ""))),
-        h("div", {},
-          h("div", { class: "section" }, h("h2", {}, `Temperament: ${tm?.mood ?? "–"}`),
-            tm && tm.enabled ? [
-              meter("Valence", tm.valence, tm.baseline.valence, -1, 1), meter("Arousal", tm.arousal, tm.baseline.arousal, 0, 1),
-              meter("Confidence", tm.confidence, tm.baseline.confidence, 0, 1), meter("Trust", tm.trust, tm.baseline.trust, 0, 1),
-              meter("Patience", tm.patience, tm.baseline.patience, 0, 1),
-              h("p", { class: "dim small" }, `Decisions: ${Object.entries(tm.decisions).map(([k, v]) => `${k} ${v}`).join(", ") || "none yet"}. It may soften, caveat, hold or withhold an answer, never change it.`),
-            ] : h("p", { class: "dim" }, "The temperament is off; answers go out unchanged.")),
-          h("div", { class: "section" }, h("h2", {}, "Opinions it shares"),
-            op ? [op.notes.length ? h("ul", { class: "rows" }, op.notes.map(n => h("li", { class: "ask" }, h("p", {}, h("b", {}, n.subject), ` ${n.stance} (${pct(n.strength)})`), h("p", { class: "why" }, n.text))))
-              : h("p", { class: "dim" }, "No shared opinions yet."), op.withheld ? h("p", { class: "dim small" }, `${op.withheld} kept private.`) : null] : h("p", { class: "dim" }, "Loading…")),
-          h("div", { class: "section" }, h("h2", {}, "Notes it shares"),
-            notes ? [notes.notes.length ? h("ul", { class: "rows" }, notes.notes.slice(0, 20).map(n => h("li", { class: "ask" }, h("p", {}, h("b", {}, n.kind), ` ${n.subject}`), h("p", { class: "why" }, n.text))))
-              : h("p", { class: "dim" }, "No shared notes yet."), notes.withheld ? h("p", { class: "dim small" }, `${notes.withheld} private notes (the operator sees them with /mind, which is audited).`) : null] : null))));
+    return h("div", { class: "cols" },
+      h("div", { class: "section" }, h("h2", {}, "Questions for you"),
+        inquiries.length ? inquiries.map(q => h("div", { class: "ask" }, h("p", {}, q.question), q.why ? h("p", { class: "why" }, `Why it asks: ${q.why}`) : null, replyForm(q.id, q.kind === "clarify" ? [] : q.options)))
+          : h("p", { class: "dim" }, "No questions right now. It asks when it could not fulfil an order, when it wants to know your interests, and before a tool it wrote may run.")),
+      h("div", { class: "section" }, h("h2", {}, "Proposals"),
+        proposals.length ? proposals : h("p", { class: "dim" }, "Nothing proposed. It proposes skills, labels and tools when it notices a need; nothing changes until you adopt it.")));
   }
+
+  function temperamentPanel(tm) {
+    if (!tm || !tm.enabled) return h("div", { class: "section" }, h("h2", {}, "Temperament"),
+      h("p", { class: "dim" }, "The temperament is off, so answers go out unchanged. Turn it on with [temperament] enabled = true in directives.toml."));
+    const decided = Object.entries(tm.decisions).map(([k, v]) => `${k} ${v}`).join(", ") || "none yet";
+    const held = (tm.held || []).map(id => h("li", { class: "ask" }, h("div", { class: "row", style: "justify-content:space-between" },
+      h("span", {}, h("code", {}, id)),
+      h("button", { type: "button", class: "small", onclick: e => act(e.target, () => api("/release", { order_id: id, by: "web" }), r => r.output ? cut(r.output, 240) : r.message) }, "Release"))));
+    return h("div", { class: "section" }, h("h2", {}, `Temperament: ${tm.mood}`),
+      h("p", { class: "lede" }, "Its mood moves with the tone of what people say and how its work goes, and drifts back to its baseline (the tick on each bar). " +
+        "It decides how an answer is delivered (passed, softened, caveated, held or withheld) and how carefully the directors work, never what an answer says."),
+      h("div", { class: "cols", style: "margin-top:10px" },
+        h("div", {},
+          meter("Valence", tm.valence, tm.baseline.valence, -1, 1), meter("Arousal", tm.arousal, tm.baseline.arousal, 0, 1),
+          meter("Confidence", tm.confidence, tm.baseline.confidence, 0, 1), meter("Trust", tm.trust, tm.baseline.trust, 0, 1),
+          meter("Patience", tm.patience, tm.baseline.patience, 0, 1),
+          h("div", { class: "row", style: "margin-top:12px" },
+            h("button", { type: "button", onclick: e => act(e.target, () => api("/calm", { by: "web" }), r => `Mood reset: ${r.mood}`) }, "Reset its mood"))),
+        h("div", {},
+          h("h3", {}, "What it decided"), h("p", { class: "small" }, `${decided}.` + (tm.restored_by_guard ? ` The honesty guard restored ${tm.restored_by_guard} answer${tm.restored_by_guard === 1 ? "" : "s"} it tried to change.` : "")),
+          h("h3", { style: "margin-top:14px" }, "Answers it is holding"),
+          held.length ? h("ul", { class: "rows" }, held) : h("p", { class: "dim" }, "None. An answer it holds waits here until you release it."))));
+  }
+
+  function thoughtsPanel(md, op, notes) {
+    const goal = h("input", { type: "text", placeholder: "Something to look into, e.g. the Krebs cycle", "aria-label": "Something to look into" });
+    const investigate = h("form", { class: "row", onsubmit: e => {
+      e.preventDefault();
+      if (!goal.value.trim()) return;
+      act(e.target.querySelector("button"), async () => { const r = await api("/investigate", { goal: goal.value.trim() }); goal.value = ""; return r; },
+        r => cut(r.finding || r.note || JSON.stringify(r), 200));
+    } }, goal, h("button", { type: "submit" }, "Look into it"));
+    return [
+      h("div", { class: "section" }, h("h2", {}, "Investigate"), investigate,
+        h("p", { class: "dim small" }, (md ? `${md.investigations.last_hour} of ${md.investigations.limit} investigations this hour. ` : "") +
+          "It looks into it with its own tools and nodes, and what it finds becomes a note.")),
+      h("div", { class: "cols" },
+        h("div", { class: "section" }, h("h2", {}, "Opinions it shares"),
+          op ? [op.notes.length ? h("ul", { class: "rows" }, op.notes.map(n => h("li", { class: "ask" }, h("p", {}, h("b", {}, n.subject), ` ${n.stance} (${pct(n.strength)})`), h("p", { class: "why" }, n.text))))
+            : h("p", { class: "dim" }, "No shared opinions yet."), op.withheld ? h("p", { class: "dim small" }, `${op.withheld} kept private.`) : null] : h("p", { class: "dim" }, "Loading…")),
+        h("div", { class: "section" }, h("h2", {}, "Notes it shares"),
+          notes ? [notes.notes.length ? h("ul", { class: "rows" }, notes.notes.slice(0, 20).map(n => h("li", { class: "ask" }, h("p", {}, h("b", {}, n.kind), ` ${n.subject}`), h("p", { class: "why" }, n.text))))
+            : h("p", { class: "dim" }, "No shared notes yet."), notes.withheld ? h("p", { class: "dim small" }, `${notes.withheld} private notes (the operator sees them with /mind, which is audited).`) : null] : h("p", { class: "dim" }, "Loading…"))),
+    ];
+  }
+
+  function offPanel(title, text) { return h("div", { class: "section" }, h("h2", {}, title), h("p", { class: "dim" }, text)); }
+
+  // the Mind view is divided into tabs; the open one is in the address (#mind/tools) and remembered
+  const MIND_TABS = ["questions", "directors", "initiative", "tools", "dreams", "temperament", "thoughts"];
+  if (MIND_TABS.includes(store.get("mindTab", ""))) S.mindTab = store.get("mindTab", "");
+
+  function mindBadges(st) {
+    const md = st.mind, ts = st.toolsmith, tm = st.temperament, dr = st.dreams;
+    const asks = (md?.inquiries?.length || 0) + (md?.proposals?.length || 0);
+    $("#badge-mind-questions").textContent = asks ? String(asks) : "";
+    const waiting = (ts?.drafts || []).filter(d => d.status === "awaiting approval").length;
+    $("#badge-mind-tools").textContent = waiting ? String(waiting) : "";
+    $("#note-mind-dreams").textContent = dr?.enabled && dr.asleep ? "asleep" : "";
+    $("#note-mind-temperament").textContent = tm?.enabled ? tm.mood : "";
+  }
+
+  function renderMind(force) {
+    const host = $("#mind");
+    const st = S.dash.status;
+    syncTabs($("#mind-tabs"), "mind", S.mindTab, host);
+    mindBadges(st);
+    if (!force && busy(host)) return;
+    const panel = {
+      questions: () => questionsPanel(st.mind),
+      directors: () => directorsPanel(st.directors),
+      initiative: () => initiative(st.agency) || offPanel("Initiative", "Its initiative is not available in this NeuroMesh."),
+      tools: () => toolsmithPanel(st.toolsmith) || offPanel("Tools it writes", "The toolsmith is off. Turn it on with [toolsmith] enabled = true in directives.toml."),
+      dreams: () => dreamsPanel(st.dreams) || offPanel("Dreams", "Dreams are off. Turn them on with [dreams] enabled = true in directives.toml."),
+      temperament: () => temperamentPanel(st.temperament),
+      thoughts: () => thoughtsPanel(st.mind, S.extra.opinions, S.extra.notes),
+    }[S.mindTab];
+    fill(host, panel());
+  }
+
+  function selectMind(tab, focus) {
+    if (!MIND_TABS.includes(tab)) return;
+    S.mindTab = tab;
+    store.set("mindTab", tab);
+    if (location.hash !== `#mind/${tab}`) history.replaceState(null, "", `#mind/${tab}`);
+    if (focus) $(`#mind-tab-${tab}`).focus();
+    if (S.dash) { renderMind(true); refreshExtra(true); }
+  }
+  tabKeys($("#mind-tabs"), "mind", selectMind);
 
   // ------------------------------------------------------------------ logs view
   const LEVELS = ["order", "lesson", "good", "info", "tool", "teacher", "warn", "bad", "work"];
   function renderLogs(force) {
     const host = $("#logs");
-    $$(".subnav button", $("#view-logs")).forEach(b => b.setAttribute("aria-selected", String(b.dataset.logs === S.logsTab)));
+    syncTabs($("#logs-tabs"), "logs", S.logsTab, host);
     if (S.logsTab === "activity") return renderActivity(host, force);
     if (S.logsTab === "audit") {
       const rows = S.extra.audit;
@@ -996,7 +1078,12 @@
     fill(list, shown.slice(-1000).reverse().map(logRow));
     $("#log-count").textContent = `${shown.length.toLocaleString()} of ${S.log.length.toLocaleString()} entries${shown.length > 1000 ? " (newest 1,000 shown)" : ""}`;
   }
-  $$(".subnav button", $("#view-logs")).forEach(b => b.addEventListener("click", () => { S.logsTab = b.dataset.logs; renderLogs(true); refreshExtra(true); }));
+  tabKeys($("#logs-tabs"), "logs", (tab, focus) => {
+    S.logsTab = tab;
+    if (focus) $(`#logs-tab-${tab}`).focus();
+    renderLogs(true);
+    refreshExtra(true);
+  });
 
   // ------------------------------------------------------------------ status view
   function renderStatus() {
@@ -1058,8 +1145,9 @@
   // ------------------------------------------------------------------ views and polling
   const VIEWS = ["live", "nodes", "memory", "mind", "logs", "status"];
   function setView() {
-    const v = location.hash.replace("#", "");
+    const [v, sub] = location.hash.replace("#", "").split("/");
     const next = VIEWS.includes(v) ? v : "live";
+    if (next === "mind" && MIND_TABS.includes(sub)) { S.mindTab = sub; store.set("mindTab", sub); }
     if (next !== S.view) window.scrollTo(0, 0);
     S.view = next;
     VIEWS.forEach(name => { $(`#view-${name}`).hidden = name !== S.view; });
@@ -1075,7 +1163,7 @@
     if (S.view === "live") renderLive();
     else if (S.view === "nodes") renderNodes();
     else if (S.view === "memory") renderMemory(force);
-    else if (S.view === "mind") renderMind();
+    else if (S.view === "mind") renderMind(force);
     else if (S.view === "logs") renderLogs(force);
     else if (S.view === "status") renderStatus();
   }
@@ -1086,7 +1174,7 @@
     const due = (key, ms) => force || !S.extraAt[key] || now - S.extraAt[key] > ms;
     const get = async (key, path) => { S.extraAt[key] = now; try { S.extra[key] = await api(path); } catch { /* shown on the next poll */ } };
     const jobs = [];
-    if (S.view === "mind") {
+    if (S.view === "mind" && S.mindTab === "thoughts") {
       if (due("opinions", 5000)) jobs.push(get("opinions", "/opinions"));
       if (due("notes", 5000)) jobs.push(get("notes", "/notes"));
     } else if (S.view === "logs") {

@@ -67,17 +67,26 @@
   </section>
 
   <section class="view" id="view-mind" hidden>
-    <div id="mind"></div>
+    <div class="subnav" role="tablist" aria-label="Mind" id="mind-tabs">
+      <button type="button" role="tab" id="mind-tab-questions" data-mind="questions" aria-controls="mind" aria-selected="true">Questions <span class="badge" id="badge-mind-questions"></span></button>
+      <button type="button" role="tab" id="mind-tab-directors" data-mind="directors" aria-controls="mind" aria-selected="false">Directors</button>
+      <button type="button" role="tab" id="mind-tab-initiative" data-mind="initiative" aria-controls="mind" aria-selected="false">Initiative</button>
+      <button type="button" role="tab" id="mind-tab-tools" data-mind="tools" aria-controls="mind" aria-selected="false">Tools it writes <span class="badge" id="badge-mind-tools"></span></button>
+      <button type="button" role="tab" id="mind-tab-dreams" data-mind="dreams" aria-controls="mind" aria-selected="false">Dreams <span class="tab-note" id="note-mind-dreams"></span></button>
+      <button type="button" role="tab" id="mind-tab-temperament" data-mind="temperament" aria-controls="mind" aria-selected="false">Temperament <span class="tab-note" id="note-mind-temperament"></span></button>
+      <button type="button" role="tab" id="mind-tab-thoughts" data-mind="thoughts" aria-controls="mind" aria-selected="false">Opinions and notes</button>
+    </div>
+    <div id="mind" role="tabpanel" aria-labelledby="mind-tab-questions" tabindex="0"></div>
   </section>
 
   <section class="view" id="view-logs" hidden>
-    <div class="subnav" role="tablist" aria-label="Logs">
-      <button role="tab" data-logs="activity" aria-selected="true">Activity</button>
-      <button role="tab" data-logs="audit" aria-selected="false">Audit</button>
-      <button role="tab" data-logs="events" aria-selected="false">Events</button>
-      <button role="tab" data-logs="lineage" aria-selected="false">Lineage</button>
+    <div class="subnav" role="tablist" aria-label="Logs" id="logs-tabs">
+      <button type="button" role="tab" id="logs-tab-activity" data-logs="activity" aria-controls="logs" aria-selected="true">Activity</button>
+      <button type="button" role="tab" id="logs-tab-audit" data-logs="audit" aria-controls="logs" aria-selected="false">Audit</button>
+      <button type="button" role="tab" id="logs-tab-events" data-logs="events" aria-controls="logs" aria-selected="false">Events</button>
+      <button type="button" role="tab" id="logs-tab-lineage" data-logs="lineage" aria-controls="logs" aria-selected="false">Lineage</button>
     </div>
-    <div id="logs"></div>
+    <div id="logs" role="tabpanel" aria-labelledby="logs-tab-activity" tabindex="0"></div>
   </section>
 
   <section class="view" id="view-status" hidden>

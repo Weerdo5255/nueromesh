@@ -240,6 +240,11 @@ span.hit { color: var(--eosin); }
 pre.block { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 12px; overflow: auto; max-height: 70vh; margin: 0; }
 .subnav { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
 .subnav button[aria-selected="true"] { background: var(--hema-soft); border-color: var(--hema); color: var(--hema); font-weight: 600; }
+.subnav .badge { margin-left: 2px; font-weight: 600; }
+.tab-note:empty { display: none; }
+.tab-note { font-size: 12.5px; font-weight: 400; color: var(--ink-3); margin-left: 2px; }
+.subnav button[aria-selected="true"] .tab-note { color: inherit; opacity: .75; }
+[role=tabpanel]:focus-visible { outline-offset: 6px; }
 .filters { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-bottom: 10px; }
 .filters input[type="search"] { border: 1px solid var(--rule); background: var(--panel); border-radius: 6px; padding: 6px 10px; min-width: 220px; }
 .filters label { display: flex; gap: 6px; align-items: center; font-size: 14px; }

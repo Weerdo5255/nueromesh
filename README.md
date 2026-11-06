@@ -975,13 +975,18 @@ it next to the live console, run `python -m neuromesh run --web` (or `--web 9000
 - **Memory**: memory nodes with their size now and when first learned, teach a fact, run every
   test, and per node: what it knows, how it was compressed, the questions it must not answer;
   forget a fact.
-- **Mind**: the directors (each director node and what it is doing, the stance its mood gives
-  them, add or retire a duplicate, recent reviews and their second opinions, what was kept out
-  of memory), the tools it writes (ask for one, approve or decline a draft, try one out, the
-  requests it could write a tool for), its initiative (turn it on or off, pin a mode, take initiative now, recent decisions,
-  what has paid off, the tasks it set itself), sleep and dreams (send it to sleep or wake it,
-  imagine something, its dream nodes, last night, recent dreams), questions for you (reply), proposals (adopt or decline), the opinions and notes it
-  shares, investigate something, the temperament.
+- **Mind**: divided into tabs, each with its own address (`#mind/tools`), and the one you used
+  last opens next time. Arrow keys move between them. **Questions** (with a count of what is
+  waiting): its questions for you (reply) and its proposals (adopt or decline). **Directors**: each
+  director node and what it is doing, the stance its mood gives them, add or retire a duplicate,
+  the limit on retries, recent reviews and their second opinions, what was kept out of memory.
+  **Initiative**: turn it on or off, pin a mode, take initiative now, recent decisions, what has
+  paid off, the tasks it set itself. **Tools it writes** (with a count of drafts waiting for you):
+  ask for a tool, approve or decline a draft, try one out, the requests it could write a tool for.
+  **Dreams** (marked while it sleeps): send it to sleep or wake it, imagine something, its dream
+  nodes, last night, recent dreams. **Temperament** (with its mood): the five dimensions against
+  their baseline, what it decided, the answers it is holding (release them), reset its mood.
+  **Opinions and notes**: investigate something, and the opinions and notes it shares.
 - **Logs**: the activity log (search, filter by kind, hide routine work), the audit log, every
   event, and the family tree of every node ever built.
 - **Status**: directive goals, approvals, teachers, tools, background tasks (add, pause,
@@ -1326,7 +1331,7 @@ neuromesh/
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   186 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   187 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),

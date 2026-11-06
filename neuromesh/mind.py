@@ -336,6 +336,10 @@ class Mind:
     def on_event(self, ev) -> None:
         if ev.topic == "teacher.lesson" and ev.data.get("source") == "human" and ev.data.get("reason") == "correction":
             self.corrections += 1
+        elif ev.topic == "approval.decided":  # decided elsewhere (/approve, the web): its question is answered
+            for q in self.open_inquiries():
+                if q.approval_id and q.approval_id == ev.data.get("id"):
+                    self._close(q, "answered", f"{ev.data.get('status')} by {ev.data.get('by')}", ev.data.get("by") or "human")
 
     def observe(self, order, res) -> None:
         """After every order: note the tone, gaps and unknown skills; ask what an unfulfilled order meant."""
@@ -558,7 +562,8 @@ class Mind:
             if not approve and low not in NO:
                 return False, [f"  please answer yes or no (/reply {q.id} yes)"]
             decided = s.guardian.decide(q.approval_id, approve, by=by, note=f"via {q.id}")
-            self._close(q, "answered", a, by)
+            if q.status == "open":
+                self._close(q, "answered", a, by)
             if decided is None:
                 return False, [f"  {q.approval_id} was already decided"]
             return True, [f"  {q.approval_id} {decided.status}"]
