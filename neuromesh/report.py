@@ -124,6 +124,18 @@ def describe_event(ev: Event) -> str | None:
         return f"[memory]   forgot {d['node']}: {d['why']}"
     if t == "memory.unreadable":
         return f"[memory]   {d['node']}.toml can't be read ({d['error'][:80]}); keeping the node as it is"
+    if t == "agency.decided":
+        did = f"; {d['summary']}" if d.get("summary") else ""
+        return f"[director] {d['mode']}: {d['why']} ({d['how']}){did}"
+    if t == "agency.outcome":
+        if d.get("value") is None:
+            return f"[director] {d['task']} ({d['mode']}): {d['summary']}"
+        lesson = f"; {d['lesson']}" if d.get("lesson") else ""
+        return f"[director] {d['summary']}; worth {d['value']:.2f}{lesson}"
+    if t == "agency.mode":
+        return f"[director] {d['by']} set its mode to {d['mode']}"
+    if t == "agency.toggled":
+        return f"[director] {d['by']} turned its initiative {'on' if d['on'] else 'off'}"
     if t == "teacher.status":
         verb = "ready" if d["state"] == "ready" else f"unavailable ({d['state']})"
         return f"[teacher]  {d['teacher']} {verb}: {d['detail']}"
@@ -192,6 +204,17 @@ def render_status(st: dict) -> str:
             if sm["champion"]:
                 parts.append(f"{cap} gen {sm['champion']['generation']} {'x'.join(map(str, sm['champion']['hidden']))}")
         lines.append(f"evolution (grows {ev['growth_bias']:.0%} of the time): " + ", ".join(parts))
+    ag = st.get("agency")
+    if ag:
+        if not ag["enabled"]:
+            lines.append("director: initiative off (/director on)")
+        else:
+            last = ag["history"][-1] if ag["history"] else None
+            node = ag["node"]
+            who = (f"agency node {node['id']}" if node and node["trusted"] else "drive policy (agency node learning)")
+            lines.append(f"director: mode {ag['pinned']}, chosen by the {who}; last: "
+                         + (f"{last['mode']} {last['target']}".strip() if last else "nothing yet")
+                         + f"; {len(ag['self_tasks'])} self-set tasks; {ag['decisions_last_hour']}/{ag['limit']} decisions this hour")
     mem = st.get("memory")
     if mem and mem["enabled"] and mem["nodes"]:
         tests = sum(n["total"] for n in mem["nodes"])

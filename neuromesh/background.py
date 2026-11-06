@@ -158,6 +158,7 @@ class BackgroundTasks:
             self.tasks[d["id"]] = BackgroundTask(**{k: v for k, v in d.items() if k in names})
         nums = [int(i.split("-")[-1]) for i in self.tasks if i.split("-")[-1].isdigit()]
         self._ids = itertools.count(max(nums, default=0) + 1)
+        self.running: str | None = None  # the task being run right now
 
     @property
     def enabled(self) -> bool:
@@ -265,6 +266,7 @@ class BackgroundTasks:
         task.last_run = self.clock()
         task.next_run = task.last_run + task.interval
         t0 = time.monotonic()
+        self.running = task.id
         try:
             with s.activity.track("task", task.id, task.describe()[:90]):
                 if task.kind == "learn":
@@ -279,6 +281,7 @@ class BackgroundTasks:
             task.failures += 1
             task.note = f"error: {exc}"[:200]
         finally:
+            self.running = None
             s.guardian.note_background_busy(time.monotonic() - t0)
         if task.kind == "run" and task.failures >= self.pol.pause_after_failures and task.status == "active":
             task.status = "paused"

@@ -151,8 +151,8 @@ PROVIDER_DEFAULTS: dict[str, dict] = {
 class TeacherPolicy:
     order: tuple = ("human", "challenge", "ollama", "llm", "heuristic")
     weights: dict = field(default_factory=lambda: {
-        "human": 3.0, "challenge": 2.5, "tool-manifest": 2.0, "llm": 1.5, "ollama": 1.2, "heuristic": 1.0,
-        "temperament": 1.0})
+        "human": 3.0, "challenge": 2.5, "tool-manifest": 2.0, "outcome": 2.0, "llm": 1.5, "ollama": 1.2,
+        "heuristic": 1.0, "temperament": 1.0, "agency": 1.0})
     models: dict = field(default_factory=dict)  # teacher name -> LLMConfig, from [teachers.<name>]
 
     @property
@@ -317,6 +317,29 @@ class MemoryPolicy:
 
 
 @dataclass
+class AgencyPolicy:
+    """Independent agency: the Director and the agency node in front of it (see agency.py)."""
+    enabled: bool = True
+    decide_every_seconds: float = 120.0   # how often it considers taking initiative
+    idle_seconds: float = 15.0            # quiet time (no orders from people) before it does
+    max_decisions_per_hour: int = 12      # its own budget (P4)
+    max_self_tasks: int = 3               # tasks it has set itself at once
+    explore: float = 0.1                  # chance of trying another possible mode, to learn what it is worth
+    modes: tuple = ("research", "practise", "examine", "improve", "consolidate", "rest")
+    research_articles: int = 3            # a self-set learn task reads this many articles
+    practice_items: int = 20
+    max_task_runs: int = 5                # a self-set task is scored and retired after this many runs
+    improve_window_seconds: float = 600.0 # how long a self-set improve task gets before it is scored
+    task_max_age_seconds: float = 1800.0
+    verify_after_seconds: float = 3600.0  # memory nodes count as unverified after this long
+    reexam_after_seconds: float = 21600.0 # a suite's exam is due again after this long
+    low_score: float = 0.8                # exam scores below this make practice worthwhile
+    good_value: float = 0.5               # an outcome this good reinforces the choice
+    poor_value: float = 0.15              # an outcome this poor teaches the policy's next best instead
+    retry_after_seconds: float = 1800.0   # a target that did not pay off rests this long before it is chosen again
+
+
+@dataclass
 class ComputePolicy:
     device: str = "cpu"     # "cpu" | "auto" | "cuda" | "cuda:N" | "mps"
     library: str = "auto"   # "auto" | "numpy" | "torch" | "cupy"
@@ -341,6 +364,7 @@ class Directives:
     challenges: ChallengePolicy = field(default_factory=ChallengePolicy)
     evolution: EvolutionPolicy = field(default_factory=EvolutionPolicy)
     memory: MemoryPolicy = field(default_factory=MemoryPolicy)
+    agency: AgencyPolicy = field(default_factory=AgencyPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -363,6 +387,7 @@ class Directives:
             challenges=build(ChallengePolicy, d.get("challenges")),
             evolution=build(EvolutionPolicy, d.get("evolution")),
             memory=build(MemoryPolicy, d.get("memory")),
+            agency=build(AgencyPolicy, d.get("agency")),
         )
 
     @classmethod

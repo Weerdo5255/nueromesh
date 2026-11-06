@@ -235,7 +235,7 @@ pre.block { background: var(--panel); border: 1px solid var(--rule); border-radi
 .filters label { display: flex; gap: 6px; align-items: center; font-size: 14px; }
 .count { color: var(--ink-3); font-size: 13px; }
 .json { white-space: pre-wrap; font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); margin: 4px 0 0; }
-.meter { display: grid; grid-template-columns: 7em 1fr 3.5em; gap: 10px; align-items: center; font-size: 14px; padding: 3px 0; }
+.meter { display: grid; grid-template-columns: 7em 1fr minmax(3.5em, auto); gap: 10px; align-items: center; font-size: 14px; padding: 3px 0; }
 .meter .track { height: 6px; background: var(--rule); border-radius: 3px; position: relative; }
 .meter .track i { position: absolute; top: -3px; width: 2px; height: 12px; background: var(--ink-3); }
 .meter .track b { position: absolute; left: 0; top: 0; bottom: 0; background: var(--eosin); border-radius: 3px; }

@@ -72,14 +72,23 @@ def mesh(system) -> dict:
         routes.append(item)
     waiting = [{"name": t.name, "state": t.state, "note": t.note, "route": t.manifest.route}
                for t in s.tools.tools.values() if t.manifest.route not in spec.labels]
-    engines = [_family(s, c) for c, sp in s.capabilities.items() if sp.internal] if s.affect.enabled else []
+    engines = ([_family(s, c) for c, sp in s.capabilities.items() if sp.internal and sp.kind != "agency"]
+               if s.affect.enabled else [])
     mem = s.memory
     memory = [{"id": n.id, "facts": len(n.facts()), "bytes": n.bytes, "first_bytes": n.first_bytes,
                "spec": n.spec(), "passed": n.passed, "total": n.total, "served": n.served,
                "status": "learning" if n.dirty else n.status}
               for n in sorted(mem.nodes.values(), key=lambda n: n.created)] if mem.enabled else []
     a = s.affect
-    return {"router": _family(s, DISPATCH), "routes": routes, "waiting": waiting, "engines": engines,
+    d = s.director
+    agency = s.registry.champion("agency") if "agency" in s.capabilities else None
+    last = d.history[-1] if d.history else None
+    director = {"enabled": d.enabled, "pinned": d.pinned, "node": node_brief(agency) if agency else None,
+                "trusted": bool(agency and (agency.metrics.get("holdout_acc") or 0) >= s.directives.nodes.serve_min_accuracy),
+                "last": {k: last.get(k) for k in ("mode", "target", "summary", "value", "ts")} if last else None,
+                "tasks": [{"id": t, "mode": r["mode"], "what": r["what"]} for t, r in d.self_tasks.items()
+                          if t in s.tasks.tasks]}
+    return {"director": director, "router": _family(s, DISPATCH), "routes": routes, "waiting": waiting, "engines": engines,
             "memory": memory, "memory_enabled": mem.enabled,
             "guard": {"checked": sum(a.decisions.values()), "changed": sum(v for k, v in a.decisions.items() if k != "pass"),
                       "held": len(a.held), "withheld": a.decisions.get("block", 0)} if a.enabled else None}

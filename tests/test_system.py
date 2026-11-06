@@ -22,6 +22,7 @@ FAST = {
     "teachers": {"order": ["human", "heuristic"]},
     "temperament": {"enabled": False},  # answers unshaped, so tests can compare outputs (see test_temperament)
     "memory": {"enabled": False},       # answers come from where each test expects (see test_memory)
+    "agency": {"enabled": False},       # no initiative of its own unless a test asks (see test_agency)
 }
 
 

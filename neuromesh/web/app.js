@@ -286,7 +286,7 @@
 
   function meshGeometry(m, width) {
     const n = Math.max(m.routes.length, 1);
-    const rowH = 50, top = 22;
+    const rowH = 50, top = m.director ? 92 : 22;
     const routerR = radius(m.router.champion?.params);
     const yMid = top + (n * rowH) / 2;
     const lane = top + n * rowH + 42;
@@ -305,6 +305,34 @@
     const { X } = g;
     const svg = sv("svg", { viewBox: `0 0 ${g.W} ${g.H}`, width: g.W, height: g.H, role: "img",
       "aria-label": `Node network: the router sends orders to ${m.routes.length} routes; every answer passes the emotional engines` });
+    // its own initiative: the agency node in front of the director
+    const dr = m.director;
+    if (dr) {
+      const y = 36, an = dr.node;
+      svg.append(sv("text", { x: X.inlet, y: y + 4, class: "m-sub" }, "initiative"));
+      if (an) {
+        const rr = Math.min(13, radius(an.params));
+        if (dr.trusted) svg.append(sv("circle", { cx: X.router, cy: y, r: rr + 4, class: "m-champ-ring" }));
+        svg.append(sv("circle", { cx: X.router, cy: y, r: rr, class: dr.trusted ? "m-champ" : "m-chall" },
+          sv("title", {}, `agency node: ${nodeTip(an)}${dr.trusted ? "\nit chooses the director's mode" : "\nstill learning; the drive policy chooses"}`)));
+      } else {
+        svg.append(sv("circle", { cx: X.router, cy: y, r: 8, class: "m-none" }, sv("title", {}, "agency node: not built yet; the drive policy chooses")));
+      }
+      svg.append(sv("text", { x: X.router + 20, y: y - 14, class: "m-dim" }, an ? (dr.trusted ? "agency node" : "agency node (learning)") : "drive policy"));
+      svg.append(sv("path", { d: `M ${X.router + 16} ${y} L ${X.label - 10} ${y}`, class: "m-edge" + (dr.enabled ? "" : " inactive") }));
+      const head = sv("text", { x: X.label, y: y + 4.5, class: "m-route" }, "director");
+      svg.append(head);
+      const room = g.chars(X.target);
+      let text;
+      if (!dr.enabled) text = "initiative off";
+      else {
+        const mode = dr.pinned === "auto" ? (dr.last ? `last chose ${dr.last.mode}` : "has not decided yet") : `pinned to ${dr.pinned}`;
+        const tasks = dr.tasks.length ? `its tasks: ${dr.tasks.map(t => `${t.id} ${t.mode}`).join(", ")}` : (dr.last?.summary || "");
+        text = `${mode}${tasks ? "; " + tasks : ""}`;
+      }
+      svg.append(sv("text", { x: X.target, y: y + 4.5, class: "m-text" }, cut(text, room)));
+      svg.append(sv("line", { x1: 16, x2: g.W - 16, y1: 68, y2: 68, class: "m-lane" }));
+    }
     // orders flow in to the router
     svg.append(sv("text", { x: X.inlet, y: g.yMid + 4, class: "m-sub" }, "orders"));
     svg.append(sv("path", { d: `M 70 ${g.yMid} L ${X.router - g.routerR - 4} ${g.yMid}`, class: "m-edge" }));
@@ -666,6 +694,42 @@
       h("b", { style: `width:${p(value)}` }), h("i", { style: `left:${p(baseline)}` })), h("span", { class: "dim" }, value.toFixed(2)));
   }
 
+  function initiative(ag) {
+    if (!ag) return null;
+    const node = ag.node;
+    const select = h("select", { "aria-label": "Director mode", onchange: e => act(e.target, () => api("/director", { mode: e.target.value, by: "web" }), r => r.message) },
+      ["auto", ...ag.modes].map(m => h("option", { value: m, selected: m === ag.pinned }, m === "auto" ? "auto (the agency node chooses)" : `${m} (pinned)`)));
+    const controls = h("div", { class: "row" },
+      h("button", { type: "button", class: ag.enabled ? "" : "primary", onclick: e => act(e.target, () => api("/director", { enabled: !ag.enabled, by: "web" }), r => r.message) },
+        ag.enabled ? "Turn initiative off" : "Turn initiative on"),
+      h("label", { class: "row small" }, "Mode", select),
+      ag.enabled ? h("button", { type: "button", onclick: e => act(e.target, () => api("/director", { decide: true, by: "web" }),
+        r => r.decision ? `${r.decision.mode}: ${r.decision.why}${r.decision.summary ? " - " + r.decision.summary : ""}` : "It is already deciding") }, "Take initiative now") : null);
+    const who = !ag.enabled ? "Its initiative is off: it only does what people ask."
+      : ag.pinned !== "auto" ? `Pinned to ${ag.pinned} by a person.`
+      : node && node.trusted ? `The agency node ${node.id} (${shape(node.arch).split(" ")[0]}, held-out ${pct(node.holdout)}) chooses the mode.`
+      : `The drive policy chooses while the agency node learns (${ag.examples} situations so far).`;
+    const values = Object.entries(ag.values).sort((a, b) => b[1] - a[1]).map(([m, v]) =>
+      h("div", { class: "meter" }, h("span", {}, m), h("div", { class: "track" }, h("b", { style: `width:${(v * 100).toFixed(0)}%` })), h("span", { class: "dim" }, `${v.toFixed(2)}, ${ag.counts[m] || 0}×`)));
+    const tasks = ag.self_tasks.map(t => h("li", { class: "ask" }, h("div", { class: "row", style: "justify-content:space-between" },
+      h("span", {}, h("b", {}, t.id), ` ${t.mode}: ${t.what}`), h("button", { type: "button", class: "quiet small", onclick: e => act(e.target, () => api("/task", { id: t.id, action: "remove", by: "web" }), r => r.message) }, "Remove")),
+      h("p", { class: "why" }, `${t.runs} runs, ${span(t.age)} old; ${t.note}`)));
+    const decisions = ag.history.slice().reverse().map(d2 => h("li", { class: "ask" },
+      h("p", {}, h("time", { class: "dim small", title: dateTime(d2.ts) }, clock(d2.ts)), " ", h("b", {}, d2.mode), `: ${d2.why}`,
+        d2.value === null || d2.value === undefined ? null : h("span", { class: d2.value >= 0.5 ? "ok" : d2.value <= 0.15 ? "no" : "dim" }, ` worth ${d2.value.toFixed(2)}`)),
+      h("p", { class: "why" }, [d2.how, d2.summary].filter(Boolean).join(" - "))));
+    return h("div", { class: "section" },
+      h("h2", {}, "Initiative"),
+      h("p", { class: "lede" }, `${who} When no one has asked it for anything for a while, it decides what to learn or test next: research, practise, examine, improve, consolidate or rest. ` +
+        `${ag.decisions_last_hour} of ${ag.limit} decisions this hour${ag.enabled && ag.next_in !== null ? `; next look in ${span(ag.next_in)}` : ""}.`),
+      controls,
+      h("div", { class: "cols", style: "margin-top:14px" },
+        h("div", {}, h("h3", {}, "Recent decisions"), decisions.length ? h("ul", { class: "rows" }, decisions) : h("p", { class: "dim" }, "None yet.")),
+        h("div", {},
+          h("h3", {}, "What has paid off"), values.length ? values : h("p", { class: "dim" }, "Nothing scored yet."),
+          h("h3", { style: "margin-top:14px" }, "Tasks it set itself"), tasks.length ? h("ul", { class: "rows" }, tasks) : h("p", { class: "dim" }, "None right now."))));
+  }
+
   function renderMind() {
     const host = $("#mind");
     if (busy(host)) return;
@@ -688,6 +752,7 @@
           h("button", { type: "button", onclick: e => act(e.target, () => api("/decline", { proposal_id: p.id, by: "web" }), r => r.message) }, "Decline")));
     });
     fill(host,
+      initiative(st.agency),
       h("div", { class: "cols" },
         h("div", {},
           h("div", { class: "section" }, h("h2", {}, "Questions for you"),

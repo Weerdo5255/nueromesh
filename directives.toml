@@ -53,6 +53,10 @@ text = "The mesh may ask users questions and propose new skills, labels and tool
 id = "P11-tested-memory"
 text = "Knowledge compressed into a memory node is checked by that node's external, human-readable test file. A smaller node replaces a larger one only if every answer still matches the tests; the tests belong to people as much as to the mesh: an edited test is retrained to, a deleted test is forgotten. (Enforced in code by neuromesh/memory.py.)"
 
+[[prime]]
+id = "P12-accountable-initiative"
+text = "The mesh may take initiative on its own: choose what to learn or test next, assign itself background tasks, and sit exams, but only when idle (P2), within its own budget (P4), and in plain view: every decision is audited and logged, every task it sets itself can be paused or removed by a person, and a person can pin its mode or turn its initiative off. Its initiative never adds capabilities or approves tools (P10). (Enforced in code by neuromesh/agency.py.)"
+
 # ------------------------------------------------------------------------- goals
 [[goals]]
 id = "G1-competence"
@@ -210,6 +214,29 @@ learn_epochs = 400
 compress_epochs = 250
 interval_seconds = 0.5
 sync_seconds = 2.0                      # how often the test files are checked for people's edits
+
+[agency]
+# Independent agency: when no one has given it an order for a while, the mesh decides for itself
+# what to learn or test next. The Director picks a mode - research (set itself a learn task),
+# practise (a challenge task), examine (sit an exam now), improve (train its weakest skill),
+# consolidate (check its memory nodes) or rest - and assigns itself background tasks you can see,
+# pause or remove in /tasks. The agency node in front of it learns which mode pays off in which
+# situation, from the drive policy and from how its own choices turned out. /director shows it all.
+enabled = true
+decide_every_seconds = 120              # how often it considers taking initiative
+idle_seconds = 15                       # quiet time (no orders from people) before it does
+max_decisions_per_hour = 12             # its own budget (P4)
+max_self_tasks = 3                      # tasks it has set itself at once
+explore = 0.1                           # chance of trying another possible mode, to learn what it is worth
+modes = ["research", "practise", "examine", "improve", "consolidate", "rest"]
+research_articles = 3                   # a self-set learn task reads this many articles
+practice_items = 20
+improve_window_seconds = 600            # a self-set improve task is scored after this long (or when met)
+task_max_age_seconds = 1800
+verify_after_seconds = 3600             # memory nodes count as unverified after this long
+reexam_after_seconds = 21600            # a suite's exam is due again after this long
+low_score = 0.8                         # exam scores below this make practice worthwhile
+retry_after_seconds = 1800              # a topic, suite or skill that did not pay off rests this long
 
 [challenges]
 # Open-source LLM benchmarks as a teacher. Each suite is split once into practice (graded, and

@@ -11,7 +11,9 @@ of behaviour fit into well under a minute:
  4. steady state    - human feedback, background improvement while idle
  5. memory          - facts are compressed into memory nodes with human-readable test files, then
                       into ever smaller nodes that still pass every test; an operator edits a test
- 6. kill switch     - the operator halts everything with a STOP file
+ 6. initiative      - with no orders, the director decides on its own what to test and learn:
+                      it sits benchmark exams, practises, and sets itself tasks to improve skills
+ 7. kill switch     - the operator halts everything with a STOP file
 """
 from __future__ import annotations
 
@@ -41,6 +43,7 @@ DEMO_OVERRIDES = {
     "tools": {"scan_seconds": 0.5},
     "temperament": {"enabled": False},  # scored on raw answers; the temperament has its own tests
     "memory": {"interval_seconds": 0.05, "sync_seconds": 0.25},
+    "agency": {"enabled": False},  # switched on for the initiative phase, so the scored phases compare
 }
 
 FACTS = [("What is the capital of Australia?", "Canberra is the capital of Australia."),
@@ -171,6 +174,7 @@ async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7,
     for name in ("directives.toml", "capabilities.toml"):
         shutil.copy(PROJECT / name, work / name)
     shutil.copytree(PROJECT / "plugins", work / "plugins", ignore=shutil.ignore_patterns("wikipedia", "kiwix"))  # offline
+    shutil.copytree(PROJECT / "challenges", work / "challenges")  # sample benchmark suites, for the initiative phase
     overrides = dict(DEMO_OVERRIDES)
     if ollama or ollama_url:  # a local model teaches; the heuristic teacher covers any gaps
         local = {"provider": "ollama", "enabled": True, "model": ollama or "auto"}
@@ -273,6 +277,19 @@ async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7,
         await demo.wait_for(lambda: edited in node.answers and settled(), 30, "the memory node to relearn the edit")
         res = await system.submit("How tall is Mount Everest?")
         print("  > How tall is Mount Everest?\n      " + res.summary().replace("\n", "\n      "))
+
+        demo.say("Phase 7 - initiative: no orders; the director decides for itself what to test and learn")
+        a, t = system.directives.agency, system.directives.tasks
+        a.decide_every_seconds, a.idle_seconds, a.improve_window_seconds, a.explore, a.practice_items = 1.5, 0.5, 6, 0.0, 10
+        a.max_decisions_per_hour = 100
+        t.min_interval_seconds, t.improve_interval_seconds, t.challenge_interval_seconds = 1, 2, 3
+        system.challenges.pol.practice_batch = 10
+        print(f"  the operator turns its initiative on: {system.director.set_enabled(True, 'demo-operator')}")
+        await asyncio.sleep(24)
+        system.director.set_enabled(False, "demo-operator")
+        from .commands import director_lines
+        for line in director_lines(system)[1:3]:
+            print(f"  {line.strip()}")
 
         demo.say("Results")
         print(f"{'phase':<14} {'orders':>6} {'correct':>8} {'by nodes':>9} {'by teachers':>12} {'mixed':>6} {'avg ms':>7}")

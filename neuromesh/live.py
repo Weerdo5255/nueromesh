@@ -206,7 +206,7 @@ def engine_lines(system, g: dict) -> list[Line]:
     if not a.enabled:
         return [("answers -> user directly (temperament off)", "dim")]
     lines: list[Line] = [("answers", "title")]
-    engines = [c for c, spec in s.capabilities.items() if spec.internal]
+    engines = [c for c, spec in s.capabilities.items() if spec.internal and spec.kind != "agency"]
     what = {"affect": "reads the tone", "disposition": "decides"}
     for cap in engines:
         champ = s.registry.champion(cap)
@@ -313,7 +313,29 @@ def teacher_goal_lines(system, g: dict) -> list[Line]:
             ("goals:    " + f" {g['dot']} ".join(goals), "info"),
             temperament_line(s, g),
             mind_line(s, g),
-            tasks_line(s, g)]
+            tasks_line(s, g),
+            director_line(s, g)]
+
+
+def director_line(system, g: dict) -> Line:
+    d = system.director
+    if not d.enabled:
+        return ("director: initiative off (/director on)", "dim")
+    last = d.history[-1] if d.history else None
+    node = system.registry.champion("agency") if "agency" in system.capabilities else None
+    acc = node.metrics.get("holdout_acc") if node else None
+    who = (f"agency node {node.id}" if node and acc is not None and acc >= system.directives.nodes.serve_min_accuracy
+           else "drive policy")
+    parts = [f"mode {d.pinned}" + (f" ({who} chooses)" if d.pinned == "auto" else " (pinned)")]
+    if last:
+        parts.append(f"last: {last['mode']}" + (f" {last['target'][:30]}" if last.get("target") else "")
+                     + ("" if last.get("value") is None else f" (worth {last['value']:.2f})"))
+    mine = [t for t in d.self_tasks if t in system.tasks.tasks]
+    if mine:
+        parts.append(f"set itself {', '.join(mine)}")
+    nxt = max(0, int(d.next_at - time.time()))
+    parts.append(f"next look in {nxt}s")
+    return ("director: " + f" {g['dot']} ".join(parts), "info")
 
 
 def tasks_line(system, g: dict) -> Line:

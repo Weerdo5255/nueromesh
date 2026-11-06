@@ -144,6 +144,23 @@ ask = ["what is 12 * 7", "count the words in: the cat sat on the mat", "what is 
 doask = ["check the build", "answer the question", "fix this", "tell me the total", "look at the server"]
 
 
+[agency]
+answer = "In that situation I would {label} ({description})."
+description = "The mesh's own initiative: given its situation (skills below target, exams due, topics to read up on, memory nodes to check, its budgets), decide what to do next when no one has asked it for anything."
+labels = ["research", "practise", "examine", "improve", "consolidate", "rest"]
+open_labels = false
+internal = true
+kind = "agency"
+teachers = ["human", "agency"]     # people, and the drive policy; how its choices turn out teaches it too
+
+[agency.label_descriptions]
+research = "set itself a learn task on a topic"
+practise = "practise on a benchmark suite, then re-sit its exam"
+examine = "sit a benchmark exam to measure itself"
+improve = "train its weakest skill towards its target"
+consolidate = "check its memory nodes against their tests"
+rest = "do nothing for now"
+
 [disposition]
 answer = "In that situation I would {label} the answer ({description})."
 description = "The mesh's decision engine: given its temperament, the tone of the message and the answer, decide what happens to the answer before the user sees it. It can hold an answer back or add context, never change it."

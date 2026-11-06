@@ -32,6 +32,9 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /memory test                    run every memory node against its test file now
   /memorize <question> :: <answer>   teach it a fact (compressed into a memory node with tests)
   /memory forget <question>       forget a fact (its tests go too)
+  /director                       its own initiative: mode, who chose it, the tasks it set itself, what paid off
+  /director mode <auto|research|practise|examine|improve|consolidate|rest>   pin a mode (auto: the agency node chooses)
+  /director now | on | off        take initiative now, or turn its initiative on or off
   /challenges                     benchmark suites, exam scores and trends
   /challenge run <suite> [n]      sit the exam now (graded, never learned from)
   /challenge practice <suite> [n] practise now: every graded answer teaches the mesh
@@ -212,6 +215,62 @@ async def memory_command(system, rest: str) -> list[str]:
         nid = mem.forget(arg.strip())
         return [f"  forgot '{arg.strip()}' (from {nid})" if nid else f"  no memory node knows '{arg.strip()}'"]
     return memory_lines(system, rest)
+
+
+def director_lines(system) -> list[str]:
+    d = system.director
+    st = d.status()
+    if not st["enabled"]:
+        head = "director: initiative off - it only does what people ask (/director on)"
+    else:
+        nxt = f"next look in {st['next_in']}s" if st["next_in"] is not None else ""
+        head = (f"director: initiative on, mode {st['pinned']}"
+                + (" (the agency node chooses)" if st["pinned"] == "auto" else " (pinned by a person)")
+                + f"; {st['decisions_last_hour']}/{st['limit']} decisions this hour; {nxt}")
+    out = [head]
+    node = st["node"]
+    if node:
+        held = "-" if node["holdout"] is None else f"{node['holdout']:.3f}"
+        out.append(f"  agency node {node['id']} {node['arch']}: held-out {held}"
+                   + (" - it chooses the mode" if node["trusted"] else " - still learning; the drive policy chooses")
+                   + f" ({st['examples']} situations learned)")
+    else:
+        out.append(f"  agency node: not built yet ({st['examples']} situations learned); the drive policy chooses")
+    if st["values"]:
+        out.append("  what has paid off: " + ", ".join(f"{m} {v:.2f} ({st['counts'].get(m, 0)}x)"
+                                                       for m, v in sorted(st["values"].items(), key=lambda kv: -kv[1])))
+    if st["self_tasks"]:
+        out.append("  tasks it set itself (/task remove <id> stops one):")
+        out += [f"    {t['id']} [{t['status']}] {t['mode']}: {t['what']} ({t['runs']} runs, {t['age']}s) - {t['note']}"
+                for t in st["self_tasks"]]
+    if st["history"]:
+        out.append("  recent decisions:")
+        for h in st["history"][-8:]:
+            when = time.strftime("%H:%M:%S", time.localtime(h["ts"]))
+            worth = "" if h.get("value") is None else f" [worth {h['value']:.2f}]"
+            out.append(f"    {when} {h['mode']}: {h['why']} ({h['how']}){(' - ' + h['summary']) if h.get('summary') else ''}{worth}")
+    return out
+
+
+async def director_command(system, rest: str) -> list[str]:
+    d = system.director
+    sub, _, arg = rest.partition(" ")
+    by = os.environ.get("USER", "operator")
+    if sub in ("on", "off"):
+        return [f"  {d.set_enabled(sub == 'on', by)}"]
+    if sub == "mode":
+        ok, msg = d.set_mode(arg or "auto", by)
+        return [f"  {msg}"]
+    if sub in ("now", "decide"):
+        if not d.enabled:
+            return ["  its initiative is off (/director on)"]
+        if system.guardian.halted:
+            return ["  halted (/resume first)"]
+        rec = await d.decide(force=True)
+        if rec is None:
+            return ["  it is already deciding; try again in a moment"]
+        return [f"  {rec['mode']}: {rec['why']} ({rec['how']})" + (f" - {rec['summary']}" if rec.get("summary") else "")]
+    return director_lines(system)
 
 
 def _pct(x) -> str:
@@ -415,6 +474,8 @@ async def execute(system, line: str) -> Output:
             out = evolution_lines(system, rest)
         elif cmd == "memory":
             out = await memory_command(system, rest)
+        elif cmd in ("director", "agency", "initiative"):
+            out = await director_command(system, rest)
         elif cmd in ("memorize", "memorise", "remember"):
             ask, sep, answer = rest.partition("::")
             if not sep or not ask.strip() or not answer.strip():

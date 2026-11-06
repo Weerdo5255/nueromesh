@@ -61,6 +61,8 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, system.challenges.status()
         if path == "/evolution":
             return 200, {**system.evolution.status(), "archive": system.evolution.archive}
+        if path == "/director":
+            return 200, system.director.status()
         if path == "/memory":
             if query.get("node"):
                 node = web.memory_node(system, query["node"])
@@ -123,6 +125,21 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                 return 400, {"ok": False, "message": str(exc)}
             return 200, {"summary": rep.line(), "score": rep.score, "learned": rep.learned, "rerouted": rep.rerouted,
                          "results": rep.results}
+        if path == "/director":  # {"mode": "auto"|..., "enabled": true|false, "decide": true}
+            d, by = system.director, body.get("by", "api-operator")
+            out: dict = {}
+            if "enabled" in body:
+                out["message"] = d.set_enabled(bool(body["enabled"]), by)
+            if "mode" in body:
+                ok, msg = d.set_mode(str(body["mode"]), by)
+                if not ok:
+                    return 400, {"ok": False, "message": msg}
+                out["message"] = msg
+            if body.get("decide"):
+                if not d.enabled or g.halted:
+                    return 400, {"ok": False, "message": "its initiative is off or the mesh is halted"}
+                out["decision"] = await d.decide(force=True)
+            return 200, {"ok": True, **out, "status": d.status()}
         if path == "/memorize":  # {"ask": "...", "answer": "..."}
             made = system.memory.learn(body.get("ask", ""), body.get("answer", ""), body.get("source") or "the operator",
                                        by=body.get("by", "api"), kind="people")

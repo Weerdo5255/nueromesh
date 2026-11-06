@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from .activity import ActivityLog, ActivityTracker
+from .agency import AgencyTeacher, Director
 from .agents import (Architect, Compressor, Curator, Evaluator, Explorer, Investigator, Orchestrator, Researcher,
                      Sentinel, TaskRunner, Trainer)
 from .background import BackgroundTasks
@@ -37,7 +38,8 @@ from .tools import ACTIVE, APPROVED, QUARANTINED, RETIRED, Sandbox, Tool, ToolRe
 log = logging.getLogger("neuromesh")
 
 OFFLINE_FIELDS = ("lexicon", "negation", "templates", "label_templates", "fillers", "triggers",
-                  "default_label", "open_labels", "label_descriptions", "internal", "teachers", "answer", "answers")
+                  "default_label", "open_labels", "label_descriptions", "internal", "teachers", "answer", "answers",
+                  "kind")
 
 
 class System:
@@ -76,6 +78,7 @@ class System:
         teachers["heuristic"] = HeuristicTeacher(seed)
         teachers["temperament"] = TemperamentTeacher(seed)  # specialist: teaches only the disposition engine
         teachers["challenge"] = ChallengeTeacher(seed)  # benchmark suites: gold answers for practice items
+        teachers["agency"] = AgencyTeacher(seed)        # specialist: the drive policy for the agency node
         self.teachers = TeacherPool(teachers, tp.order, tp.weights)
         self.teachers.activity, self.teachers.bus = self.activity, self.bus
 
@@ -97,6 +100,7 @@ class System:
         self.stopping = False
         self.started_at = time.time()
         self.order_count = 0
+        self.last_order_at = 0.0
         self.served: deque[str] = deque(maxlen=100)
         self._enc_cache: OrderedDict[str, np.ndarray] = OrderedDict()
         self._enc_lock = threading.Lock()
@@ -105,9 +109,10 @@ class System:
         self.researcher = Researcher(self)
         self.investigator = Investigator(self)
         self.orchestrator = Orchestrator(self)
+        self.director = Director(self)  # independent agency: the agency node chooses its mode
         self.agents = [self.orchestrator, Architect(self), Trainer(self), Evaluator(self), Curator(self),
                        Explorer(self), self.researcher, self.investigator, TaskRunner(self), Compressor(self),
-                       Sentinel(self)]
+                       self.director, Sentinel(self)]
 
     # ------------------------------------------------------------- lifecycle
     async def start(self) -> "System":
@@ -157,6 +162,7 @@ class System:
 
     def record_order(self, result: Result) -> None:
         self.order_count += 1
+        self.last_order_at = time.time()
         self.served.append(result.served_by)
         self.store.save_order(result.order_id, result.text, result.to_dict())
         said = (result.answer or str(result.output)).split("\n", 1)[0]
@@ -591,6 +597,7 @@ class System:
             "challenges": self.challenges.status(),
             "evolution": self.evolution.status(),
             "memory": self.memory.status(),
+            "agency": self.director.status(),
             "scorecard": self.scorecard(),
             "agents": {a.name: dict(a.stats) for a in self.agents},
         }

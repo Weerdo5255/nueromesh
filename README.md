@@ -16,11 +16,14 @@ it starts on its own with its tools and nodes. You can give it background tasks 
 working on continuously: study a topic, train a skill to a target, or repeat an order and tell
 you when the result changes. What it learns is compressed into memory nodes, small neural
 networks that each come with an external test file you can read and edit, and which it keeps
-shrinking for as long as every test still passes.
+shrinking for as long as every test still passes. And it has initiative of its own: when no one
+has asked it for anything, a director decides what to learn or test next (sit an exam, practise,
+read up on a topic, train a weak skill, check its memory), steered by an agency node that learns
+which choices pay off.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
-python -m neuromesh demo      # 30-second offline demo of the whole life cycle
+python -m neuromesh demo      # 1-minute offline demo of the whole life cycle
 python -m neuromesh run       # live console: node network, lessons in progress, activity log
 python -m neuromesh serve     # daemon + HTTP API + web interface on http://127.0.0.1:8765/
 python -m neuromesh bench     # CPU vs GPU speed for node training and inference
@@ -208,6 +211,56 @@ shows one with its compression history, `/memory test` runs every node against i
 `python -m neuromesh memory test` does the same from outside the mesh without changing anything
 (exit code 1 if a test fails). `/memory forget <question>` forgets a fact. Tune it in
 `[memory]` in `directives.toml`; `enabled = false` turns it off.
+
+### Independent agency: the director and the agency node
+When no person has given it an order for a while, the mesh takes initiative. The **Director**
+looks at its situation and picks a mode:
+
+| mode | what it does |
+|---|---|
+| research | sets itself a learn task on a topic: a goal of its own, a question it could not answer, an interest you told it about, or a link from an article it read |
+| practise | sets itself a challenge task: practise on a benchmark suite (learning from every grade), then re-sit its exam |
+| examine | sits a benchmark exam now, to measure itself |
+| improve | sets itself an improve task for its weakest skill (the Trainer and the Architect work on it first) |
+| consolidate | runs every memory node against its test file, and relearns what fails |
+| rest | nothing is worth its budget right now |
+
+**The agency node** sits in front of the Director. It is an internal capability like the
+emotional engines, and it reads the situation as a handful of words: skills below target and by
+how much, exams due, exam scores, topics to read, whether research is possible, memory state,
+what it did last and how often, its budget, and how many tasks it has set itself. Until the node
+is validated and confident, the **drive policy** chooses and teaches it. The drives are curiosity
+(read up), competence (train weak skills), measurement (sit due exams), verification (check
+memory) and variety (don't repeat itself). The node is an ordinary node, so it is evolved and
+promoted like any other.
+
+**Outcomes teach it.** Every choice is scored by what it achieved:
+
+| choice | worth |
+|---|---|
+| research | articles read and facts compressed into memory nodes |
+| practise | what it did to the exam score; lessons alone are not enough |
+| examine | a first measurement, or a change since the last one |
+| improve | held-out accuracy gained, or the target reached |
+| consolidate | faults found in memory nodes (finding none is worth a little) |
+
+A choice that paid off is reinforced in that situation, even against the policy. One that did
+not, or a so-so one it keeps repeating, is relabelled with the policy's next best. The topic,
+suite or skill also rests for a while (`retry_after_seconds`), so it cannot loop. Over time the
+node comes to prefer what actually works for this mesh. In the demo it examines every sample
+suite, practises the weak ones, sets itself a task that lifts the router's held-out accuracy,
+and checks its memory nodes, all with no orders.
+
+**People stay in charge (P12).**
+- It runs only when idle (P2), within its own budget of decisions per hour (P4), and never
+  while halted or paused (P1).
+- Every decision and every task it sets itself is audited and logged ("[director]" lines).
+- The tasks it sets itself are ordinary background tasks in `/tasks`: pause or remove them
+  like your own. It retires them itself once they have run their course and been scored.
+- `/director` shows its mode, who chose it, what has paid off, its tasks and recent decisions.
+  `/director mode practise` pins a mode (`auto` hands the choice back to the agency node),
+  `/director now` takes initiative now, and `/director off` turns it off (kept across restarts).
+- Its initiative never adds capabilities or approves tools (P10).
 
 ### Replies: the result first, in its own words
 Every reply leads with the result, said in the mesh's own words. Sources come after it, then
@@ -492,6 +545,7 @@ All run concurrently (asyncio) and coordinate through a message bus, the registr
 | Investigator | the mesh's own initiative: re-forms opinions, drafts proposals, and investigates goals with its tools and nodes (own hourly budget); follows up on orders it couldn't fulfil |
 | TaskRunner | runs the background tasks you set (learn / improve / run), one at a time, on background capacity and its own hourly budget |
 | Compressor | compresses learned facts into memory nodes, writes their test files, keeps trying smaller nodes (accepted only if every test passes), and retrains to people's edits of the tests |
+| Director | independent agency: when idle, picks a mode (research, practise, examine, improve, consolidate, rest) with the agency node in front of it, sets itself tasks or sits exams, scores what each choice achieved and teaches the agency node from it |
 | Sentinel | watches the kill switch, re-checks local teacher servers (Ollama), lets the mood settle and saves it, publishes heartbeats with the directive scorecard |
 
 Background agents yield whenever an order is in flight and stay within a compute duty cycle.
@@ -513,6 +567,7 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P9 discretion | private notes and opinions are declined, never denied or faked; opinions about people are always private; the operator sees everything (`/mind`, audited) |
 | P10 human-adopted growth | the mesh proposes skills, labels and tools and asks questions; only a human adopts a proposal or approves a tool |
 | P11 tested memory | knowledge lives in a memory node only while that node passes every test in its external test file; a smaller node is accepted only if all its answers still match; people's edits to the tests are retrained to |
+| P12 accountable initiative | the mesh takes initiative only when idle and within its own budget; every decision is audited and logged; the tasks it sets itself can be paused or removed; people can pin its mode or turn it off; it never adds capabilities or approves tools |
 
 **Goals** are measured continuously and shown on the scorecard (`/status`): competence
 (held-out accuracy), autonomy (share of orders served by nodes), tool fluency, economy.
@@ -604,6 +659,7 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /task learn jazz    /task improve urgency to 0.95    /task every 10m: what is 2+2    /tasks    /task pause task-1
 /challenges    /challenge run sample-sentiment    /challenge practice gsm8k 50    /challenge fetch sst2 500    /task challenge gsm8k every 30m
 /evolution    /evolution sentiment
+/director    /director mode examine    /director mode auto    /director now    /director off
 /memorize What is the capital of Australia? :: Canberra is the capital of Australia.    /memory    /memory mem-0001    /memory test    /memory forget <question>
 what do you think of the calculator tool?    are you hiding anything?    what do you know about me?
 /feedback ord-3f2a91c0 disposition=pass    /feedback ord-3f2a91c0 affect=frustrated
@@ -615,7 +671,8 @@ it next to the live console, run `python -m neuromesh run --web` (or `--web 9000
 
 ![The web interface: the node network, an answer from a memory node, work in progress and the activity log](docs/web-interface.png)
 
-- **Live**: the node network drawn like a specimen under a microscope: the router, every route
+- **Live**: the node network drawn like a specimen under a microscope: its initiative at the top
+  (the agency node in front of the director, the mode it chose, the tasks it set itself), the router, every route
   and what serves it (champion nodes sized by their weights, challengers and retired nodes
   beside them, tools, the memory nodes asked first on `answer:direct`), and the emotional
   engines every answer passes on its way out. Each order pulses along the route it took. Beside
@@ -626,7 +683,8 @@ it next to the live console, run `python -m neuromesh run --web` (or `--web 9000
 - **Memory**: memory nodes with their size now and when first learned, teach a fact, run every
   test, and per node: what it knows, how it was compressed, the questions it must not answer;
   forget a fact.
-- **Mind**: questions for you (reply), proposals (adopt or decline), the opinions and notes it
+- **Mind**: its initiative (turn it on or off, pin a mode, take initiative now, recent decisions,
+  what has paid off, the tasks it set itself), questions for you (reply), proposals (adopt or decline), the opinions and notes it
   shares, investigate something, the temperament.
 - **Logs**: the activity log (search, filter by kind, hide routine work), the audit log, every
   event, and the family tree of every node ever built.
@@ -668,6 +726,8 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | POST | `/halt`, `/resume`, `/pause`, `/rollback` | |
 | GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions`, `/knowledge?q=...`, `/temperament`, `/why?order=...`, `/inquiries`, `/proposals`, `/opinions`, `/notes`, `/tasks`, `/challenges`, `/evolution`, `/memory` | |
 | GET | `/mind` | operator: every note, private ones included (audited) |
+| GET | `/director` | its initiative: mode, the agency node, what has paid off, the tasks it set itself, recent decisions |
+| POST | `/director` | `{"mode": "auto" \| "research" \| ..., "enabled": true \| false, "decide": true}` |
 | GET | `/dashboard?after=<seq>` | everything the web interface's live view shows, in one request |
 | GET | `/log?after=<seq>&n=500&routine=0` | the activity log after a sequence number (`routine=0` hides routine work) |
 | GET | `/mesh`, `/memory?node=<id>` | the node network as a structure; one memory node's facts, history and tests |
@@ -930,7 +990,7 @@ neuromesh/
   live.py                live console (curses): network, work in progress, activity log, prompt
   activity.py            work-in-flight tracker and the activity log
   commands.py            orders and /commands shared by the live and plain consoles
-  agents.py              the eleven agents (plus the challenge runner in challenges.py)
+  agents.py              eleven of the agents (the Director is in agency.py, the challenge runner in challenges.py)
   nodes.py               NeuralNode + derivations (expand / widen / deepen / retune / fresh)
   backend.py             compute backends: numpy (CPU), PyTorch (CUDA / ROCm / MPS), CuPy
   bench.py               CPU vs GPU benchmark
@@ -946,17 +1006,19 @@ neuromesh/
   challenges.py          open-source LLM benchmarks: suites, Hugging Face fetch, grading, the challenge teacher
   evolution.py           the genetic algorithm: genome operators (grow/shrink neurons and layers), selection, judging
   memory.py              memory nodes: facts compressed into small networks, their test files, compression (P11)
+  agency.py              independent agency: the Director, its modes, the drive policy and the agency node (P12)
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   134 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   142 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
                          evolution (exact growth, pruning, growth bias, promotion rules, a node
                          that evolves larger in a running system), memory nodes (test files,
                          compression that never accepts a failing node, people's edits, answers),
-                         the web interface (its files, the endpoints it uses, the token),
+                         the web interface (its files, the endpoints it uses, the token), independent
+                         agency (the drive policy, outcomes teaching the agency node, people in charge),
                          temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,
                          questions, proposals, investigations), background tasks, full system,
