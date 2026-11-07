@@ -380,6 +380,7 @@ class Objective:
     created_at: float = field(default_factory=time.time)
     planned_by: str = ""
     self_set: bool = False          # set by its own initiative (agency mode pursue)
+    why: str = ""                   # why it set itself this (an area of interest, or what it lacks)
     questions: list = field(default_factory=list)
     thoughts: list = field(default_factory=list)   # [ts, kind, text]
     steps: int = 0
@@ -453,7 +454,7 @@ class Objectives:
         return [o for o in self.items.values() if o.status == "active"]
 
     # ---------------------------------------------------------------- setting
-    async def add(self, text: str, by: str = "user", self_set: bool = False) -> Objective:
+    async def add(self, text: str, by: str = "user", self_set: bool = False, why: str = "") -> Objective:
         if not self.enabled:
             raise ValueError("objectives are off ([objectives] enabled = false in the directives)")
         text = " ".join(str(text).split()).strip(" .")
@@ -466,13 +467,15 @@ class Objectives:
         if same is not None:
             raise ValueError(f"{same.id} already works on that")
         s = self.sys
-        obj = Objective(f"obj-{next(self._ids)}", text, created_by=by, self_set=self_set, next_at=time.time())
+        obj = Objective(f"obj-{next(self._ids)}", text, created_by=by, self_set=self_set, next_at=time.time(), why=why[:300])
         self.items[obj.id] = obj
         await self.plan(obj)
         s.guardian.audit(by, "objective.set", obj.id, text=text, strategy=obj.strategy, planned_by=obj.planned_by,
-                         questions=len(obj.questions), self_set=self_set)
+                         questions=len(obj.questions), self_set=self_set, why=obj.why)
         s.bus.publish("objective.set", id=obj.id, text=text[:200], strategy=obj.strategy, by=by,
-                      planned_by=obj.planned_by, steps=len(obj.questions), self_set=self_set)
+                      planned_by=obj.planned_by, steps=len(obj.questions), self_set=self_set, why=obj.why[:200])
+        if why:
+            self._think(obj, "why", f"Why I set myself this: {why}")
         self.save(obj)
         self.write_report(obj)
         return obj
@@ -1121,6 +1124,8 @@ class Objectives:
                  f"Objective {obj.id}, set by {who} on {made}. Strategy: {obj.strategy}, planned by {obj.planned_by}.",
                  f"Status: {state}. {done} of {total} core questions answered after {obj.steps} steps and "
                  f"{obj.rounds} round{'s' if obj.rounds != 1 else ''} of rumination.", ""]
+        if obj.why:
+            lines[-1:-1] = [f"Why it set itself this: {obj.why}."]
         if obj.summary:
             lines += ["## What it found", "", obj.summary, "", f"_Written by {obj.summary_by}._", ""]
         by_id = {q["id"]: q for q in obj.questions}

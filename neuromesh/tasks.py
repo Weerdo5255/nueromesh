@@ -108,6 +108,7 @@ class Result:
     director: str = ""       # the director node that reviewed it on its way out (P14)
     review: str = ""         # what that director decided
     attempts: int = 1        # ways it was tried: a director tries again when it deems an order unanswered
+    thought: dict | None = None  # its own thought after the knowledge, from a thinking node (thinking.py); never the answer
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -112,6 +112,30 @@ input[type="text"], input[type="password"], input:not([type]), textarea, select 
 .answer .meta { color: var(--ink-3); font-size: 13px; margin-top: 6px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
 .answer pre { margin: 8px 0 0; white-space: pre-wrap; max-height: 50vh; overflow: auto; }
 .answer details { margin-top: 6px; font-size: 13px; color: var(--ink-2); }
+/* its own thinking, after the knowledge: the eosin stain, a voice beside the answer rather than in it */
+.thought { margin: 10px 0 2px; padding: 8px 12px 9px; border-left: 3px solid var(--eosin); background: var(--eosin-soft);
+  border-radius: 0 8px 8px 0; font-size: 14.5px; }
+.thought p { margin: 0; }
+.thought p + p { margin-top: 4px; }
+.thought-by { font-size: 12.5px; color: var(--ink-2); font-weight: 600; margin-bottom: 3px !important; }
+.thought-by span { font-weight: 400; color: var(--ink-3); }
+.m-think { fill: color-mix(in srgb, var(--eosin) 20%, transparent); stroke: var(--eosin); stroke-width: 1.4; }
+.m-think.learning { stroke: var(--warn); fill: color-mix(in srgb, var(--warn) 18%, transparent); }
+.m-think-g.sel .m-think { stroke-width: 3; }
+.m-think-g.traced .m-think { filter: drop-shadow(0 0 4px var(--eosin)); }
+.inline-glyph { vertical-align: -3px; margin-right: 6px; }
+.thought-item .own { margin: 6px 0 4px; }
+.thought-item .view, .thought-item .want { margin: 2px 0; font-size: 14px; }
+.area-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; align-items: center; }
+.area-bars { display: inline-grid; grid-template-columns: auto 70px auto 70px; gap: 4px 6px; align-items: center; }
+.pair-bar { height: 6px; border-radius: 3px; background: var(--rule); overflow: hidden; }
+.pair-bar b { display: block; height: 100%; }
+.pair-bar.interest b { background: var(--hema); }
+.pair-bar.lack b { background: var(--eosin); }
+.gaps { margin: 4px 0 0; padding-left: 18px; font-size: 13px; color: var(--ink-2); }
+.kind-chip { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px; vertical-align: 1px; }
+.kind-chip.gap { background: var(--eosin-soft); color: var(--eosin); }
+.kind-chip.interest { background: var(--hema-soft); color: var(--hema); }
 .check { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--rule); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 14px; }
 .check .q { color: var(--ink-2); }
 .check p { margin: 0; }

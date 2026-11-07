@@ -32,7 +32,7 @@ from .agents import is_question
 from .directors import agrees
 from .tasks import DIRECT, DISPATCH, Order, skill_payload
 
-NOT_CORRECTABLE = ("tasks", "objectives", "toolsmith", "mind")
+NOT_CORRECTABLE = ("tasks", "objectives", "toolsmith", "mind", "thinking")
 
 
 def _same(a, b) -> bool:

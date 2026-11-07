@@ -195,10 +195,21 @@
     $("#badge-status").textContent = pending ? String(pending) : "";
   }
 
+  // ------------------------------------------------------------------ its own thinking, after the knowledge
+  // A thinking node's thought: the facts it holds put together in its own words, its view and what it wants
+  // to find out. Shown beside the answer, never in it (P17); it says which node and how many facts.
+  function thoughtAside(t) {
+    const view = t.opinion ? (t.opinion.private ? "It has a view of this too, and keeps it to itself." : null) : null;
+    return h("aside", { class: "thought", "aria-label": "Its own thinking" },
+      h("p", { class: "thought-by" }, "Its own thinking", h("span", {}, ` ${t.node}, from ${t.grounds} fact${t.grounds === 1 ? "" : "s"} it holds; not part of the answer`)),
+      h("p", {}, t.text),
+      view ? h("p", { class: "dim small" }, view) : null);
+  }
+
   // ------------------------------------------------------------------ was it right?
   // Yes: the nodes that answered learn so. No: it offers the next most likely answers, worked out now,
   // or none of them (and what is right, if you know); it learns from what you pick.
-  const UNCHECKED = ["tasks", "objectives", "toolsmith", "mind"];  // these hand work on rather than answer (corrections.py)
+  const UNCHECKED = ["tasks", "objectives", "toolsmith", "mind", "thinking"];  // these hand work on rather than answer (corrections.py)
   function answerCheck(orderId, text) {
     const box = h("div", { class: "check", role: "group", "aria-label": "Was this answer right?" });
     const upper = t => t.charAt(0).toUpperCase() + t.slice(1);
@@ -317,6 +328,7 @@
       h("span", {}, `served by ${r.served_by}`), h("span", {}, r.order_id),
     ];
     if (r.disposition) meta.push(h("span", {}, `temperament: ${r.disposition}`));
+    if (r.thought && r.route !== "thinking") kids.push(thoughtAside(r.thought));
     kids.push(h("div", { class: "meta" }, meta, close));
     if (r.order_id && !UNCHECKED.includes(r.route)) kids.push(answerCheck(r.order_id, a.text));
     if (r.trace?.length) kids.push(h("details", {}, h("summary", {}, "How it got there"), h("ul", {}, r.trace.map(t => h("li", {}, t)))));
@@ -481,10 +493,22 @@
           x += rr * 2 + 4;
         });
         const facts = m.memory.reduce((a, n) => a + n.facts, 0);
+        const thinkNodes = (m.thinking || []).slice(-4);
+        if (memNodes.length && thinkNodes.length) {  // after the memory nodes: its thinking nodes
+          svg.append(sv("line", { x1: x - 2, x2: x + 8, y1: y, y2: y, class: "m-edge" }));
+          x += 14;
+          thinkNodes.forEach(n => {
+            const gl = sv("g", { class: "m-think-g" + mark(n.id), ...nodeAttrs(n.id) }, sv("title", {}, `${n.id}: ${n.thoughts} thoughts in its own words\n${n.spec}\ntests ${n.passed}/${n.total}, brought up ${n.served}`));
+            thinkGlyph(gl, x + 6, y, 6.5, n.status === "learning");
+            svg.append(gl);
+            x += 18;
+          });
+        }
+        const thoughts = thinkNodes.reduce((a, n) => a + n.thoughts, 0);
         const teachers = r.teachers.length ? `teachers: ${r.teachers.join(", ")}` : "no teacher model (a person is asked)";
         const txt = sv("text", { x: x + 8, y: y + 4.5, class: "m-text" });
         const room = g.chars(x + 8);
-        const head = `memory nodes first (${facts} facts)`;
+        const head = `memory nodes first (${facts} facts)` + (thinkNodes.length ? `, then thinking (${thoughts} thoughts)` : "");
         if (memNodes.length) txt.append(sv("tspan", {}, head), sv("tspan", { class: "m-sub", dx: 8 }, cut(`then ${teachers}`, Math.max(8, room - head.length - 2))));
         else txt.append(sv("tspan", { class: "m-sub" }, cut(teachers, room)));
         svg.append(txt);
@@ -595,11 +619,19 @@
   }
 
   // ------------------------------------------------------------------ a closer look
-  const STAGE = { director: "director", router: "router", memory: "memory node", tool: "tool", knowledge: "retained knowledge",
+  const STAGE = { director: "director", router: "router", memory: "memory node", thinking: "thinking node", tool: "tool", knowledge: "retained knowledge",
                   teacher: "teacher", affect: "affect", disposition: "disposition" };
+  // a thinking node: a thought bubble (a cell with a small one trailing it)
+  function thinkGlyph(g, cx, cy, r, learning = false) {
+    const cls = "m-think" + (learning ? " learning" : "");
+    g.append(sv("circle", { cx: cx + r * 0.15, cy: cy - r * 0.1, r, class: cls }));
+    g.append(sv("circle", { cx: cx - r * 0.95, cy: cy + r * 0.95, r: Math.max(1.6, r * 0.28), class: cls }));
+    return g;
+  }
   function hopGlyph(hp) {
     const g = sv("svg", { width: 18, height: 18, viewBox: "0 0 18 18", "aria-hidden": "true", class: "hop-glyph" });
-    if (hp.kind === "director") g.append(sv("polygon", { points: "9,2 16,9 9,16 2,9", class: "m-director" }));
+    if (hp.kind === "thinking") thinkGlyph(g, 10, 8, 5.5);
+    else if (hp.kind === "director") g.append(sv("polygon", { points: "9,2 16,9 9,16 2,9", class: "m-director" }));
     else if (hp.kind === "memory") g.append(sv("polygon", { points: hexagon(9, 9, 7), class: "m-mem" }));
     else if (hp.kind === "tool") g.append(sv("rect", { x: 3, y: 3, width: 12, height: 12, rx: 2, class: "m-tool" }));
     else if (hp.kind === "node") g.append(sv("circle", { cx: 9, cy: 9, r: 6.5, class: "m-champ" }));
@@ -634,7 +666,7 @@
         const what = [hp.stage !== "director" && hp.stage !== hp.node ? STAGE[hp.stage] || hp.stage : null,
           hp.label ? `“${cut(hp.label, 48)}”` : null, hp.confidence != null ? pct(hp.confidence) : null,
           hp.kind === "teacher" ? `(${cut(hp.how || "a teacher", 30)})` : null].filter(Boolean).join(" ");
-        const lookable = hp.node && (hp.kind === "node" || hp.kind === "memory");
+        const lookable = hp.node && (hp.kind === "node" || hp.kind === "memory" || hp.kind === "thinking");
         const here = lookable && hp.node === S.sel.node && (hp.input || t.text) === S.sel.text;
         return h("li", { class: here ? "here" : "" }, hopGlyph(hp),
           lookable ? h("button", { type: "button", class: "linkish", title: `Look inside ${hp.node} as it fired on this order`,
@@ -680,6 +712,7 @@
       if (ids.length) groups.push({ label: cap === "dispatch" ? "router" : cap, ids });
     }
     if (m?.memory?.length) groups.push({ label: "memory", ids: m.memory.map(n => ({ id: n.id, text: `${n.id} (${n.facts} facts)` })) });
+    if (m?.thinking?.length) groups.push({ label: "thinking", ids: m.thinking.map(n => ({ id: n.id, text: `${n.id} (${n.thoughts} thoughts)` })) });
     return groups;
   }
 
@@ -1306,6 +1339,89 @@
           second.length ? h("ul", { class: "rows", style: "margin-top:10px" }, second) : null)));
   }
 
+  function thinkingPanel(tk, brief) {
+    if (brief && !brief.enabled) return offPanel("Thinking", "Thinking nodes are off. Turn them on with [thinking] enabled = true (and [memory] enabled) in directives.toml.");
+    if (!tk) return h("div", { class: "section" }, h("h2", {}, "Thinking"), h("p", { class: "dim" }, "Loading its thoughts…"));
+    const nodes = new Map(tk.nodes.map(n => [n.id, n]));
+    const want = d => !d ? null : h("p", { class: "want" }, h("b", {}, "Wants: "), d.want,
+      d.status === "pursuing" ? h("span", { class: "hit" }, ` working on it (${d.objective})`) : d.status === "satisfied" ? h("span", { class: "ok" }, " found out") : null);
+    const items = tk.thoughts.map(t => h("li", { class: "ask thought-item" },
+      h("div", { class: "row", style: "justify-content:space-between;align-items:baseline" },
+        h("span", {}, h("b", {}, t.topic), h("span", { class: "dim small" }, ` ${t.id} in ${t.node || "no node yet"}, from ${t.facts} fact${t.facts === 1 ? "" : "s"}`)),
+        nodes.get(t.node)?.status === "ready" ? h("button", { type: "button", class: "linkish small", title: `Open ${t.node} in the closer look`,
+          onclick: () => { lookInside(t.node, t.topic); } }, "Look inside") : null),
+      h("p", { class: "own" }, t.understanding),
+      t.opinion ? h("p", { class: "view" }, h("b", {}, "View: "), t.opinion.private ? h("span", { class: "dim" }, "private (an opinion about a person is never shared, P9)")
+        : [t.opinion.stance, h("span", { class: "dim" }, ` because ${t.opinion.why}`)]) : null,
+      want(t.desire),
+      fold(`grounds:${t.id}`, `What it rests on (${t.facts})`, h("ul", { class: "rows small" }, t.grounds.map(g => h("li", {}, h("b", {}, g.ask), " ", cut(g.answer, 160), h("span", { class: "dim" }, ` (${g.node})`))))),
+      h("p", { class: "small dim" }, t.formed_by + (t.rejected ? `. Turned down: ${t.rejected}` : ""))));
+    const nodeRows = tk.nodes.map(n => h("li", { class: "ask" },
+      h("p", {}, h("svg", { width: 16, height: 16, viewBox: "0 0 18 18", "aria-hidden": "true", class: "inline-glyph" }), h("b", {}, n.id), " ",
+        h("span", { class: n.status === "ready" ? "ok" : n.status === "failing" ? "no" : "dim" }, n.status)),
+      h("p", { class: "why" }, `${n.thoughts} thought${n.thoughts === 1 ? "" : "s"}; ${n.spec}; tests ${n.passed}/${n.total}; brought up ${n.served} time${n.served === 1 ? "" : "s"}`),
+      n.failing.length ? h("p", { class: "why no" }, `Still learning: ${n.failing.map(f => `“${cut(f, 40)}”`).join(", ")}`) : null));
+    nodeRows.forEach(li => { const g = li.querySelector("svg"); if (g) thinkGlyph(g, 9, 9, 6); });
+    const st = tk.stats;
+    return h("div", { class: "section" }, h("h2", {}, "Thinking"),
+      h("p", { class: "lede" }, "After its memory nodes come its thinking nodes. For each topic it holds several facts about, it puts them together in its own words, forms a view from evidence it can name, and notes what it wants to find out. " +
+        "Every word is checked against the facts underneath, so a thought never adds a fact. When an answer comes from what it knows, the thought appears after it, marked as its own thinking."),
+      h("div", { class: "row" },
+        h("button", { type: "button", onclick: e => act(e.target, () => api("/thinking", { form: true, by: "web" }), r => `Thought again: ${r.message}`) }, "Think again now"),
+        h("span", { class: "small dim" }, `${st.formed} formed, ${st.reformed} re-formed, ${st.expressed} shown after answers, ${st.answered} questions answered, ${st.rejected} drafts turned down. Ask it: “what do you think of …?”, “what do you want to find out?”`)),
+      h("div", { class: "cols", style: "margin-top:14px" },
+        h("div", {}, h("h3", {}, "Its thoughts"), items.length ? h("ul", { class: "rows" }, items)
+          : h("p", { class: "dim" }, "No thoughts yet. They form once its memory nodes hold two or more facts about the same thing: teach it some (/memorize question :: answer) or let it read.")),
+        h("div", {},
+          h("h3", {}, "What it wants to find out"),
+          tk.desires.length ? h("ul", { class: "rows" }, tk.desires.map(d => h("li", { class: "ask" }, h("p", {}, d.want),
+            h("p", { class: "why" }, `${d.thought} on ${d.topic} (${d.node}); ${d.status === "pursuing" ? `its director took it up as ${d.objective}` : "open: its director may take it up as an objective"}`))))
+            : h("p", { class: "dim" }, "Nothing in particular yet."),
+          h("h3", { style: "margin-top:14px" }, "Thinking nodes"),
+          nodeRows.length ? h("ul", { class: "rows" }, nodeRows) : h("p", { class: "dim" }, "None yet."))));
+  }
+
+  function curiosityPanel(cu, brief) {
+    if (brief && !brief.enabled) return offPanel("Curiosity", "Curiosity is off. Turn it on with [curiosity] enabled = true in directives.toml.");
+    if (!cu) return h("div", { class: "section" }, h("h2", {}, "Curiosity"), h("p", { class: "dim" }, "Loading…"));
+    const bar = (v, cls, label) => h("span", { class: `pair-bar ${cls}`, role: "img", "aria-label": `${label} ${pct(v)}` }, h("b", { style: `width:${(v * 100).toFixed(0)}%` }));
+    const areas = cu.areas.map(a => h("li", { class: "ask area" },
+      h("div", { class: "area-head" }, h("b", {}, a.name),
+        h("span", { class: "area-bars" }, h("span", { class: "small dim" }, "interest"), bar(a.interest, "interest", "interest"),
+          h("span", { class: "small dim" }, "lacks"), bar(a.lack, "lack", "what it lacks"))),
+      h("p", { class: "why" }, [...a.why_interest, ...a.why_lack].join("; ") || "–"),
+      a.gaps.length ? h("ul", { class: "gaps" }, a.gaps.slice(0, 3).map(g => h("li", {}, `“${cut(g.question, 90)}” `, h("span", { class: "dim" }, g.why)))) : null));
+    const kind = k => h("span", { class: `kind-chip ${k}` }, k === "gap" ? "lacking" : "interest");
+    const aims = cu.aims.map(x => h("li", { class: "ask" }, h("p", {}, kind(x.kind), " ", h("b", {}, x.text)), h("p", { class: "why" }, x.why)));
+    const tone = { active: "hit", met: "ok", unmet: "no", paused: "dim", removed: "dim" };
+    const mine = cu.set.map(r => h("li", { class: "ask" },
+      h("p", {}, h("b", {}, r.text), " ", h("span", { class: tone[r.status] || "dim" }, r.status), h("span", { class: "dim small" }, ` ${r.objective}, ${r.progress[0]} of ${r.progress[1]} answered`)),
+      h("p", { class: "why" }, `Why: ${r.why}`)));
+    return h("div", { class: "section" }, h("h2", {}, "Curiosity"),
+      h("p", { class: "lede" }, "What it finds interesting and where what it knows runs out. Interest grows when people ask about something, say they are interested, or when it reads about it. " +
+        "It lacks information where it could not answer, was told it was wrong, an objective left a question open or its sources disagree, or it knows a name only from a mention. When it has time, its director sets itself objectives from here, and says why."),
+      h("div", { class: "row" },
+        h("button", { type: "button", disabled: !cu.aims.length || !S.dash.status.agency?.enabled,
+          title: S.dash.status.agency?.enabled ? "Its director sets itself the first of these now" : "Its initiative is off: turn it on in Initiative",
+          onclick: e => act(e.target, () => api("/curiosity", { pursue: true, by: "web" }), r => cut(r.message || "Done", 200)) }, "Set itself one now"),
+        h("span", { class: "small dim" }, `${cu.gaps} gap${cu.gaps === 1 ? "" : "s"} in what it knows; people asked ${cu.asked} time${cu.asked === 1 ? "" : "s"} about something it noted.`)),
+      h("div", { class: "cols", style: "margin-top:14px" },
+        h("div", {}, h("h3", {}, "Areas"), areas.length ? h("ul", { class: "rows" }, areas) : h("p", { class: "dim" }, "Nothing yet: ask it things, or teach it some facts.")),
+        h("div", {},
+          h("h3", {}, "Objectives it could set itself"),
+          aims.length ? h("ul", { class: "rows" }, aims) : h("p", { class: "dim" }, "None right now."),
+          h("h3", { style: "margin-top:14px" }, "Objectives it set itself"),
+          mine.length ? h("ul", { class: "rows" }, mine) : h("p", { class: "dim" }, "None yet."))));
+  }
+
+  // open a node in the Live view's closer look, firing on a text
+  function lookInside(id, text) {
+    if (!S.closer) { S.closer = true; store.set("closer", "1"); }
+    location.hash = "#live";  // setView renders the Live view with the closer look open
+    selectNode(id, text, null, true);
+    setTimeout(() => $("#microscope")?.scrollIntoView({ behavior: reduceMotion() ? "auto" : "smooth", block: "start" }), 60);
+  }
+
   function temperamentPanel(tm) {
     if (!tm || !tm.enabled) return h("div", { class: "section" }, h("h2", {}, "Temperament"),
       h("p", { class: "dim" }, "The temperament is off, so answers go out unchanged. Turn it on with [temperament] enabled = true in directives.toml."));
@@ -1354,7 +1470,7 @@
   function offPanel(title, text) { return h("div", { class: "section" }, h("h2", {}, title), h("p", { class: "dim" }, text)); }
 
   // the Mind view is divided into tabs; the open one is in the address (#mind/tools) and remembered
-  const MIND_TABS = ["questions", "objectives", "directors", "initiative", "tools", "dreams", "temperament", "thoughts"];
+  const MIND_TABS = ["questions", "thinking", "curiosity", "objectives", "directors", "initiative", "tools", "dreams", "temperament", "thoughts"];
   if (MIND_TABS.includes(store.get("mindTab", ""))) S.mindTab = store.get("mindTab", "");
 
   function mindBadges(st) {
@@ -1367,6 +1483,8 @@
     $("#note-mind-temperament").textContent = tm?.enabled ? tm.mood : "";
     const live = (st.objectives?.objectives || []).filter(o => o.status === "active").length;
     $("#note-mind-objectives").textContent = live ? `${live} active` : "";
+    $("#note-mind-thinking").textContent = st.thinking?.enabled && st.thinking.thoughts ? `${st.thinking.thoughts}` : "";
+    $("#badge-mind-curiosity").textContent = st.curiosity?.enabled && st.curiosity.gaps ? String(st.curiosity.gaps) : "";
   }
 
   function renderMind(force) {
@@ -1377,6 +1495,8 @@
     if (!force && busy(host)) return;
     const panel = {
       questions: () => questionsPanel(st.mind),
+      thinking: () => thinkingPanel(S.extra.thinking, st.thinking),
+      curiosity: () => curiosityPanel(S.extra.curiosity, st.curiosity),
       objectives: () => objectivesPanel(st.objectives),
       directors: () => directorsPanel(st.directors),
       initiative: () => initiative(st.agency) || offPanel("Initiative", "Its initiative is not available in this NeuroMesh."),
@@ -1575,6 +1695,8 @@
         if (due(key, 4000)) jobs.push((async () => { S.extraAt[key] = now; try { S.reports[id] = (await api(`/objectives?id=${encodeURIComponent(id)}`)).report; } catch { /* next poll */ } })());
       }
     }
+    if (S.view === "mind" && S.mindTab === "thinking" && due("thinking", 4000)) jobs.push(get("thinking", "/thinking"));
+    if (S.view === "mind" && S.mindTab === "curiosity" && due("curiosity", 4000)) jobs.push(get("curiosity", "/curiosity"));
     if (S.view === "mind" && S.mindTab === "thoughts") {
       if (due("opinions", 5000)) jobs.push(get("opinions", "/opinions"));
       if (due("notes", 5000)) jobs.push(get("notes", "/notes"));

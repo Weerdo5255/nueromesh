@@ -51,6 +51,11 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /objective <what>               set one (also as an order: "objective: understand the Berlin Wall")
   /objective show|report|pause|resume|remove|think <id>    a plan and its answers; the write-up; think it over now
   /objective <id> ask <question>  add a question to an objective     /ruminate   think again about recent answers
+  /thoughts                       its thinking nodes: thoughts in its own words, with its opinions and desires
+  /thought <topic|id>             one thought and the facts it rests on      /thought forget <id>   drop it
+  /think                          put what it holds into its own words again now
+  /curiosity                      areas of interest, gaps in what it knows, and the objectives it could set itself
+  /curiosity pursue               have its director set itself one of those objectives now
   /toolsmith                      tools it wrote itself: the coder node, drafts waiting for approval, experiments
   /toolsmith build <what it should do>   have it write a tool now (it asks before the tool runs; P15)
   /toolsmith show <tool>          a made tool's code, tests and experiments    /toolsmith recipes   its code library
@@ -606,7 +611,9 @@ async def execute(system, line: str) -> Output:
         first, *more = f"[{res.order_id}] {res.summary()}".splitlines() or [""]
         ask = ([f"   ? [{res.inquiry['id']}] {res.inquiry['question']}  (/reply {res.inquiry['id']} <answer>)"]
                if res.inquiry else [])
-        return Output([first] + [f"   {m}" for m in more] + ask + [f"   . {step}" for step in res.trace],
+        thought = ([f"   ~ its own thinking ({res.thought['node']}, from {res.thought['grounds']} facts; not part of the answer): "
+                    f"{res.thought['text']}"] if res.thought and res.route != "thinking" else [])
+        return Output([first] + [f"   {m}" for m in more] + thought + ask + [f"   . {step}" for step in res.trace],
                       is_order=True)
     cmd, _, rest = line[1:].partition(" ")
     rest = rest.strip()
@@ -691,6 +698,27 @@ async def execute(system, line: str) -> Output:
             out = directors_command(system, rest)
         elif cmd in ("toolsmith", "coder"):
             out = await toolsmith_command(system, rest)
+        elif cmd in ("thoughts", "thinking"):
+            out = [f"  {line}" for line in system.thinking.lines()]
+        elif cmd == "thought":
+            head, _, arg = rest.partition(" ")
+            if head == "forget" and arg.strip():
+                ok, msg = system.thinking.forget(arg.strip(), os.environ.get("USER", "operator"))
+                out = [f"  {msg}"]
+            elif rest:
+                out = [f"  {line}" for line in system.thinking.show(rest, os.environ.get("USER", "operator"))]
+            else:
+                out = [f"  {line}" for line in system.thinking.lines()]
+        elif cmd == "think":
+            changed = await system.thinking.form(force=True)
+            out = [f"  re-formed its thoughts: {changed['formed']} new, {changed['reformed']} re-formed, "
+                   f"{changed['dropped']} dropped; {len(system.thinking.thoughts)} thoughts in "
+                   f"{len(system.thinking.nodes)} thinking nodes (they retrain in the background)"]
+        elif cmd in ("curiosity", "interests", "gaps") and rest == "pursue":
+            rec = await system.director.pursue_now(os.environ.get("USER", "operator"))
+            out = ["  its initiative is off or the mesh is halted (/director on)"] if rec is None else [f"  {rec.get('summary', '')}"]
+        elif cmd in ("curiosity", "interests", "gaps"):
+            out = [f"  {line}" for line in system.curiosity.lines()]
         elif cmd == "correct":
             book = system.corrections
             head, _, typed = rest.partition("::")

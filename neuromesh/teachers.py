@@ -423,6 +423,16 @@ class LLMTeacher(Teacher):
         return {"questions": [{"ask": str(q["ask"])[:240], "why": str(q.get("why", ""))[:160],
                                "core": bool(q.get("core", True))} for q in qs[:10]]}
 
+    async def synthesize(self, topic: str, claims: list[str]) -> str | None:
+        """Put facts about a topic together in the mesh's own words (the honesty guard checks the result)."""
+        system = ("You are the inner voice of a small system that thinks about what it knows. Rewrite the facts below "
+                  "as one to three sentences in the first person, in your own words, putting them together. Use only "
+                  "what the facts say: add no names, numbers, dates, places or claims of your own, and no opinion. "
+                  "Reply with the sentences only.")
+        user = f"Topic: {topic[:120]}\nFacts:\n" + "\n".join(f"- {c[:300]}" for c in claims[:8])
+        reply = await self._ask(system, user)
+        return reply.strip() if reply and reply.strip() else None
+
     async def propose(self, examples: list[str], known: list[str], hint: str = "") -> dict | None:
         """Draft one new capability from requests the mesh could not fulfil."""
         schema = {"type": "object", "required": ["kind", "name", "description"],
@@ -663,6 +673,17 @@ class TeacherPool:
                 continue
             with self._track(teacher, f"planning: {' '.join(objective.split())[:70]}"):
                 made = await teacher.plan(objective, strategy, skills, tools)
+            if made:
+                return made, teacher.name
+        return None
+
+    async def synthesize(self, topic: str, claims: list[str]) -> tuple[str, str] | None:
+        """Have the first available LLM teacher put facts together in the mesh's own words (None offline)."""
+        for teacher in self.ranked():
+            if not isinstance(teacher, LLMTeacher):
+                continue
+            with self._track(teacher, f"thinking about {' '.join(topic.split())[:60]}"):
+                made = await teacher.synthesize(topic, claims)
             if made:
                 return made, teacher.name
         return None

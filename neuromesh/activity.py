@@ -67,7 +67,7 @@ class ActivityTracker:
 
 # --------------------------------------------------------------------- the log
 ROUTINE = {"node.trained", "node.evaluated", "lesson.label", "memory.rejected", "memory.merge_refused",
-           "dream.dreamt", "director.reviewed", "objective.step"}  # hidden by "/log important"
+           "dream.dreamt", "director.reviewed", "objective.step", "thinking.thought"}  # hidden by "/log important"
 
 
 @dataclass
@@ -127,7 +127,7 @@ def format_event(ev: Event) -> LogEntry | None:
              "release": "good", "mind": "teacher", "ask": "warn", "propose": "good",
              "task": "good", "challenge": "good", "memory": "good", "director": "teacher", "sleep": "teacher",
              "dream": "lesson", "code": "good", "objective": "good", "ruminate": "teacher",
-             "feedback": "lesson"}.get(tag, "info")
+             "feedback": "lesson", "think": "teacher"}.get(tag, "info")
     if t == "output.shaped" and d.get("action") in ("confirm", "defer", "block"):
         level = "warn"
     if tag == "tool" and ("REJECTED" in text or "quarantined" in text):

@@ -345,7 +345,7 @@ class Mind:
     def observe(self, order, res) -> None:
         """After every order: note the tone, gaps and unknown skills; ask what an unfulfilled order meant."""
         s = self.sys
-        if not self.enabled or s.guardian.halted or res.route == "mind":
+        if not self.enabled or s.guardian.halted or res.route in ("mind", "thinking"):
             return
         self.orders_seen += 1
         tone = next((st["label"] for st in res.steps if st.get("capability") == "affect"), None)

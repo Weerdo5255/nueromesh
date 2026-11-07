@@ -73,6 +73,10 @@ text = "The mesh may write tools of its own for requests no tool could meet, but
 id = "P16-honest-objectives"
 text = "The mesh pursues long-term objectives - set by people, or by its own initiative within [agency] max_self_objectives (P12) - only on background capacity (P2), within [objectives] budgets (P4), and never while asleep, halted or paused (P1). Every question it asks itself is an order that passes a director on the way in and out (P14). What it finds keeps its source and confidence, and whether a second source confirmed it; disagreements are recorded and settled, not hidden; what it could not find out is written up as open, never filled in (P7). It asks a person only one question at a time per objective, and a person's answer stands (P1). People can pause, change or remove any objective, and every step is logged and audited. (Enforced in code by neuromesh/objectives.py.)"
 
+[[prime]]
+id = "P17-own-thoughts"
+text = "Thinking nodes put what the mesh holds into its own words, after the knowledge context: they recombine and rephrase only facts its memory nodes hold, and every thought is checked word by word against those facts, so a thought adds no fact (a draft that does is turned down). A thought is always labelled as its own thinking, with the node and the facts it rests on; it is shown beside an answer, never inside it (P8, P14), and is never stored as a fact or used as a source. The opinions it expresses are ones its thinking nodes hold, from evidence they name (P9: opinions about people stay private). Its desires do nothing on their own: the director may take one up as an objective it sets itself, only within [agency] max_self_objectives and its budgets, saying why (P12, P16). (Enforced in code by neuromesh/thinking.py.)"
+
 # ------------------------------------------------------------------------- goals
 [[goals]]
 id = "G1-competence"
@@ -240,8 +244,10 @@ merge_max_facts = 200                   # largest merged node
 # what to learn or test next. The Director picks a mode - research (set itself a learn task),
 # practise (a challenge task), examine (sit an exam now), improve (train its weakest skill),
 # consolidate (check its memory nodes), build (write a tool for requests nothing met, and ask you
-# to approve it), experiment (try out a tool it wrote), pursue (set itself a long-term objective to
-# understand something you are interested in, or that it has read up on), ruminate (think again about
+# to approve it), experiment (try out a tool it wrote), pursue (set itself a long-term objective: to find
+# out what it lacks - a question it could not answer, an answer you marked wrong, a question an objective
+# left open or its sources disagree on - or to understand an area of interest: yours, a desire its
+# thinking nodes hold, one people keep asking about; [curiosity] ranks them), ruminate (think again about
 # recent answers it was unsure of) or rest - and assigns itself background tasks you can see,
 # pause or remove in /tasks. The agency node in front of it learns which mode pays off in which
 # situation, from the drive policy and from how its own choices turned out. /director shows it all.
@@ -261,6 +267,42 @@ verify_after_seconds = 3600             # memory nodes count as unverified after
 reexam_after_seconds = 21600            # a suite's exam is due again after this long
 low_score = 0.8                         # exam scores below this make practice worthwhile
 retry_after_seconds = 1800              # a topic, suite or skill that did not pay off rests this long
+
+[thinking]
+# Thinking nodes (P17): after the memory nodes, its thoughts in its own words - one per topic, the facts it
+# holds about it put together and rephrased (by its own rules, or drafted by an LLM teacher and checked word
+# by word against those facts) - with the opinion it has formed of the topic (from evidence it names) and
+# what it wants to find out about it. The thoughts are held in small neural networks that map a topic, its
+# questions and its facts to the thought; each has tests and is retrained when its thoughts change.
+# When an answer comes from what it knows, the thought is added after it, labelled (never in it).
+#   /thoughts   /thought <topic>   /think   "what do you think of X?"   "what do you want to find out?"
+enabled = true
+express = true                          # add its thought after an answer from what it knows, when it adds something
+form_seconds = 10                       # how often it re-forms its thoughts from what its memory nodes hold
+min_facts = 2                           # facts a topic needs for a thought (fewer when it wants to know more about it)
+max_thoughts = 200
+max_grounds = 12                        # facts one thought rests on
+max_claims = 4                          # facts it puts together in one understanding
+thoughts_per_node = 24
+llm = true                              # an LLM teacher may draft the understanding (checked against its facts)
+threshold = 0.6                         # confidence a thinking node needs to bring up a thought
+interested_after = 3                    # times people ask about a topic before it says it finds it interesting
+desire_interest = 0.4                   # interest at which it wants to know more about a topic it knows little of
+
+[curiosity]
+# Areas of interest and gaps in what it knows - the director's aims (agency mode pursue). Interest: people
+# ask about it (more often, more interest), a person said they are interested, it has read about it, its
+# thinking nodes favour it, what it read links to it. Lack: questions about it it could not answer, answers
+# marked wrong, objective questions left open or disputed, names it knows only from a mention, areas asked
+# about more than it knows. An area it is interested in and lacks information on ranks highest.
+#   /curiosity   "what are you curious about?"
+enabled = true
+interest_weight = 0.45
+lack_weight = 0.45
+both_weight = 0.4
+min_interest = 0.3                      # interest an area needs before "understand <area>" is an aim
+min_lack = 0.25                         # what an area must lack (with no interest) before it is an aim
+enough_facts = 5                        # facts about an area it is interested in that are enough for now
 
 [dreams]
 # Sleep and dreams: when there have been no orders for a while, it may fall asleep. Asleep, all

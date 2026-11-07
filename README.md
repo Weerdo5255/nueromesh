@@ -39,7 +39,12 @@ plans the questions it needs answered, and it works through them in its spare ti
 itself. Then it ruminates: it checks each answer against a second source, notices when different
 questions got the same answer, settles disagreements, tries what failed another way, asks you what
 nothing it has can answer, and writes the whole thing up. It also has second thoughts about recent
-answers it was unsure of.
+answers it was unsure of. After its memory nodes come thinking nodes: for each topic it holds
+several facts about, it puts them together in its own words (checked word by word against those
+facts, so a thought never adds one), forms a view from evidence it can name, and notes what it wants
+to find out. The thought appears after an answer from what it knows, marked as its own thinking.
+Its curiosity tracks what it finds interesting and where what it knows runs out, and its director
+sets itself objectives from there, saying why.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
@@ -267,7 +272,7 @@ looks at its situation and picks a mode:
 | consolidate | runs every memory node against its test file, and relearns what fails |
 | build | has the toolsmith write a tool for requests no tool could meet, and asks you for permission to use it (see [Tools it writes](#tools-it-writes-the-toolsmith-and-coder-nodes)) |
 | experiment | tries out a tool it wrote that you approved, and refines it if it falls short |
-| pursue | sets itself a long-term objective to understand something: an interest you told it about, a goal of its own, or a topic a learn task has read up on (see [Objectives](#objectives-long-term-aims-it-pursues-by-asking-itself)) |
+| pursue | sets itself a long-term objective, chosen by its [curiosity](#curiosity-and-the-objectives-it-sets-itself): to find out what it lacks (a question it could not answer, an answer you marked wrong, a question an objective left open or its sources disagree on, a name it knows only from a mention) or to understand an area of interest (yours, a desire its thinking nodes hold, one people keep asking about, a topic it read up on). Every objective it sets itself says why (see [Objectives](#objectives-long-term-aims-it-pursues-by-asking-itself)) |
 | ruminate | thinks again about recent answers it was unsure of or could not give, and notes what it would say now |
 | rest | nothing is worth its budget right now |
 
@@ -569,6 +574,81 @@ answer; `/objective pause|resume|remove obj-1`; `/objective think obj-1` thinks 
 `/objective obj-1 ask <question>` adds a question. `[objectives]` in the directives sets the budgets
 and limits (`max_questions`, `max_rounds`, `checks_per_round`, `follow_ups`, `met_share`, `ask_people`,
 `person_wait_seconds`, `doubt_confidence`).
+
+### Thinking nodes: its own words, opinions and desires
+After its memory nodes come **thinking nodes**. Memory nodes hold facts: a question and its answer,
+each checked by a test file. Thinking nodes hold **thoughts**, one per topic it holds two or more
+facts about (or one, when it wants to know more):
+
+- **Understanding**: the facts about the topic put together and rephrased in its own words, topic
+  first ("Canberra is the capital of Australia" becomes "Australia's capital is Canberra"; "Jane
+  Austen wrote Pride and Prejudice, published in 1813" and "... Emma, published in 1815" become
+  "Jane Austen wrote Pride and Prejudice (published in 1813) and Emma (published in 1815)"). Its
+  own rules do this offline. With an LLM teacher, the teacher may draft it instead. Either way an
+  **honesty guard** checks the thought word by word against its facts. Any word, name or number
+  the facts do not contain (apart from the sentence's own frame: "as I understand it", "putting
+  together what I hold about") gets the draft turned down. The reason is kept, and its own words
+  are used instead (P17).
+- **Opinion**: what it makes of the topic, from evidence it names: how what it read and holds reads
+  to its sentiment skill (favourable or not), whether its sources disagree or you corrected it about
+  the topic (unsure of what it knows), how often people ask about it (interested). With no evidence
+  it has no view and says so. An opinion about a person is held but never shared with users (P9).
+  The opinion is also kept with the mind's opinions, labelled with the thinking node it came from.
+- **Desire**: what it wants to find out about the topic. That can be a question about it that it
+  could not answer, a name in its facts that it knows only from that mention, or more about a topic
+  people keep asking about. Desires do nothing on their own. The director may take one up as an
+  objective it sets itself, and the desire then says it is being pursued, and found out once the
+  objective is met.
+
+A thinking node is a small neural network, built and trained like a memory node. It maps a topic,
+the questions about it, and the questions together with their answers, to the thought it holds. It
+has tests: the topic and its facts must bring up its thought; small talk, tools, skills and topics
+it holds no thought about must not. It is retrained whenever its thoughts' topics or facts change.
+`state/thinking/<node>.md` describes what each node holds, for people to read. The Thinker agent
+re-forms the thoughts every `form_seconds` when what the memory nodes hold has changed, and only in
+background time (P2).
+
+**After the knowledge context.** When an answer comes from what it knows (a memory node, or what it
+read), the thinking node that fires on the question and its answer adds its thought after the
+answer. It only does this when the thought adds something: more facts put together, a view it may
+share, or something it wants to find out. The thought is labelled as its own thinking, with the node
+and how many facts it rests on. It sits beside the answer, never in it: the answer's words are
+unchanged (P8, P14), and a thought is never stored as a fact or used as a source. The web interface
+shows it under the answer, the console as a `~ its own thinking` line, and the API as
+`Result.thought`. The closer look shows the thinking node on the order's path, and inside it the
+neurons that fired.
+
+Ask it directly too: "what do you think of the Berlin Wall?", "in your own words, what is
+Australia?" and "what do you want to find out?" are answered from its thinking nodes. Its tools,
+skills and teachers are still judged by the mind. `/thoughts` lists every thought, `/thought
+Australia` shows one with the facts it rests on, `/thought forget th-3` drops one, and `/think`
+thinks again now. `[thinking]` in `directives.toml` sets how often it thinks, how many facts a
+topic needs, and whether an LLM may draft.
+
+### Curiosity, and the objectives it sets itself
+Its **curiosity** keeps track of the areas it hears and knows about: the names and subjects in what
+people ask, in its memory nodes' facts, in what it has read and in its objectives. For each area it
+weighs:
+
+- **Interest**: how often people ask about it (more asking, more interest), whether a person said
+  they are interested in it, whether it has read about it, whether its thinking nodes favour it,
+  and how many articles it read link to it.
+- **What it lacks**: questions about the area it could not answer, answers you marked wrong,
+  objective questions left open or disputed by its sources, a name it knows only from a mention in
+  another fact, an area people ask about more than it holds facts on.
+
+An area it is interested in and lacks information on ranks highest. These become the director's
+**aims** in pursue mode, best first. A person's stated interest comes first, then the questions
+people asked that it could not answer, then the desires its thinking nodes hold and the areas of
+interest. A question becomes "find out who painted the Zorblax mural"; an area becomes "understand
+Canberra". When its situation has aims like these, the agency node sees them ("aimsgaps" weighs
+more than "aimssome"), and the director sets itself the objective: within `max_self_objectives` and
+the objective budgets, only when idle (P2, P4, P12, P16). The objective records why it set it ("a
+question it could not answer; people asked about it 1 time", "a desire held in thinking node
+think-0001 (th-1): ..."). The reason goes into the objective's write-up, the audit log and the
+activity log. It never sets the same aim twice, and you can pause or remove its objectives like
+yours. `/curiosity` shows the areas, the objectives it could set itself and the ones it did. Ask
+it "what are you curious about?" too.
 
 ### Sleep and dreams: dream nodes, and imagination
 When no one has given it an order for a while (`sleep_after_idle_seconds`), the mesh has a chance
@@ -965,6 +1045,7 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P14 directed orders | there is always at least one director node (director-0 never retires, and is restarted if it stops); every order passes a director on the way in and on the way out; nothing enters long-term memory without a director's review; duplicates stay within `max_directors`; a director only adds disclosed notes (P8), always keeps a person's word (P1), never stores imagination (P13); an unanswered order is tried other ways at most `max_attempts` times, and a reply that gives up says what was tried (P7) |
 | P15 self-made tools | no code the mesh wrote runs before a person approves it (the Explorer runs an `author = "neuromesh"` tool only if those exact files were approved, so changed code asks again); its code is standard library only and checked before it is offered (no files, network, processes, `eval` or `exec`); made tools never get permissions and are self-tested like any tool (P3); experiments run only when idle and within budget; every draft, approval, experiment and refinement is audited |
 | P16 honest objectives | objectives are pursued only when idle and within `steps_per_hour`, never while asleep, halted or paused; every question it asks itself passes a director; every answer keeps its source and confidence and says whether a second source confirmed it; disagreements are recorded and settled, not hidden; what it could not find out is written up as open; one question to a person at a time, and a person's answer stands; self-set objectives count against `max_self_objectives` and can be removed |
+| P17 own thoughts | thinking nodes recombine and rephrase only facts its memory nodes hold, and every thought is checked word by word against them (a draft that adds a word, name or number is turned down); a thought is labelled as its own thinking with its node and facts, shown beside an answer and never in it, never stored as a fact or used as a source; the opinions it states are ones its thinking nodes hold, from evidence they name, and opinions about people stay private; desires act only through the director's self-set objectives, within `max_self_objectives` and its budgets, each saying why |
 | P13 dreams are not facts | dreaming uses only what the mesh already holds, never a research tool or a teacher; an imagined response always says so and names the dream node it came from; imagination is never stored as a fact or used to answer an ordinary question |
 
 **Goals** are measured continuously and shown on the scorecard (`/status`): competence
@@ -1048,6 +1129,8 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /approvals    /approve apv-1    /deny apv-2
 /feedback ord-3f2a91c0 tool:calculator
 /correct ord-3f2a91c0    /correct ord-3f2a91c0 yes    /correct ord-3f2a91c0 a2    /correct ord-3f2a91c0 none :: Canberra
+/thoughts    /thought Australia    /thought forget th-3    /think    /curiosity
+what do you think of the Berlin Wall?    in your own words, what is Australia?    what do you want to find out?
 /define language english,french,spanish :: Which language a sentence is in
 /questions    /answer q1 french
 /rollback sentiment    /pause    /halt    /resume
@@ -1105,7 +1188,12 @@ it next to the live console, run `python -m neuromesh run --web` (or `--web 9000
   forget a fact.
 - **Mind**: divided into tabs, each with its own address (`#mind/tools`), and the one you used
   last opens next time. Arrow keys move between them. **Questions** (with a count of what is
-  waiting): its questions for you (reply) and its proposals (adopt or decline). **Objectives** (with
+  waiting): its questions for you (reply) and its proposals (adopt or decline). **Thinking** (with
+  how many thoughts it holds): each thought in its own words, its view and what it wants to find
+  out, the facts it rests on, and its thinking nodes (look inside one); think again now.
+  **Curiosity** (with a count of the gaps in what it knows): each area's interest and what it lacks,
+  and why; the objectives it could set itself and the ones it did, with why; set itself one now.
+  **Objectives** (with
   how many are active): set one, each one's progress, plan and answers (confirmed, disputed or one
   source), how it thought it over, the write-up; think it over now, pause, remove; and its second
   thoughts about recent answers. **Directors**: each
@@ -1122,8 +1210,9 @@ it next to the live console, run `python -m neuromesh run --web` (or `--web 9000
   event, and the family tree of every node ever built.
 - **Status**: directive goals, approvals, teachers, tools, background tasks (add, pause,
   remove), challenges (practise, sit the exam), retained knowledge.
-- **Command bar**: any order or `/command`. The answer appears below it first, then its sources
-  and how it got there, and *Was this right?*: **Yes**, or **No** for its next most likely answers,
+- **Command bar**: any order or `/command`. The answer appears below it first, then its sources,
+  its own thinking when a thinking node has something to add (marked as such, beside the answer),
+  how it got there, and *Was this right?*: **Yes**, or **No** for its next most likely answers,
   worked out there and then, to pick from (or *None of these*, with the right answer if you know
   it); then **Ask again** to see what it says now. The header pauses background work, halts (click twice) and resumes.
 
@@ -1142,6 +1231,9 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | POST | `/feedback` | `{"order_id": "...", "label": "..."}` |
 | GET | `/alternatives` | `?order=<id>`: the next most likely answers to an order, best first, each worked out now (answer, source, how, likelihood) |
 | POST | `/correct` | `{"order_id": "...", "verdict": "right"}`, or `{"order_id": "...", "verdict": "wrong", "choice": "a2" \| "none", "answer": "..."}`: it learns from it |
+| GET | `/thinking` | its thinking nodes, every thought (understanding, opinion, desire, the facts it rests on), its desires; `?thought=th-3` (or a topic) gives one in full |
+| POST | `/thinking` | `{"form": true}` thinks again now; `{"forget": "th-3"}` drops a thought |
+| GET | `/curiosity` | areas with their interest and what it lacks (and why), the objectives it could set itself, the ones it did |
 | POST | `/teach` | `{"capability": "...", "text": "...", "label": "..."}` |
 | POST | `/answer` | `{"question_id": "q1", "label": "..."}` |
 | POST | `/define` | `{"name": "...", "labels": [...], "description": "..."}` |
@@ -1475,11 +1567,13 @@ neuromesh/
   objectives.py          objectives: the planner teacher, plans, queries against itself, rumination, write-ups, second thoughts (P16)
   anatomy.py             a closer look: the paths orders take, how a node is built, and which synapses fire for an input
   corrections.py         was it right? the next most likely answers, worked out now, and learning from what a person picks
+  thinking.py            thinking nodes after the memory nodes: thoughts in its own words (the honesty guard), opinions, desires (P17)
+  curiosity.py           areas of interest and gaps in what it knows: the objectives its director sets itself
   dreams.py              sleep and dreams: dream synthesis, dream nodes, waking review, their genetic algorithm, imagination (P13)
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   216 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   226 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -1500,7 +1594,10 @@ tests/                   216 tests: nodes, guardian, LLM wire formats and a mock
                          asked, delegation, surveys, reading up, second thoughts, initiative, P1/P2),
                          a closer look (a forward pass recorded faithfully: the strongest path, gradient ×
                          input adding up to the logit; node and memory-node anatomy; order paths),
-                         corrections (the next most likely labels, routes worked out and memory's other
+                         thinking nodes (rephrasing that adds nothing, the honesty guard turning down an
+                         LLM draft, thoughts after the knowledge and never in it, opinions about people kept
+                         private, desires; restarts), curiosity (gaps, interest, the director setting itself
+                         objectives and saying why), corrections (the next most likely labels, routes worked out and memory's other
                          answers; yes, a pick, or none with or without the right answer, each learned and
                          answered right next time; a memory node learning not to answer), temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,

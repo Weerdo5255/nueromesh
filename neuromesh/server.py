@@ -88,6 +88,15 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, {"traces": anatomy.traces(system, min(50, int(query.get("n", 15))))}
         if path == "/toolsmith":
             return 200, system.toolsmith.status()
+        if path == "/thinking":  # its thinking nodes: thoughts in its own words, opinions, desires (P17)
+            if query.get("thought"):
+                th = system.thinking.thoughts.get(query["thought"]) or system.thinking.find(query["thought"])
+                if th is None:
+                    return 404, {"error": "no such thought"}
+                return 200, {"id": th.id, "lines": system.thinking.show(th.id, query.get("by", "api-operator"))}
+            return 200, system.thinking.status()
+        if path == "/curiosity":  # areas of interest, gaps in what it knows, the objectives it could set itself
+            return 200, system.curiosity.status()
         if path == "/objectives":
             if query.get("id"):
                 obj = system.objectives.get(query["id"])
@@ -222,6 +231,19 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             else:
                 return 400, {"error": 'give "verdict": "right", or "wrong" with "choice" (an alternative id, or "none")'}
             return (200 if ok else 400), {"ok": ok, "message": msg, "learned": learned}
+        if path == "/curiosity":  # {"pursue": true}: its director sets itself an objective from its curiosity now
+            rec = await system.director.pursue_now(body.get("by", "api"))
+            if rec is None:
+                return 409, {"ok": False, "message": "its initiative is off or the mesh is halted (turn it on in Mind > Initiative)"}
+            return 200, {"ok": rec.get("mode") == "pursue", "message": rec.get("summary", ""), "decision": rec}
+        if path == "/thinking":  # {"form": true} re-forms its thoughts now; {"forget": "th-3"} drops one
+            by = body.get("by", "api")
+            if body.get("forget"):
+                ok, msg = system.thinking.forget(str(body["forget"]), by)
+                return (200 if ok else 404), {"ok": ok, "message": msg}
+            changed = await system.thinking.form(force=True)
+            return 200, {"ok": True, "message": f"{changed['formed']} new, {changed['reformed']} re-formed, "
+                                                f"{changed['dropped']} dropped", **changed}
         if path == "/objectives":  # {"text": "..."} sets one; {"id", "action": pause|resume|remove|think}; {"id", "ask"}
             book, by = system.objectives, body.get("by", "api")
             if not book.enabled:

@@ -39,6 +39,8 @@ from .temperament import Affect, TemperamentTeacher
 from .toolsmith import CoderTeacher, Toolsmith
 from .objectives import Objectives, PlannerTeacher, Ruminator
 from .corrections import Corrections
+from .curiosity import Curiosity
+from .thinking import Thinker, ThinkingBank
 from .tools import ACTIVE, APPROVED, QUARANTINED, RETIRED, Sandbox, Tool, ToolRegistry, ToolRun
 
 log = logging.getLogger("neuromesh")
@@ -110,6 +112,9 @@ class System:
         self.objectives = Objectives(self)  # long-term objectives: plans, queries against itself, rumination (P16)
         self.bus.listen(self.objectives.on_event)
         self.corrections = Corrections(self)  # a person says an answer was right or wrong; it learns from it
+        self.curiosity = Curiosity(self)      # areas of interest and gaps in what it knows (the director's aims)
+        self.thinking = ThinkingBank(self)    # after the memory nodes: its thoughts, opinions and desires (P17)
+        self.bus.listen(self.thinking.on_event)
         for cap in self.capabilities:  # what people taught, exactly as they put it, stands (P1)
             for ex in self.store.examples(cap):
                 if ex.source == "human":
@@ -132,7 +137,7 @@ class System:
         self.director = Director(self)  # independent agency: the agency node chooses its mode
         self.agents = [self.directors, self.orchestrator, Architect(self), Trainer(self), Evaluator(self), Curator(self),
                        Explorer(self), self.researcher, self.investigator, TaskRunner(self), Compressor(self),
-                       self.director, Dreamer(self), Ruminator(self), Sentinel(self)]
+                       self.director, Dreamer(self), Ruminator(self), Thinker(self), Sentinel(self)]
 
     # ------------------------------------------------------------- lifecycle
     async def start(self) -> "System":
@@ -628,6 +633,11 @@ class System:
             "directors": self.directors.status(),
             "toolsmith": self.toolsmith.status(),
             "objectives": self.objectives.status(),
+            "thinking": {"enabled": self.thinking.enabled, "thoughts": len(self.thinking.thoughts),
+                         "nodes": len(self.thinking.nodes), "desires": len(self.thinking.desires()),
+                         "expressed": self.thinking.stats["expressed"]},
+            "curiosity": {"enabled": self.curiosity.enabled,
+                          "gaps": sum(len(a.gaps) for a in self.curiosity.areas().values()) if self.curiosity.enabled else 0},
             "dreams": self.dreams.status(),
             "scorecard": self.scorecard(),
             "agents": {a.name: dict(a.stats) for a in self.agents},

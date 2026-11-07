@@ -14,8 +14,8 @@ built, and which of its synapses fire for an input.
                    words pushed it towards that output or away from it (gradient x input)
     firings      the recent inputs each node fired on (orders, objectives, its own initiative)
 
-Capability nodes (the router, skills, the emotional engines, the agency, coder and planner nodes) and
-memory nodes can be looked at. The weights are the node's as they are now: a node that has trained
+Capability nodes (the router, skills, the emotional engines, the agency, coder and planner nodes),
+memory nodes and thinking nodes (thinking.py) can be looked at. The weights are the node's as they are now: a node that has trained
 since an order may fire a little differently on it today.
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ _MEM = re.compile(r"memory node (mem-[\w-]+)")
 
 # ============================================================================ the node
 def find(system, ref: str):
-    """("capability", node), ("memory", node), or None. A capability name means its serving node."""
+    """("capability", node), ("memory", node), ("thinking", node), or None. A capability name means its serving node."""
     ref = str(ref or "").strip()
     node = system.registry.get(ref)
     if node is not None:
@@ -42,6 +42,10 @@ def find(system, ref: str):
     mem = system.memory.nodes.get(ref) if system.memory.enabled else None
     if mem is not None and mem.params is not None:
         return "memory", mem
+    bank = getattr(system, "thinking", None)
+    th = bank.nodes.get(ref) if bank is not None else None
+    if th is not None and th.params is not None:
+        return "thinking", th
     if ref in system.capabilities:
         champ = system.registry.champion(ref)
         if champ is not None:
@@ -63,8 +67,14 @@ def _io(system, kind: str, node):
         return params, labels, dim, read
     from . import memory as mm
     params = [np.asarray(p, dtype=np.float32) for p in node.params]
-    labels = [str(a) for a in node.answers]
-    full = system.memory.dim
+    if kind == "thinking":  # its outputs are thoughts: shown by their topics
+        bank = system.thinking
+        labels = [o if i == 0 else f"{o}: {bank.thoughts[o].topic}" if o in bank.thoughts else o
+                  for i, o in enumerate(node.outputs)]
+        full = bank.dim
+    else:
+        labels = [str(a) for a in node.answers]
+        full = system.memory.dim
     inputs = node.inputs or full
 
     def read(text: str):
@@ -136,6 +146,10 @@ def anatomy(system, ref: str, text: str | None = None, *, latest: bool = False, 
                 "origin": node.origin, "generation": node.generation, "parent": node.parent_id,
                 "arch": node.arch.describe(), "holdout": m.get("holdout_acc"), "serves": m.get("serves", 0),
                 "train_steps": node.train_steps, "lr": node.arch.lr}
+    elif kind == "thinking":
+        head = {"id": node.id, "kind": "thinking", "capability": "thinking", "status": node.status, "origin": "thinking",
+                "generation": 0, "parent": None, "arch": node.spec(), "holdout": None, "serves": node.served,
+                "train_steps": None, "bits": node.bits, "thoughts": len(node.outputs) - 1, "tests": f"{node.passed}/{node.total}"}
     else:
         head = {"id": node.id, "kind": "memory", "capability": "memory", "status": node.status, "origin": "memory",
                 "generation": 0, "parent": ", ".join(node.merged_from) or None, "arch": node.spec(), "holdout": None,
@@ -310,7 +324,17 @@ def traces(system, n: int = 15) -> list[dict]:
 
 
 def _served(res: dict, route: str, text: str) -> list[dict]:
-    """What served the order after the router: a tool, a memory node, retained knowledge, a teacher."""
+    """What served the order after the router (a tool, a memory node, retained knowledge, a teacher), and the
+    thinking node that added its thought after the knowledge."""
+    hops = _served_by(res, route, text)
+    th = res.get("thought")
+    if th and th.get("node"):
+        hops.append({"stage": "thinking", "node": th["node"], "label": _short(th.get("topic", ""), 60), "kind": "thinking",
+                     "confidence": th.get("confidence"), "input": text})
+    return hops
+
+
+def _served_by(res: dict, route: str, text: str) -> list[dict]:
     sources = " ".join(map(str, res.get("sources") or []))
     m = _MEM.search(sources)
     if m:

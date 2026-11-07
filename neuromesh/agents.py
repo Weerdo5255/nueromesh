@@ -113,6 +113,10 @@ class Orchestrator(Agent):
                         self.sys.mind.observe(order, result)
                     except Exception:
                         self.log.exception("the mind could not observe %s", order.id)
+                    try:  # what people ask about, and what it could not answer (curiosity.py)
+                        self.sys.curiosity.observe(order, result)
+                    except Exception:
+                        self.log.exception("curiosity could not observe %s", order.id)
                     if not result.ok and result.route == DIRECT and self.sys.toolsmith.claims(order.text):
                         recipe = self.sys.toolsmith.classify(order.text)[0]
                         result.trace.append(f"no tool meets requests like this yet; the toolsmith could write one from "
@@ -125,6 +129,10 @@ class Orchestrator(Agent):
                     await self.sys.directors.review(order, result)
                 except Exception:
                     self.log.exception("the director could not review %s; it is reported as it is", order.id)
+                try:  # after the knowledge context: its own thought, labelled, beside the answer (P17)
+                    result.thought = self.sys.thinking.after(order, result)
+                except Exception:
+                    self.log.exception("no thought could be added to %s", order.id)
         finally:
             self.sys.inflight -= 1
             sem.release()
@@ -178,6 +186,12 @@ class Orchestrator(Agent):
         prompt = imagine_prompt(order.text) if s.dreams.enabled else None
         if prompt is not None:  # "imagine ...": its dream nodes, labelled as imagination (P13)
             self.imagine(res, prompt)
+            return res
+        thought = s.thinking.answer(order.text, order.id)  # what it thinks of a topic, or wants to find out (P17)
+        if thought is not None:
+            res.route, res.output, res.confidence, res.served_by = "thinking", thought[0], 1.0, "nodes"
+            res.thought = thought[2]
+            res.trace.append(thought[1])
             return res
         own = s.mind.answer_self(order.text, order.id)  # questions about the mesh's own opinions and notes (P9)
         if own is not None:

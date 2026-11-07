@@ -182,8 +182,21 @@ def describe_event(ev: Event) -> str | None:
         return f"[feedback] {d['by']} says {d['order']} was wrong ('{d['text'][:60]}'), {which}: {d['learned'][:140] or 'noted'}"
     if t == "objective.set":
         own = " (its own initiative)" if d.get("self_set") else ""
+        why = f"; why: {d['why'][:120]}" if d.get("why") else ""
         return (f"[objective] {d['by']} set {d['id']}{own}: {d['text'][:80]} - {d['strategy']} strategy, "
-                f"{d['steps']} steps, planned by {d['planned_by']}")
+                f"{d['steps']} steps, planned by {d['planned_by']}{why}")
+    if t == "thinking.thought":
+        bits = [f"{d['grounds']} fact{'s' if d['grounds'] != 1 else ''}"]
+        if d.get("stance"):
+            bits.append(f"view: {d['stance']}")
+        if d.get("desire"):
+            bits.append(f"wants: {d['desire'][:90]}")
+        return f"[think] {d['id']} on {d['topic'][:60]} ({d['node'] or 'not placed yet'}): " + "; ".join(bits)
+    if t == "thinking.learned":
+        return (f"[think] {d['node']} learned its {d['thoughts']} thought{'s' if d['thoughts'] != 1 else ''}: "
+                f"tests {d['passed']}/{d['total']}" + ("" if d.get("ok") else " (some still fail; it keeps trying)"))
+    if t == "thinking.expressed":
+        return f"[think] {d['node']} added its thought on {d['topic'][:60]} after the answer to {d['order']}"
     if t == "objective.step":
         return f"[objective] {d['id']} {d['question']}: {d['line'][:150]}"
     if t == "objective.ruminated":

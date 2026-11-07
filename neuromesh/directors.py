@@ -490,7 +490,7 @@ class DirectorPool(Agent):
         if not plan.consult or not res.ok:
             return None
         route = res.route or ""
-        if route in ("tasks", "mind") or route.startswith("dream:") or res.served_by == "explicit" and not route.startswith("skill:"):
+        if route in ("tasks", "mind", "thinking") or route.startswith("dream:") or res.served_by == "explicit" and not route.startswith("skill:"):
             return None
         if route.startswith("tool:") and res.knowledge not in ("researched", "recalled"):
             return None  # tools are vetted, self-tested and run in the sandbox
@@ -755,7 +755,7 @@ class DirectorPool(Agent):
         max_attempts ways (one fewer when it is impatient). The first answer that works is the reply."""
         s = self.sys
         route = res.route or ""
-        if s.guardian.halted or route in ("tasks", "mind", "toolsmith", "objectives") or route.startswith("dream:"):
+        if s.guardian.halted or route in ("tasks", "mind", "thinking", "toolsmith", "objectives") or route.startswith("dream:"):
             return res
         ok, why = self.answered(order, res)
         if ok:

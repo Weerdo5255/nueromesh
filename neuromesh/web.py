@@ -116,6 +116,8 @@ def mesh(system) -> dict:
                  "recent": [h["line"] for h in list(sm.history)[-3:]]}
     return {"directors": directors, "toolsmith": toolsmith, "dreams": dreams, "director": director, "router": _family(s, DISPATCH), "routes": routes, "waiting": waiting, "engines": engines,
             "memory": memory, "memory_enabled": mem.enabled,
+            "thinking": [{"id": n.id, "thoughts": len(n.outputs) - 1, "status": n.status, "passed": n.passed, "total": n.total,
+                          "served": n.served, "spec": n.spec()} for n in s.thinking.nodes.values()] if s.thinking.enabled else [],
             "guard": {"checked": sum(a.decisions.values()), "changed": sum(v for k, v in a.decisions.items() if k != "pass"),
                       "held": len(a.held), "withheld": a.decisions.get("block", 0)} if a.enabled else None}
 

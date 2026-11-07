@@ -447,6 +447,50 @@ class ObjectivesPolicy:
 
 
 @dataclass
+class ThinkingPolicy:
+    """Thinking nodes: after the memory nodes, its thoughts in its own words, with its opinions and desires
+    (see thinking.py, P17)."""
+    enabled: bool = True
+    express: bool = True                    # add its thought after an answer from what it knows, when it adds something
+    form_seconds: float = 10.0              # how often it re-forms its thoughts from what its memory nodes hold
+    min_facts: int = 2                      # facts a topic needs for a thought (fewer if it wants to know more about it)
+    max_thoughts: int = 200
+    max_grounds: int = 12                   # facts one thought rests on
+    max_claims: int = 4                     # facts it puts together in one understanding
+    thoughts_per_node: int = 24
+    llm: bool = True                        # an LLM teacher may draft the understanding (checked against its facts)
+    threshold: float = 0.6                  # confidence a thinking node needs to bring up a thought
+    test_margin: float = 0.1
+    start_hidden: list = field(default_factory=lambda: [48])
+    max_hidden: int = 256
+    epochs: int = 400
+    probe_tests: int = 6                    # small talk, tools and skills its tests say it must not think about
+    max_negatives: int = 300
+    min_feelings: int = 2                   # facts read by the sentiment skill before it forms a favourable view
+    interested_after: int = 3               # times people ask about a topic before it says it is interested
+    desire_interest: float = 0.4            # interest at which it wants to know more about a topic it knows little of
+    enough_facts: int = 5
+    show: int = 40
+
+
+@dataclass
+class CuriosityPolicy:
+    """Curiosity: areas of interest and gaps in what it knows; the objectives the director may set itself
+    (see curiosity.py, P12, P16)."""
+    enabled: bool = True
+    interest_weight: float = 0.45
+    lack_weight: float = 0.45
+    both_weight: float = 0.4                # an area it is interested in and lacks information on matters most
+    min_interest: float = 0.3               # interest an area needs before "understand <area>" is an aim
+    min_lack: float = 0.25                  # what an area must lack (with no interest) before it is an aim
+    enough_facts: int = 5                   # facts about an area it is interested in that are enough for now
+    documents: int = 50                     # recent articles it looks at
+    links_per_document: int = 5
+    cache_seconds: float = 5.0
+    show: int = 20
+
+
+@dataclass
 class Directives:
     name: str = "NeuroMesh"
     mission: str = ""
@@ -470,6 +514,8 @@ class Directives:
     directors: DirectorsPolicy = field(default_factory=DirectorsPolicy)
     toolsmith: ToolsmithPolicy = field(default_factory=ToolsmithPolicy)
     objectives: ObjectivesPolicy = field(default_factory=ObjectivesPolicy)
+    thinking: ThinkingPolicy = field(default_factory=ThinkingPolicy)
+    curiosity: CuriosityPolicy = field(default_factory=CuriosityPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -497,6 +543,8 @@ class Directives:
             directors=build(DirectorsPolicy, d.get("directors")),
             toolsmith=build(ToolsmithPolicy, d.get("toolsmith")),
             objectives=build(ObjectivesPolicy, d.get("objectives")),
+            thinking=build(ThinkingPolicy, d.get("thinking")),
+            curiosity=build(CuriosityPolicy, d.get("curiosity")),
         )
 
     @classmethod
