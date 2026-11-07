@@ -1034,6 +1034,9 @@ class MemoryBank:
         for n in ready:
             top, conf = n.predict(x)
             i, c = int(top[0]), float(conf[0])
+            if hasattr(self.sys, "firings"):  # what each memory node fired on (anatomy.py)
+                from .anatomy import record
+                record(self.sys, n.id, "memory", text, n.answers[i] if i < len(n.answers) else str(i), c, used=False)
             if i == 0 or c < (self.pol.answer_threshold if threshold is None else threshold) or i >= len(n.answers):
                 continue
             answer = n.answers[i]
@@ -1043,6 +1046,11 @@ class MemoryBank:
                 continue
             if best is None or c > best.confidence:
                 best = Recall(n, answer, c, n.source_of(answer))
+        if best is not None and getattr(self.sys, "firings", None):
+            for f in reversed(self.sys.firings):
+                if f["node"] == best.node.id and f["text"] == str(text)[:300]:
+                    f["used"] = True
+                    break
         if best is not None and not quiet:
             best.node.served += 1
             self.stats["recalled"] += 1

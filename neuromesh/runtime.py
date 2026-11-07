@@ -15,6 +15,7 @@ import numpy as np
 
 from .activity import ActivityLog, ActivityTracker
 from .agency import AgencyTeacher, Director
+from .anatomy import record as record_firing
 from .directors import DirectorPool
 from .dreams import DreamBank, Dreamer
 from .agents import (Architect, Compressor, Curator, Evaluator, Explorer, Investigator, Orchestrator, Researcher,
@@ -115,6 +116,7 @@ class System:
         self.order_count = 0
         self.last_order_at = 0.0
         self.served: deque[str] = deque(maxlen=100)
+        self.firings: deque[dict] = deque(maxlen=400)  # what each node fired on lately (anatomy.py)
         self._enc_cache: OrderedDict[str, np.ndarray] = OrderedDict()
         self._enc_lock = threading.Lock()
         self._tasks: list[asyncio.Task] = []
@@ -212,16 +214,19 @@ class System:
         exclude = frozenset(spec.inactive_labels)
         node = self.registry.champion(cap)
         guess = None
+        fired = None
         if node is not None:
             label, conf = node.predict(self.encode(text), exclude)
             node.last_used = time.time()
             node.metrics["serves"] = node.metrics.get("serves", 0) + 1
             guess = (label, conf)
+            fired = record_firing(self, node.id, cap, text, label, conf, used=False)
             acc = node.metrics.get("holdout_acc")
             if (acc is not None and acc >= self.directives.nodes.serve_min_accuracy
                     and conf >= self.directives.orders.confidence_threshold):
                 if allow_teacher and learn and self.rng.random() < self.directives.orders.audit_sample_rate:
                     self._spot_check(cap, text, label, node)
+                fired["used"] = True
                 return Inference(label, conf, f"node:{node.id}", node.id, "node")
         if allow_teacher:
             lesson = await self.teachers.label(spec, text)

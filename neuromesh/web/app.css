@@ -164,6 +164,82 @@ main { padding: 18px 24px 40px; }
 .m-director.busy { stroke: var(--eosin); stroke-width: 2; }
 .m-director.wary { stroke: var(--warn); stroke-width: 2; }
 
+/* a closer look */
+.specimen-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0 0 8px; }
+.specimen-bar p { margin: 0; }
+#closer[aria-pressed="true"] { background: var(--hema-soft); border-color: var(--hema); color: var(--hema); font-weight: 600; }
+.specimen.closer [data-node] { cursor: pointer; }
+.specimen.closer [data-node]:hover, .specimen.closer [data-node]:focus-visible { stroke: var(--eosin); stroke-width: 2.5; outline: none; }
+.m-champ.sel, .m-chall.sel, .m-retired.sel, .m-mem.sel { stroke: var(--eosin); stroke-width: 3; }
+.m-champ.traced, .m-chall.traced, .m-mem.traced { filter: drop-shadow(0 0 4px var(--eosin)); }
+.m-edge.traced { stroke: var(--eosin); stroke-width: 2.6; }
+.microscope { margin-top: 26px; border-top: 1px solid var(--rule); padding-top: 18px; }
+.mic-head { max-width: 860px; }
+.mic-head p { margin: 4px 0 14px; }
+.mic-grid { display: grid; grid-template-columns: minmax(260px, 0.8fr) minmax(0, 2.2fr); gap: 28px; align-items: start; }
+.mic-orders { border-right: 1px solid var(--rule); padding-right: 22px; min-width: 0; }
+.mic-orders h3, .mic-node h3 { margin-bottom: 8px; }
+.traces { list-style: none; margin: 0; padding: 0; }
+.traces > li { border-bottom: 1px solid var(--rule); }
+button.trace { display: grid; gap: 2px; width: 100%; text-align: left; border: 0; border-radius: 0; background: none; padding: 8px 2px; cursor: pointer; }
+button.trace:hover .t-text { color: var(--hema); }
+button.trace.open .t-text { color: var(--hema); font-weight: 600; }
+.t-meta { color: var(--ink-3); font-size: 12.5px; }
+.hops { list-style: none; margin: 0 0 10px; padding: 0 0 0 4px; }
+.hops li { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; padding: 3px 0; font-size: 14px; position: relative; }
+.hops li > :nth-child(n+3) { grid-column: 2; }
+.hops li.here { background: var(--hema-soft); border-radius: 6px; }
+.hops li + li::before { content: ""; position: absolute; left: 9px; top: -6px; height: 9px; border-left: 1.5px solid var(--edge); }
+.hop-glyph { display: block; }
+.hop-glyph.you { color: var(--ink-3); text-align: center; }
+button.linkish { border: 0; background: none; padding: 0; color: var(--hema); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; text-align: left; }
+.mic-node .row { flex-wrap: wrap; }
+.mic-node .follow { display: inline-flex; align-items: center; gap: 6px; margin: 8px 0 12px; color: var(--ink-2); }
+.mic-node .follow input { width: auto; flex: none; margin: 0; }
+.mic-node form select { max-width: 280px; }
+.mic-node form input[type=text] { flex: 1; min-width: 200px; }
+.anat-wrap { overflow-x: auto; margin: 10px 0 6px; background: var(--panel); border: 1px solid var(--rule); border-radius: 12px; padding: 8px 4px; }
+svg.anat { display: block; width: 100%; min-width: 760px; height: auto; }
+.a-wire { stroke: var(--edge); stroke-width: .6; opacity: .45; }
+.a-cell { fill: var(--hema); fill-opacity: var(--fill, .6); stroke: var(--hema); stroke-width: 1; }
+.a-cell.input.exc { fill: var(--hema); stroke: var(--hema); }
+.a-cell.input.inh { fill: var(--eosin); stroke: var(--eosin); }
+.a-cell.output { fill: var(--ink-3); stroke: var(--ink-3); }
+.a-cell.output.chosen { fill: var(--eosin); stroke: var(--eosin); fill-opacity: 1; }
+.a-cell.path { stroke: var(--eosin); stroke-width: 2.4; }
+.a-syn { fill: none; stroke-linecap: round; }
+.a-syn.exc { stroke: var(--hema); }
+.a-syn.inh { stroke: var(--eosin); }
+.a-syn.path { stroke: var(--eosin); }
+.a-syn.exc.path { stroke: color-mix(in srgb, var(--eosin) 70%, var(--hema)); }
+.a-label { fill: var(--ink); font: 13px var(--sans); }
+.a-label.path, .a-label.chosen { fill: var(--eosin); font-weight: 600; }
+.a-tiny { fill: var(--ink-3); font: 10.5px var(--sans); }
+.a-tiny.path { fill: var(--eosin); font-weight: 600; }
+/* firing: the signal crosses the node layer by layer */
+.anat.fire .a-syn { stroke-dasharray: 1; stroke-dashoffset: 1; animation: conduct .45s ease-out forwards; animation-delay: var(--d, 0s); }
+.anat.fire .a-cell { animation: depolarise .3s ease-out both; animation-delay: var(--d, 0s); }
+.anat.fire .a-label, .anat.fire .a-tiny { animation: appear .3s ease-out both; animation-delay: var(--d, 0s); }
+@keyframes conduct { to { stroke-dashoffset: 0; } }
+@keyframes depolarise { from { fill-opacity: .05; stroke-opacity: .2; } }
+@keyframes appear { from { opacity: 0; } }
+.legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.legend .key { display: inline-block; width: 18px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+.legend .key.exc { background: var(--hema); }
+.legend .key.inh { background: var(--eosin); }
+.legend .key.path { background: var(--eosin); height: 5px; }
+.pushes h4, .mic-node h4 { font-size: 14px; margin: 14px 0 6px; }
+.push { display: grid; grid-template-columns: minmax(6em, 10em) minmax(80px, 260px) auto; gap: 10px; align-items: center; padding: 2px 0; font-size: 14px; }
+.push .bar { height: 6px; background: var(--rule); border-radius: 3px; overflow: hidden; }
+.push .bar b { display: block; height: 100%; }
+.push .bar b.exc { background: var(--hema); }
+.push .bar b.inh { background: var(--eosin); }
+.firings li { padding: 2px 0; }
+@media (prefers-reduced-motion: reduce) {
+  .anat.fire .a-syn { stroke-dasharray: none; stroke-dashoffset: 0; animation: none; }
+  .anat.fire .a-cell, .anat.fire .a-label, .anat.fire .a-tiny { animation: none; }
+}
+
 /* lists that are not cards */
 .work, .log, .rows { list-style: none; margin: 0; padding: 0; }
 .work li { display: grid; grid-template-columns: 1.2em minmax(0, 1fr) auto; gap: 8px; padding: 3px 0; font-size: 14px; }
@@ -270,6 +346,8 @@ dialog .row { margin-top: 14px; justify-content: flex-end; }
 
 @media (max-width: 1000px) {
   .live { grid-template-columns: minmax(0, 1fr); }
+  .mic-grid { grid-template-columns: minmax(0, 1fr); }
+  .mic-orders { border-right: 0; padding-right: 0; border-bottom: 1px solid var(--rule); padding-bottom: 14px; }
   .feed-col { border-left: 0; padding-left: 0; border-top: 1px solid var(--rule); padding-top: 16px; }
 }
 @media (max-width: 640px) {

@@ -72,6 +72,8 @@
     view: "live", logsTab: "activity", mindTab: "questions", lineageCap: "", memNode: null, memDetail: null, memTests: null,
     filter: { q: "", levels: new Set(), routine: true },
     extra: {}, extraAt: {}, open: new Set(), reports: {},
+    closer: store.get("closer", "") === "1", sel: { node: null, text: null, order: null }, trace: null, anat: null,
+    follow: store.get("follow", "1") === "1", fireSeq: 0,
     haltArmed: 0, meshKey: "", layerKey: "", geometry: null,
     history: JSON.parse(store.get("history", "[]") || "[]"), histPos: -1,
   };
@@ -309,7 +311,17 @@
     return sv("polygon", { points: `${x},${y - r} ${x + r},${y} ${x},${y + r} ${x - r},${y}`, class: cls }, sv("title", {}, tip));
   }
 
+  // a closer look: nodes can be picked, and the order being followed is marked on its path
+  function traced() {
+    const t = S.closer && S.trace ? (S.traces || []).find(x => x.order === S.trace) : null;
+    return t ? new Set(t.hops.map(hp => hp.node).filter(Boolean)) : new Set();
+  }
+  let TRACED = new Set();
+  function mark(id) { return (S.closer && S.sel.node === id ? " sel" : "") + (TRACED.has(id) ? " traced" : ""); }
+  function nodeAttrs(id) { return S.closer ? { "data-node": id, tabindex: 0, role: "button", "aria-label": `look inside ${id}` } : { "data-node": id }; }
+
   function drawMesh(m, width) {
+    TRACED = traced();
     const g = meshGeometry(m, width);
     const { X } = g;
     const svg = sv("svg", { viewBox: `0 0 ${g.W} ${g.H}`, width: g.W, height: g.H, role: "img",
@@ -322,7 +334,7 @@
       if (an) {
         const rr = Math.min(13, radius(an.params));
         if (dr.trusted) svg.append(sv("circle", { cx: X.router, cy: y, r: rr + 4, class: "m-champ-ring" }));
-        svg.append(sv("circle", { cx: X.router, cy: y, r: rr, class: dr.trusted ? "m-champ" : "m-chall" },
+        svg.append(sv("circle", { cx: X.router, cy: y, r: rr, class: (dr.trusted ? "m-champ" : "m-chall") + mark(an.id), ...nodeAttrs(an.id) },
           sv("title", {}, `agency node: ${nodeTip(an)}${dr.trusted ? "\nit chooses the director's mode" : "\nstill learning; the drive policy chooses"}`)));
       } else {
         svg.append(sv("circle", { cx: X.router, cy: y, r: 8, class: "m-none" }, sv("title", {}, "agency node: not built yet; the drive policy chooses")));
@@ -359,15 +371,16 @@
       svg.append(directorGlyph(dx, g.yMid, 6, { ...m.directors.nodes[0], id: "a director", doing: "takes every order before anything else touches it" }, m.directors));
       svg.append(sv("text", { x: dx, y: g.yMid + 22, "text-anchor": "middle", class: "m-dim" }, "director"));
     }
-    m.routes.forEach((r, i) => svg.append(sv("path", { d: routePath(g, i), class: "m-edge" + (r.inactive ? " inactive" : "") })));
+    m.routes.forEach((r, i) => svg.append(sv("path", { d: routePath(g, i), class: "m-edge" + (r.inactive ? " inactive" : "")
+      + (S.closer && S.trace && (S.traces || []).some(t => t.order === S.trace && t.route === r.route) ? " traced" : "") })));
     // the router
     const rc = m.router.champion;
     if (rc) {
       svg.append(sv("circle", { cx: X.router, cy: g.yMid, r: g.routerR + 4, class: "m-champ-ring" }));
-      svg.append(sv("circle", { cx: X.router, cy: g.yMid, r: g.routerR, class: "m-champ" }, sv("title", {}, nodeTip(rc))));
+      svg.append(sv("circle", { cx: X.router, cy: g.yMid, r: g.routerR, class: "m-champ" + mark(rc.id), ...nodeAttrs(rc.id) }, sv("title", {}, nodeTip(rc))));
       svg.append(sv("text", { x: X.router, y: g.yMid + g.routerR + 18, "text-anchor": "middle", class: "m-text" }, "router"));
       svg.append(sv("text", { x: X.router, y: g.yMid + g.routerR + 33, "text-anchor": "middle", class: "m-sub" }, `held-out ${pct(rc.holdout)}`));
-      m.router.candidates.forEach((c, j) => svg.append(sv("circle", { cx: X.router - 18 + j * 12, cy: g.yMid - g.routerR - 12, r: 4, class: "m-chall" }, sv("title", {}, "challenger " + nodeTip(c)))));
+      m.router.candidates.forEach((c, j) => svg.append(sv("circle", { cx: X.router - 18 + j * 12, cy: g.yMid - g.routerR - 12, r: 4, class: "m-chall" + mark(c.id), ...nodeAttrs(c.id) }, sv("title", {}, "challenger " + nodeTip(c)))));
     } else {
       svg.append(sv("circle", { cx: X.router, cy: g.yMid, r: 9, class: "m-none" }));
       svg.append(sv("text", { x: X.router, y: g.yMid + 28, "text-anchor": "middle", class: "m-sub" }, "router: not built yet"));
@@ -376,21 +389,22 @@
     // each route and what serves it
     m.routes.forEach((r, i) => {
       const y = g.y(i);
-      svg.append(sv("text", { x: X.label, y: y + 4.5, class: "m-route", "data-route": r.route }, cut(r.route, 26)));
+      const onPath = S.closer && S.trace && (S.traces || []).some(t => t.order === S.trace && t.route === r.route);
+      svg.append(sv("text", { x: X.label, y: y + 4.5, class: "m-route" + (onPath ? " hit" : ""), "data-route": r.route }, cut(r.route, 26)));
       const tx = X.target;
       if (r.skill) {
         const f = r.skill, c = f.champion;
         let x = tx + 14;
         if (c) {
           const rr = radius(c.params);
-          svg.append(sv("circle", { cx: x, cy: y, r: rr, class: "m-champ" }, sv("title", {}, nodeTip(c))));
+          svg.append(sv("circle", { cx: x, cy: y, r: rr, class: "m-champ" + mark(c.id), ...nodeAttrs(c.id) }, sv("title", {}, nodeTip(c))));
           x += rr + 9;
         } else {
           svg.append(sv("circle", { cx: x, cy: y, r: 7, class: "m-none" }));
           x += 16;
         }
-        f.candidates.forEach(n => { svg.append(sv("circle", { cx: x, cy: y, r: 4.5, class: "m-chall" }, sv("title", {}, "challenger " + nodeTip(n)))); x += 12; });
-        f.retired.forEach(n => { svg.append(sv("circle", { cx: x, cy: y, r: 4.5, class: "m-retired" }, sv("title", {}, "retired " + nodeTip(n)))); x += 12; });
+        f.candidates.forEach(n => { svg.append(sv("circle", { cx: x, cy: y, r: 4.5, class: "m-chall" + mark(n.id), ...nodeAttrs(n.id) }, sv("title", {}, "challenger " + nodeTip(n)))); x += 12; });
+        f.retired.forEach(n => { svg.append(sv("circle", { cx: x, cy: y, r: 4.5, class: "m-retired" + mark(n.id), ...nodeAttrs(n.id) }, sv("title", {}, "retired " + nodeTip(n)))); x += 12; });
         const t = sv("text", { x: x + 6, y: y + 4.5, class: "m-text" });
         const room = g.chars(x + 6);
         if (c) {
@@ -413,7 +427,7 @@
         const memNodes = m.memory.slice(-8);
         memNodes.forEach(n => {
           const rr = hexR(n.bytes);
-          svg.append(sv("polygon", { points: hexagon(x, y, rr), class: "m-mem" + (n.status === "learning" ? " learning" : "") },
+          svg.append(sv("polygon", { points: hexagon(x, y, rr), class: "m-mem" + (n.status === "learning" ? " learning" : "") + mark(n.id), ...nodeAttrs(n.id) },
             sv("title", {}, `${n.id}: ${n.facts} facts in ${bytes(n.bytes)}${n.first_bytes > n.bytes ? ` (first ${bytes(n.first_bytes)})` : ""}${n.parts > 1 ? `, merged from ${n.parts} nodes` : ""}\n${n.spec}\ntests ${n.passed}/${n.total}, served ${n.served}`)));
           x += rr * 2 + 4;
         });
@@ -448,7 +462,7 @@
         if (k) svg.append(sv("line", { x1: x - 34, x2: x - 12, y1: ly, y2: ly, class: "m-edge" }));
         if (st.director) svg.append(directorGlyph(x, ly, 6, { ...m.directors.nodes[0], id: "a director", doing: "reviews every result before you see it or memory keeps it" }, m.directors));
         else if (st.guard) svg.append(sv("rect", { x: x - 6, y: ly - 6, width: 12, height: 12, rx: 2, class: "m-tool" }));
-        else if (st.node) svg.append(sv("circle", { cx: x, cy: ly, r: 6.5, class: "m-champ" }, sv("title", {}, nodeTip(st.node))));
+        else if (st.node) svg.append(sv("circle", { cx: x, cy: ly, r: 6.5, class: "m-champ" + mark(st.node.id), ...nodeAttrs(st.node.id) }, sv("title", {}, nodeTip(st.node))));
         else svg.append(sv("circle", { cx: x, cy: ly, r: 6, class: "m-none" }, sv("title", {}, "no node yet")));
         const t = sv("text", { x: x + 12, y: ly + 4.5, class: "m-sub" }, st.label);
         svg.append(t);
@@ -511,7 +525,7 @@
   function renderSpecimen(m) {
     const host = $("#specimen");
     const width = Math.max(720, Math.floor(host.clientWidth - 18));
-    const key = JSON.stringify(m) + width;
+    const key = JSON.stringify(m) + width + (S.closer ? `|${S.sel.node}|${S.trace}|${(S.traces || []).length && S.traces[0].order}` : "");
     if (key === S.meshKey && host.querySelector("svg")) return;
     S.meshKey = key;
     const { svg, g } = drawMesh(m, width);
@@ -530,6 +544,239 @@
       if (oldLayer) oldLayer.replaceWith(layer); else stage.append(layer);
     }
   }
+
+  // ------------------------------------------------------------------ a closer look
+  const STAGE = { director: "director", router: "router", memory: "memory node", tool: "tool", knowledge: "retained knowledge",
+                  teacher: "teacher", affect: "affect", disposition: "disposition" };
+  function hopGlyph(hp) {
+    const g = sv("svg", { width: 18, height: 18, viewBox: "0 0 18 18", "aria-hidden": "true", class: "hop-glyph" });
+    if (hp.kind === "director") g.append(sv("polygon", { points: "9,2 16,9 9,16 2,9", class: "m-director" }));
+    else if (hp.kind === "memory") g.append(sv("polygon", { points: hexagon(9, 9, 7), class: "m-mem" }));
+    else if (hp.kind === "tool") g.append(sv("rect", { x: 3, y: 3, width: 12, height: 12, rx: 2, class: "m-tool" }));
+    else if (hp.kind === "node") g.append(sv("circle", { cx: 9, cy: 9, r: 6.5, class: "m-champ" }));
+    else g.append(sv("circle", { cx: 9, cy: 9, r: 6, class: "m-none" }));
+    return g;
+  }
+
+  function renderTraces(force) {
+    const host = $("#mic-traces");
+    const ts = S.traces;
+    const key = JSON.stringify([ts && ts.map(t => t.order), S.trace, S.sel.node, S.sel.order]);
+    if (!force && key === S.rendered.traces) return;
+    S.rendered.traces = key;
+    if (!ts) return fill(host, h("p", { class: "dim" }, "Loading…"));
+    if (!ts.length) return fill(host, h("p", { class: "dim" }, "No orders yet. Send one with the command bar and follow it here."));
+    fill(host, h("ol", { class: "traces" }, ts.map(t => {
+      const open = t.order === S.trace;
+      const row = h("button", { type: "button", class: "trace" + (open ? " open" : ""), "aria-expanded": String(open),
+        onclick: () => { S.trace = open ? null : t.order; if (!open) followTrace(t); renderTraces(true); renderSpecimen(S.dash.mesh); } },
+        h("span", { class: "t-text" }, cut(t.text, 64)),
+        h("span", { class: "t-meta" }, `${clock(t.ts)}, ${t.route || "no route"}${t.ok ? "" : ", not fulfilled"}, ${t.latency_ms ?? "–"} ms`));
+      const hops = open ? h("ol", { class: "hops" }, t.hops.map(hp => {
+        const name = hp.node || hp.tool || STAGE[hp.stage] || hp.stage;
+        const what = [hp.stage !== "director" && hp.stage !== hp.node ? STAGE[hp.stage] || hp.stage : null,
+          hp.label ? `“${cut(hp.label, 48)}”` : null, hp.confidence != null ? pct(hp.confidence) : null,
+          hp.kind === "teacher" ? `(${cut(hp.how || "a teacher", 30)})` : null].filter(Boolean).join(" ");
+        const lookable = hp.node && (hp.kind === "node" || hp.kind === "memory");
+        const here = lookable && hp.node === S.sel.node && (hp.input || t.text) === S.sel.text;
+        return h("li", { class: here ? "here" : "" }, hopGlyph(hp),
+          lookable ? h("button", { type: "button", class: "linkish", title: `Look inside ${hp.node} as it fired on this order`,
+            onclick: () => selectNode(hp.node, hp.input || t.text, t.order) }, name) : h("span", {}, name),
+          h("span", { class: "dim small" }, ` ${what}`));
+      }), h("li", {}, h("span", { class: "hop-glyph you", "aria-hidden": "true" }, "→"), h("span", {}, "you"))) : null;
+      return h("li", {}, row, hops);
+    })));
+  }
+
+  function followTrace(t) {
+    const hp = t.hops.find(x => x.node && (x.kind === "node" || x.kind === "memory") && x.node === S.sel.node)
+      || t.hops.find(x => x.node && (x.kind === "node" || x.kind === "memory"));
+    if (hp) selectNode(hp.node, hp.input || t.text, t.order);
+  }
+
+  async function selectNode(id, text, order, pinned = false) {
+    S.sel = { node: id, text: text || null, order: order || null, pinned };  // pinned: a text you chose, not followed
+    S.fireSeq += 1;
+    const seq = S.fireSeq;
+    if (S.dash) renderSpecimen(S.dash.mesh);
+    renderTraces(true);
+    try {
+      const q = `/anatomy?node=${encodeURIComponent(id)}` + (text ? `&text=${encodeURIComponent(text)}` : "&latest=1");
+      const a = await api(q);
+      if (seq !== S.fireSeq) return;  // a newer pick won
+      S.anat = a;
+      if (!S.sel.text && a.fire) S.sel.text = a.fire.text;
+      renderAnatomy(true);
+    } catch (e) {
+      if (seq !== S.fireSeq) return;
+      S.anat = { error: e.message, id, capability: e.data?.capability };
+      renderAnatomy(true);
+    }
+  }
+
+  function nodeOptions() {
+    const st = S.dash?.status, m = S.dash?.mesh;
+    const groups = [];
+    if (st) for (const [cap, c] of Object.entries(st.capabilities)) {
+      const ids = [c.champion, ...(c.candidates || [])].filter(Boolean).map(n => ({ id: n.id, text: `${n.id} (${n.status})` }))
+        .concat((c.retired || []).map(id => ({ id, text: `${id} (retired)` })));
+      if (ids.length) groups.push({ label: cap === "dispatch" ? "router" : cap, ids });
+    }
+    if (m?.memory?.length) groups.push({ label: "memory", ids: m.memory.map(n => ({ id: n.id, text: `${n.id} (${n.facts} facts)` })) });
+    return groups;
+  }
+
+  function anatomySvg(a) {
+    const f = a.fire;
+    const W = 980, padL = 200, padR = 250, top = 34;
+    if (!f) {  // its construction only: layer by layer, fully connected
+      const cols = a.sizes.length, H = 230;
+      const x = k => padL + (k * (W - padL - padR)) / Math.max(1, cols - 1);
+      const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, class: "anat", role: "img", "aria-label": `${a.id}: ${a.sizes.join(" to ")} neurons, fully connected` });
+      const dots = a.sizes.map(n => Math.min(n, 9));
+      a.sizes.forEach((n, k) => {
+        const ys = Array.from({ length: dots[k] }, (_, i) => top + 20 + (i * (H - top - 50)) / Math.max(1, dots[k] - 1));
+        if (k < cols - 1) {
+          const nxt = Array.from({ length: dots[k + 1] }, (_, i) => top + 20 + (i * (H - top - 50)) / Math.max(1, dots[k + 1] - 1));
+          ys.forEach(y1 => nxt.forEach(y2 => svg.append(sv("line", { x1: x(k), y1, x2: x(k + 1), y2, class: "a-wire" }))));
+        }
+        ys.forEach(y => svg.append(sv("circle", { cx: x(k), cy: y, r: 5, class: "a-cell" })));
+        svg.append(sv("text", { x: x(k), y: top - 12, "text-anchor": "middle", class: "m-sub" },
+          k === 0 ? `${num(n)} inputs` : k === cols - 1 ? `${n} outputs` : `${n} hidden (ReLU)`));
+      });
+      return svg;
+    }
+    const L = f.layers, cols = L.length;
+    const rows = Math.max(...L.map(l => l.shown.length));
+    const H = top + 30 + rows * 24;
+    const x = k => padL + (k * (W - padL - padR)) / Math.max(1, cols - 1);
+    const ys = L.map(l => { const n = l.shown.length, span = (rows - 1) * 24, off = (span - (n - 1) * 24) / 2;
+      return new Map(l.shown.map((u, i) => [u.i, top + 26 + off + i * 24])); });
+    const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, class: "anat fire", role: "img",
+      "aria-label": `${a.id} fired on “${f.text}”: ${L.map(l => `${l.active} of ${l.size} ${l.kind}`).join(", ")}; it chose ${f.chosen.label}` });
+    const step = 0.42;
+    L.forEach((l, k) => svg.append(sv("text", { x: x(k), y: top - 12, "text-anchor": "middle", class: "m-sub" },
+      l.kind === "input" ? `inputs: ${l.active} of ${num(l.size)} active` : l.kind === "hidden" ? `hidden ${k}: ${l.active} of ${l.size} fired` : `outputs (${l.size})`)));
+    // synapses: activation x weight; excitatory or inhibitory; the strongest path drawn last
+    const maxSig = {};
+    f.synapses.forEach(sy => { maxSig[sy.layer] = Math.max(maxSig[sy.layer] || 1e-9, Math.abs(sy.signal)); });
+    const syns = f.synapses.slice().sort((p, q) => (p.path - q.path) || (Math.abs(p.signal) - Math.abs(q.signal)));
+    for (const sy of syns) {
+      const y1 = ys[sy.layer].get(sy.from), y2 = ys[sy.layer + 1].get(sy.to);
+      if (y1 === undefined || y2 === undefined) continue;
+      const rel = Math.abs(sy.signal) / maxSig[sy.layer];
+      const x1 = x(sy.layer) + 7, x2 = x(sy.layer + 1) - 7, mid = (x1 + x2) / 2;
+      svg.append(sv("path", { d: `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`, pathLength: 1,
+        class: `a-syn ${sy.signal >= 0 ? "exc" : "inh"}${sy.path ? " path" : ""}`,
+        style: `stroke-width:${(sy.path ? 1.6 : 0.5) + 3.4 * rel};opacity:${(sy.path ? 0.95 : 0.18 + 0.6 * rel).toFixed(2)};--d:${(0.15 + sy.layer * step).toFixed(2)}s` },
+        sv("title", {}, `synapse ${sy.layer === 0 ? "#" + sy.from : "h" + sy.from} → ${sy.layer + 1 === cols - 1 ? L[cols - 1].shown.find(o => o.i === sy.to)?.label : "h" + sy.to}: weight ${sy.weight >= 0 ? "+" : ""}${sy.weight}, signal ${sy.signal >= 0 ? "+" : ""}${sy.signal} (${sy.signal >= 0 ? "excitatory" : "inhibitory"})${sy.path ? "; on the strongest path" : ""}`)));
+    }
+    // neurons
+    L.forEach((l, k) => {
+      const maxV = Math.max(1e-9, ...l.shown.map(u => Math.abs(l.kind === "input" ? u.attr : l.kind === "output" ? u.prob : u.value)));
+      l.shown.forEach(u => {
+        const y = ys[k].get(u.i), onPath = f.path[k] === u.i;
+        const v = l.kind === "input" ? u.attr : l.kind === "output" ? u.prob : u.value;
+        const rel = Math.abs(v) / maxV;
+        const cls = `a-cell ${l.kind}${l.kind === "input" ? (u.attr >= 0 ? " exc" : " inh") : ""}${onPath ? " path" : ""}${l.kind === "output" && u.i === f.chosen.i ? " chosen" : ""}`;
+        const tip = l.kind === "input" ? `input #${u.i} = ${u.value}: ${u.features.join(", ") || "(collisions only)"}\npushes the answer ${u.attr >= 0 ? "towards" : "away from"} ${f.chosen.label} (${u.attr >= 0 ? "+" : ""}${u.attr})`
+          : l.kind === "hidden" ? `h${u.i}: fired at ${u.value}` : `${u.label}: ${pct(u.prob)} (logit ${u.logit})`;
+        svg.append(sv("circle", { cx: x(k), cy: y, r: 4 + 4 * rel, class: cls,
+          style: `--fill:${(0.25 + 0.75 * rel).toFixed(2)};--d:${(k * step).toFixed(2)}s` }, sv("title", {}, tip)));
+        if (l.kind === "input") svg.append(sv("text", { x: x(k) - 14, y: y + 4, "text-anchor": "end", class: "a-label" + (onPath ? " path" : ""),
+          style: `--d:${(k * step).toFixed(2)}s` }, cut(u.features[0] || `#${u.i}`, 24)));
+        else if (l.kind === "output") svg.append(sv("text", { x: x(k) + 14, y: y + 4, class: "a-label" + (u.i === f.chosen.i ? " chosen" : ""),
+          style: `--d:${(k * step).toFixed(2)}s` }, `${cut(u.label, 28)} ${pct(u.prob)}`));
+        else if (onPath) svg.append(sv("text", { x: x(k), y: y - 11, "text-anchor": "middle", class: "a-tiny path", style: `--d:${(k * step).toFixed(2)}s` }, `h${u.i}`));
+      });
+    });
+    return svg;
+  }
+
+  function renderAnatomy(fresh) {
+    const host = $("#mic-anatomy");
+    if (!fresh && busy(host)) return;
+    const a = S.anat;
+    const groups = nodeOptions();
+    const pick = h("select", { "aria-label": "Node to look inside", onchange: e => selectNode(e.target.value, S.sel.text) },
+      h("option", { value: "", disabled: true, selected: !S.sel.node }, "Pick a node…"),
+      groups.map(g => h("optgroup", { label: g.label }, g.ids.map(o => h("option", { value: o.id, selected: o.id === S.sel.node }, o.text)))));
+    const probe = h("input", { type: "text", placeholder: "Fire it with any text", "aria-label": "Text to fire the node with", value: "" });
+    const form = h("form", { class: "row", onsubmit: e => { e.preventDefault(); if (S.sel.node && probe.value.trim()) selectNode(S.sel.node, probe.value.trim(), null, true); } },
+      pick, probe, h("button", { type: "submit", disabled: !S.sel.node }, "Fire"));
+    const follow = h("label", { class: "follow small" }, h("input", { type: "checkbox", checked: S.follow,
+      onchange: e => { S.follow = e.target.checked; store.set("follow", S.follow ? "1" : "0"); if (S.follow) S.sel.pinned = false; } }),
+      S.sel.pinned && S.follow ? "Follow new orders through this node (paused while you look at your own text)" : "Follow new orders through this node");
+    if (!a) return fill(host, h("h3", {}, "Inside a node"), form, h("p", { class: "dim" }, "Pick a node above, click one in the network, or open an order on the left."));
+    if (a.error) return fill(host, form, h("h3", {}, a.id), h("p", {}, a.error),
+      a.capability ? h("button", { type: "button", onclick: () => selectNode(a.capability, S.sel.text, S.sel.order) },
+        `Look inside the node that serves ${a.capability === "dispatch" ? "the router" : a.capability} now`) : null);
+    const f = a.fire;
+    const head = h("div", {},
+      h("h3", {}, `${a.id} `, h("span", { class: "dim small" }, `${a.capability === "dispatch" ? "the router" : a.capability}, ${a.status}`)),
+      h("p", { class: "small" }, `${a.sizes.map(num).join(" → ")} neurons, ${num(a.params)} weights. ${a.encoder}; ${a.activation}.` +
+        (a.holdout != null ? ` Held-out ${pct(a.holdout)}.` : "") + (a.tests ? ` Tests ${a.tests}.` : "") +
+        (a.generation ? ` Generation ${a.generation}${a.parent ? `, from ${a.parent}` : ""}.` : "")));
+    const replay = f ? h("button", { type: "button", class: "quiet small", onclick: () => renderAnatomy(true) }, "Fire again") : null;
+    const fired = f ? h("p", {}, "Fired on ", h("b", {}, `“${cut(f.text, 120)}”`), a.text_from ? h("span", { class: "dim" }, ` (${a.text_from})`) : null,
+      `: ${f.features} features hashed onto its inputs; it chose `, h("b", {}, f.chosen.label), ` (${pct(f.chosen.prob)}). `, replay) : null;
+    const words = f && f.words.length ? h("div", { class: "pushes" }, h("h4", {}, "Words that pushed it"),
+      h("ul", { class: "rows" }, f.words.slice(0, 10).map(w => h("li", { class: "push" },
+        h("span", { class: "w" }, w.word), h("span", { class: "bar" }, h("b", { class: w.push >= 0 ? "exc" : "inh", style: `width:${Math.min(100, Math.abs(w.push) * 100).toFixed(1)}%` })),
+        h("span", { class: "dim small" }, `${w.push >= 0 ? "+" : "−"}${Math.abs(w.push * 100).toFixed(0)}%`))))) : null;
+    const pathText = f && f.path.length ? h("p", { class: "small" }, h("b", {}, "Strongest path: "),
+      [`input #${f.path[0]} (${f.layers[0].shown.find(u => u.i === f.path[0])?.features[0] || "collisions"})`,
+       ...f.path.slice(1, -1).map(i => `h${i}`), f.chosen.label].join(" → "),
+      h("span", { class: "dim" }, `; signal ${f.path_signal.map(v => (v >= 0 ? "+" : "") + v.toFixed(3)).join(", ")} (activation × weight at each synapse)`)) : null;
+    const layers = h("table", { class: "tbl small" }, h("thead", {}, h("tr", {}, ["Layer", "Synapses", "Mean |w|", "Largest", "Near zero", "Excitatory"].map((t, i) => h("th", { class: i ? "n" : null }, t)))),
+      h("tbody", {}, a.layers.map((l, k) => h("tr", {}, h("td", {}, `${num(l.from)} → ${num(l.to)}${k === a.layers.length - 1 ? " (output)" : ""}`), h("td", { class: "n" }, num(l.weights)),
+        h("td", { class: "n" }, l.mean_abs.toFixed(4)), h("td", { class: "n" }, l.max_abs.toFixed(3)), h("td", { class: "n" }, pct(l.near_zero)), h("td", { class: "n" }, pct(l.excitatory))))));
+    const firings = a.firings.length ? h("ul", { class: "rows small firings" }, a.firings.slice(0, 8).map(x => h("li", {},
+      h("button", { type: "button", class: "linkish", onclick: () => selectNode(a.id, x.text, null, true) }, `“${cut(x.text, 56)}”`),
+      h("span", { class: "dim" }, ` ${clock(x.ts)} → ${cut(x.label, 30)} ${pct(x.confidence)}${x.used === true ? ", used" : x.used === false ? ", not used" : ""}`)))) : h("p", { class: "dim small" }, "It has not fired on anything since NeuroMesh started.");
+    fill(host, form, follow, head, h("div", { class: "anat-wrap" }, anatomySvg(a)), fired,
+      f ? h("p", { class: "small dim legend" }, h("span", { class: "key exc" }), "excitatory (pushes the next neuron up)  ", h("span", { class: "key inh" }), "inhibitory  ",
+        h("span", { class: "key path" }), "the strongest path. Line width: activation × weight. Showing the most telling of each layer.") : h("p", { class: "dim small" }, "Fire it with some text to see which synapses carry the signal."),
+      pathText, words,
+      h("details", {}, h("summary", {}, "Its weights, layer by layer"), layers),
+      h("h4", {}, "What it fired on lately"), firings);
+  }
+
+  function renderMicroscope() {
+    const on = S.closer;
+    const mic = $("#microscope");
+    mic.hidden = !on;
+    const btn = $("#closer");
+    btn.setAttribute("aria-pressed", String(on));
+    btn.textContent = on ? "Closer look: on" : "Closer look";
+    $("#specimen").classList.toggle("closer", on);
+    $("#specimen-hint").textContent = on ? "Click a node to look inside it; open an order below to follow its path." : "Hover a node for its shape and scores.";
+    if (!on) return;
+    renderTraces(false);
+    if (!S.sel.node && S.dash && S.traces) {  // start with the newest order, at its first node
+      const t = S.traces[0];
+      if (t) { S.trace = t.order; followTrace(t); }
+      else if (S.dash.mesh.router.champion) selectNode(S.dash.mesh.router.champion.id, null);
+    }
+    if (!$("#mic-anatomy").hasChildNodes()) renderAnatomy(true);
+  }
+
+  $("#closer").addEventListener("click", () => {
+    S.closer = !S.closer;
+    store.set("closer", S.closer ? "1" : "");
+    if (S.dash) { renderSpecimen(S.dash.mesh); renderMicroscope(); refreshExtra(true); }
+  });
+  function pickFromSpecimen(e) {
+    if (!S.closer) return;
+    const el = e.target.closest("[data-node]");
+    if (!el || (e.type === "keydown" && e.key !== "Enter" && e.key !== " ")) return;
+    e.preventDefault();
+    selectNode(el.dataset.node, null);
+    const mic = $("#microscope");
+    if (mic.getBoundingClientRect().top > window.innerHeight - 120) mic.scrollIntoView({ behavior: reduceMotion() ? "auto" : "smooth", block: "start" });
+  }
+  $("#specimen").addEventListener("click", pickFromSpecimen);
+  $("#specimen").addEventListener("keydown", pickFromSpecimen);
 
   // ------------------------------------------------------------------ live view
   function renderWork(w) {
@@ -607,6 +854,7 @@
   function renderLive() {
     const d = S.dash;
     renderSpecimen(d.mesh);
+    renderMicroscope();
     renderWork(d.work);
     renderLiveLog();
     renderAttention(d.status);
@@ -1249,6 +1497,20 @@
     const due = (key, ms) => force || !S.extraAt[key] || now - S.extraAt[key] > ms;
     const get = async (key, path) => { S.extraAt[key] = now; try { S.extra[key] = await api(path); } catch { /* shown on the next poll */ } };
     const jobs = [];
+    if (S.view === "live" && S.closer && due("traces", 2000)) {
+      jobs.push((async () => {
+        S.extraAt.traces = now;
+        try {
+          const before = S.traces?.[0]?.order;
+          S.traces = (await api("/traces?n=12")).traces;
+          const newest = S.traces[0];
+          if (S.follow && !S.sel.pinned && newest && newest.order !== before && before !== undefined && S.sel.node) {
+            const hp = newest.hops.find(x => x.node === S.sel.node);
+            if (hp) { S.trace = newest.order; selectNode(S.sel.node, hp.input || newest.text, newest.order); }
+          }
+        } catch { /* next poll */ }
+      })());
+    }
     if (S.view === "mind" && S.mindTab === "objectives") {
       for (const key of S.open) {
         if (!key.startsWith("report:")) continue;

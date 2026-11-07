@@ -45,6 +45,10 @@
   <section class="view" id="view-live">
     <div class="live">
       <div class="specimen-col">
+        <div class="specimen-bar">
+          <p class="small dim" id="specimen-hint">Hover a node for its shape and scores.</p>
+          <button type="button" id="closer" class="small" aria-pressed="false" aria-controls="microscope">Closer look</button>
+        </div>
         <div class="specimen" id="specimen"><div class="empty">Waiting for NeuroMesh…</div></div>
         <div id="attention"></div>
         <div id="goals"></div>
@@ -56,6 +60,17 @@
         <ol class="log" id="live-log"></ol>
       </aside>
     </div>
+    <section class="microscope" id="microscope" hidden aria-labelledby="microscope-title">
+      <div class="mic-head">
+        <h2 id="microscope-title">A closer look</h2>
+        <p class="small dim">Orders hop from node to node. Pick an order to follow its path, or a node to look inside it:
+          its layers, the synapses that carried the signal for one input, and the words that pushed it to its answer.</p>
+      </div>
+      <div class="mic-grid">
+        <div class="mic-orders"><h3>Orders, hop by hop</h3><div id="mic-traces"></div></div>
+        <div class="mic-node" id="mic-anatomy"></div>
+      </div>
+    </section>
   </section>
 
   <section class="view" id="view-nodes" hidden>

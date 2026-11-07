@@ -42,6 +42,9 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
                                   stance its mood gives them, recent reviews, what memory was not given
   /directors spawn | retire <id>  add a duplicate director now, or retire one (never director-0)
   /directors attempts <n>         how many ways a director tries an unanswered order before it gives up
+  /anatomy <node> [:: text]       how a node is built (layers, synapses), and what fires in it for a text;
+                                  <node> is a node id, a memory node id, or a skill (its serving node)
+  /traces                         the paths recent orders took through the mesh, node by node
   /objectives                     long-term objectives: their plans, progress, what it found, second thoughts
   /objective <what>               set one (also as an order: "objective: understand the Berlin Wall")
   /objective show|report|pause|resume|remove|think <id>    a plan and its answers; the write-up; think it over now
@@ -686,6 +689,18 @@ async def execute(system, line: str) -> Output:
             out = directors_command(system, rest)
         elif cmd in ("toolsmith", "coder"):
             out = await toolsmith_command(system, rest)
+        elif cmd == "anatomy":
+            from . import anatomy
+            ref, _, text = rest.partition("::")
+            out = anatomy.lines(system, ref.strip() or "dispatch", text.strip() or None)
+        elif cmd == "traces":
+            from . import anatomy
+            out = []
+            for t in anatomy.traces(system, 8):
+                hops = " -> ".join((h.get("node") or h.get("tool") or h["stage"]) + (f" [{h['label']}]" if h.get("label") and h["stage"] not in ("director",) else "")
+                                   for h in t["hops"])
+                out.append(f"  {t['order']} '{t['text'][:50]}': {hops}")
+            out = out or ["  no orders yet"]
         elif cmd in ("objective", "objectives", "ruminate"):
             out = await objective_command(system, cmd, rest)
         elif cmd in ("memorize", "memorise", "remember"):

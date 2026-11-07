@@ -1031,6 +1031,7 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /dreams    /sleep    /wake    /imagine a city on Mars    what if Ada Lovelace painted the Mona Lisa
 /directors    /directors spawn    /directors retire director-1    /directors attempts 5
 make a tool that reverses text    /toolsmith    /toolsmith build count the vowels    /toolsmith show reverser    /toolsmith try reverser    /toolsmith recipes
+/traces    /anatomy dispatch :: what is 12 * 7    /anatomy sentiment :: the hotel was lovely    /anatomy mem-0001 :: what is the capital of Australia?
 objective: understand the Berlin Wall    /objectives    /objective show obj-1    /objective report obj-1    /objective think obj-1    /objective obj-1 ask when was it built    /ruminate
 solve x^2 - 5x + 6 = 0    derivative of ln(x^2+1)    integrate x^2 from 0 to 3    is 91 prime
 /memorize What is the capital of Australia? :: Canberra is the capital of Australia.    /memory    /memory mem-0001    /memory test    /memory merge    /memory forget <question>
@@ -1053,6 +1054,19 @@ it next to the live console, run `python -m neuromesh run --web` (or `--web 9000
   engines every answer passes on its way out. Each order pulses along the route it took. Beside
   it: the work in progress and the activity log. Below it: what is waiting for you (approvals,
   questions, lessons) and the directive goals. Hover a node for its shape, size and scores.
+  **Closer look** (the button above the network; it stays on until you turn it off) opens a
+  detailed view below it. *Orders, hop by hop*: each recent order's path through the mesh, the
+  director that took it, the router node and the route it chose, the skill node, tool or memory
+  node that served it, the emotional engines, the director that reviewed it, each with what it
+  decided and how sure it was; the order you open is traced on the network above. *Inside a node*:
+  click any node in the network, a hop, or pick one, and see how it is built (input features,
+  hidden ReLU layers, output labels, its weights layer by layer) and what fired in it for that
+  order's input, or any text you give it: the active inputs and the words, word pairs and letter
+  trigrams hashed onto them, the neurons each layer fired, the synapses that carried the most
+  signal (line width is activation × weight; excitatory and inhibitory in two colours), the
+  strongest path from an input to its answer, and which words pushed it towards that answer or
+  away from it (gradient × input). The signal crosses the drawing layer by layer when it fires
+  (not with reduced motion). It can follow new orders through the node you are looking at.
 - **Nodes**: every capability's champion, challengers, held-out accuracy and generation, the
   champion's size over its generations, roll back; what each agent has done.
 - **Memory**: memory nodes with their size now and when first learned, teach a fact, run every
@@ -1118,6 +1132,8 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | GET | `/directors` | the director nodes, their stance, recent reviews, what was kept out of memory |
 | POST | `/directors` | `{"action": "spawn"}`, `{"action": "retire", "id": "director-1"}`, or `{"attempts": 5}` |
 | GET | `/toolsmith` | the coder node, the tools it wrote (drafts awaiting approval, installed, proven), unmet requests it could write a tool for, recent work |
+| GET | `/anatomy` | `?node=<node id, memory node id or skill>&text=...`: how the node is built, and what fires in it for the text (`&latest=1`: what it fired on last); 410 for a node evolution has disposed of |
+| GET | `/traces` | `?n=15`: the paths recent orders took through the mesh, hop by hop, with each node, its decision and its input |
 | GET | `/objectives` | every objective with its plan, answers and thoughts, second thoughts, the step budget; `?id=obj-1` gives its write-up |
 | POST | `/objectives` | `{"text": "understand jazz"}` sets one; `{"id": "obj-1", "action": "pause" \| "resume" \| "remove" \| "think"}`; `{"id": "obj-1", "ask": "..."}` adds a question; `{"ruminate": true}` has second thoughts now |
 | POST | `/toolsmith` | `{"build": "reverse a word"}` writes a tool and asks permission; `{"try": "reverser"}` experiments with one it made. Approve a draft with `POST /approve` |
@@ -1422,11 +1438,12 @@ neuromesh/
   toolsmith.py           the toolsmith: the coder teacher, writing, checking and offering tools, approval, experiments, refinement (P15)
   codelib.py             the code library: the building blocks made tools are written from, with probes to test them
   objectives.py          objectives: the planner teacher, plans, queries against itself, rumination, write-ups, second thoughts (P16)
+  anatomy.py             a closer look: the paths orders take, how a node is built, and which synapses fire for an input
   dreams.py              sleep and dreams: dream synthesis, dream nodes, waking review, their genetic algorithm, imagination (P13)
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   201 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   206 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -1445,6 +1462,8 @@ tests/                   201 tests: nodes, guardian, LLM wire formats and a mock
                          initiative that builds and experiments, the coder node taking over), objectives
                          (planning, queries against itself, echoes, contradictions settled, a person
                          asked, delegation, surveys, reading up, second thoughts, initiative, P1/P2),
+                         a closer look (a forward pass recorded faithfully: the strongest path, gradient ×
+                         input adding up to the logit; node and memory-node anatomy; order paths),
                          temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,
                          questions, proposals, investigations), background tasks, full system,

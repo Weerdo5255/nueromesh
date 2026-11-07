@@ -67,6 +67,22 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, system.dreams.status()
         if path == "/directors":
             return 200, system.directors.status()
+        if path == "/anatomy":  # ?node=<id or skill>&text=<input>: how a node is built, and what fires in it
+            from . import anatomy
+            ref = query.get("node", "")
+            a = anatomy.anatomy(system, ref, query.get("text") or None, latest=bool(query.get("latest")))
+            if a is not None:
+                return 200, a
+            meta = system.registry.lineage.get(ref)
+            if meta:  # it was here, and evolution moved on: its weights are gone
+                cap = meta.get("capability", "")
+                champ = system.registry.champion(cap)
+                return 410, {"error": f"{ref} has been {meta.get('status', 'disposed')} since; its weights are gone."
+                             + (f" {champ.id} serves {cap} now." if champ else ""), "capability": cap if champ else None}
+            return 404, {"error": "no such node (a node id, a memory node id, or a skill)"}
+        if path == "/traces":  # the paths recent orders took through the mesh, hop by hop
+            from . import anatomy
+            return 200, {"traces": anatomy.traces(system, min(50, int(query.get("n", 15))))}
         if path == "/toolsmith":
             return 200, system.toolsmith.status()
         if path == "/objectives":
