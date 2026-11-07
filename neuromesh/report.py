@@ -175,6 +175,11 @@ def describe_event(ev: Event) -> str | None:
         return f"[director] {d['director']} gave up on '{d['text'][:50]}' after {d['attempts']} attempts: {d['why'][:80]}"
     if t == "director.memory":
         return f"[director] {d['director']} did not store '{d['ask'][:60]}' in memory: {d['why']}"
+    if t == "answer.right":
+        return f"[feedback] {d['by']} says {d['order']} was right ('{d['text'][:60]}'): {d['learned'][:140] or 'noted'}"
+    if t == "answer.corrected":
+        which = "none of the alternatives" if d["verdict"] == "none" else f"alternative {d['verdict']}"
+        return f"[feedback] {d['by']} says {d['order']} was wrong ('{d['text'][:60]}'), {which}: {d['learned'][:140] or 'noted'}"
     if t == "objective.set":
         own = " (its own initiative)" if d.get("self_set") else ""
         return (f"[objective] {d['by']} set {d['id']}{own}: {d['text'][:80]} - {d['strategy']} strategy, "

@@ -429,6 +429,14 @@ class Affect:
         self._recent.append((now, key))
         return repeated
 
+    def expect_again(self, text: str) -> None:
+        """A person corrected (or confirmed) this answer and may well ask again to see what it says now:
+        that is checking, not nagging, so it does not count as a repeated request."""
+        key = " ".join(text.lower().split())
+        kept = [(ts, k) for ts, k in self._recent if k != key]
+        self._recent.clear()
+        self._recent.extend(kept)
+
     def _network(self, res) -> bool:
         if not (res.route or "").startswith("tool:"):
             return False

@@ -80,6 +80,9 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                 return 410, {"error": f"{ref} has been {meta.get('status', 'disposed')} since; its weights are gone."
                              + (f" {champ.id} serves {cap} now." if champ else ""), "capability": cap if champ else None}
             return 404, {"error": "no such node (a node id, a memory node id, or a skill)"}
+        if path == "/alternatives":  # ?order=<id>: the next most likely answers to an order, worked out now
+            alts = await system.corrections.alternatives(query.get("order", ""))
+            return (200, alts) if alts is not None else (404, {"error": "unknown order"})
         if path == "/traces":  # the paths recent orders took through the mesh, hop by hop
             from . import anatomy
             return 200, {"traces": anatomy.traces(system, min(50, int(query.get("n", 15))))}
@@ -210,6 +213,15 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                     return 409, {"ok": False, "message": f"{body['try']} is not an active tool it made"}
                 return 200, {"ok": True, "message": rep["line"], "results": rep.get("results", [])}
             return 400, {"error": 'give "build": "<what the tool should do>" or "try": "<tool>"'}
+        if path == "/correct":  # {"order_id", "verdict": "right"} or {"order_id", "verdict": "wrong", "choice": "a2"|"none", "answer"}
+            book, by, oid = system.corrections, body.get("by", "api"), str(body.get("order_id", ""))
+            if body.get("verdict") == "right":
+                ok, msg, learned = await book.right(oid, by)
+            elif body.get("verdict") == "wrong":
+                ok, msg, learned = await book.choose(oid, str(body.get("choice") or "none"), str(body.get("answer") or ""), by)
+            else:
+                return 400, {"error": 'give "verdict": "right", or "wrong" with "choice" (an alternative id, or "none")'}
+            return (200 if ok else 400), {"ok": ok, "message": msg, "learned": learned}
         if path == "/objectives":  # {"text": "..."} sets one; {"id", "action": pause|resume|remove|think}; {"id", "ask"}
             book, by = system.objectives, body.get("by", "api")
             if not book.enabled:

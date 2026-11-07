@@ -1042,7 +1042,12 @@ class Objectives:
         out = []
         now = time.time()
         done = set(self.reconsidered)
+        marked_wrong = set(getattr(getattr(s, "corrections", None), "wrong", []) or [])
         for oid, ts, text, res in s.store.recent_orders(80):
+            if oid in marked_wrong and oid not in done:  # a person said it was wrong: think it over again
+                out.append({"order": oid, "ts": ts, "text": text, "ok": False, "was": str(res.get("output") or ""),
+                            "confidence": float(res.get("confidence") or 0), "why": "you said it was wrong"})
+                continue
             if oid in done or now - ts < pol.second_thought_after_seconds or not is_question(text):
                 continue
             route = res.get("route") or ""
@@ -1072,7 +1077,10 @@ class Objectives:
             res = await s.orchestrator.fulfil(order)
             ok, _ = s.directors.answered(order, res)
             now_said = first_sentence(str(res.output), 200) if ok else ""
-            if ok and not d["ok"]:
+            if ok and d["why"] == "you said it was wrong" and agrees(d["was"], res.output):
+                verdict, text = "still cannot", (f"I thought again about '{d['text']}', but I still only come up with the "
+                                                 f"answer you said was wrong")
+            elif ok and not d["ok"]:
                 verdict, text = "now answers", f"I couldn't answer '{d['text']}' before; now I'd say: {now_said}"
             elif ok and agrees(d["was"], res.output):
                 verdict, text = "still thinks", f"I thought again about '{d['text']}' and still say: {now_said}"

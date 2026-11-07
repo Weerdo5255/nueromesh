@@ -895,6 +895,25 @@ class MemoryBank:
         answer, _ = restate(ask, [Hit(doc, "Introduction", doc.summary, 1.0, 1.0)])
         self.learn(ask, answer, f"{doc.source} '{doc.title}' {doc.url}", by="research", kind="knowledge")
 
+    def must_not_answer(self, node_id: str, ask: str, reason: str, by: str = "operator") -> bool:
+        """A person says a node's answer to a question was wrong: a fact it held for exactly that question
+        is forgotten, and the question becomes one it must not answer (an [[unknown]] test in its file)."""
+        node = self.nodes.get(node_id)
+        ask = " ".join(str(ask).split())
+        if node is None or not ask:
+            return False
+        if any(key(t.ask) == key(ask) for t in node.facts()):
+            self.forget(ask)
+            node = self.nodes.get(node_id)
+            if node is None:
+                return True
+        if any(_norm(u.ask) == _norm(ask) for u in node.unknowns):
+            return False
+        node.unknowns.append(Test(ask, reason=reason[:200] or "a person said its answer was wrong"))
+        self._changed(node)
+        self.sys.guardian.audit(by, "memory.must_not_answer", node.id, ask=ask[:200], reason=reason[:200])
+        return True
+
     def forget(self, ask: str) -> str | None:
         k = key(ask)
         for node in list(self.nodes.values()):

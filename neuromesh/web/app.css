@@ -112,6 +112,24 @@ input[type="text"], input[type="password"], input:not([type]), textarea, select 
 .answer .meta { color: var(--ink-3); font-size: 13px; margin-top: 6px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
 .answer pre { margin: 8px 0 0; white-space: pre-wrap; max-height: 50vh; overflow: auto; }
 .answer details { margin-top: 6px; font-size: 13px; color: var(--ink-2); }
+.check { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--rule); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 14px; }
+.check .q { color: var(--ink-2); }
+.check p { margin: 0; }
+.check .learned { color: var(--good); flex: 1; min-width: 240px; }
+.check form { width: 100%; }
+.check fieldset { border: 0; padding: 0; margin: 0 0 8px; display: grid; gap: 6px; }
+.check legend { color: var(--ink-2); margin-bottom: 6px; padding: 0; }
+.alt { display: grid; grid-template-columns: 1.4em minmax(0, 1fr) 90px; column-gap: 8px; align-items: center; padding: 6px 8px;
+  border: 1px solid var(--rule); border-radius: 8px; cursor: pointer; background: var(--slide); }
+.alt:has(input:checked) { border-color: var(--hema); background: var(--hema-soft); }
+.alt .a { font-weight: 600; overflow-wrap: anywhere; }
+.alt .why { grid-column: 2 / 4; color: var(--ink-3); font-size: 12.5px; }
+.alt .like { height: 5px; background: var(--rule); border-radius: 3px; overflow: hidden; }
+.alt .like b { display: block; height: 100%; background: var(--hema); }
+.alt.none { grid-template-columns: 1.4em auto minmax(0, 1fr); }
+.alt.none input[type=text] { min-width: 0; }
+.trace-answer { padding: 0 2px 6px; }
+.trace-answer .check { margin-top: 4px; }
 .answer details ul { margin: 4px 0 0; padding-left: 18px; }
 
 /* ------------------------------------------------------------------ nav */

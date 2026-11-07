@@ -303,6 +303,7 @@ def traces(system, n: int = 15) -> list[dict]:
             hops.append({"stage": "director", "node": res["director"], "label": res.get("review", "")[:80] or "reviewed it",
                          "kind": "director"})
         out.append({"order": oid, "ts": ts, "text": text[:200], "route": route, "ok": bool(res.get("ok")),
+                    "answer": _short(str(res.get("output") or res.get("note") or "").split("\n")[0], 200),
                     "confidence": res.get("confidence"), "served_by": res.get("served_by"),
                     "latency_ms": res.get("latency_ms"), "hops": hops})
     return out

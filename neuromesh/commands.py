@@ -23,6 +23,8 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /forget <article title>         drop a retained article
   /approvals                      pending approvals      /approve <id> [note]   /deny <id> [note]
   /questions                      questions waiting for a human teacher   /answer <qid> <label>
+  /correct <order-id>             was it right? lists the next most likely answers, worked out now
+  /correct <order-id> yes | a2 | none [:: the right answer]   it learns from what you say
   /feedback <order-id> <label>    correct an answer: a label, a route like tool:calculator, or the
                                   emotional engines with affect=<tone> / disposition=<action>
   /task learn <topic> [every 2m] [max 30]     keep studying a topic in the background
@@ -689,6 +691,20 @@ async def execute(system, line: str) -> Output:
             out = directors_command(system, rest)
         elif cmd in ("toolsmith", "coder"):
             out = await toolsmith_command(system, rest)
+        elif cmd == "correct":
+            book = system.corrections
+            head, _, typed = rest.partition("::")
+            parts = head.split()
+            by = os.environ.get("USER", "user")
+            if not parts:
+                out = ["  usage: /correct <order-id> [yes | a1 | none [:: the right answer]]"]
+            elif len(parts) == 1:
+                alts = await book.alternatives(parts[0])
+                out = book.lines(parts[0], alts) if alts else [f"  unknown order {parts[0]}"]
+            elif parts[1].lower() in ("yes", "right", "correct", "y"):
+                out = ["  " + (await book.right(parts[0], by))[1]]
+            else:
+                out = ["  " + (await book.choose(parts[0], parts[1].lower(), typed.strip(), by))[1]]
         elif cmd == "anatomy":
             from . import anatomy
             ref, _, text = rest.partition("::")

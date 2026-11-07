@@ -72,7 +72,7 @@
     view: "live", logsTab: "activity", mindTab: "questions", lineageCap: "", memNode: null, memDetail: null, memTests: null,
     filter: { q: "", levels: new Set(), routine: true },
     extra: {}, extraAt: {}, open: new Set(), reports: {},
-    closer: store.get("closer", "") === "1", sel: { node: null, text: null, order: null }, trace: null, anat: null,
+    closer: store.get("closer", "") === "1", sel: { node: null, text: null, order: null }, trace: null, anat: null, checks: new Map(),
     follow: store.get("follow", "1") === "1", fireSeq: 0,
     haltArmed: 0, meshKey: "", layerKey: "", geometry: null,
     history: JSON.parse(store.get("history", "[]") || "[]"), histPos: -1,
@@ -195,6 +195,54 @@
     $("#badge-status").textContent = pending ? String(pending) : "";
   }
 
+  // ------------------------------------------------------------------ was it right?
+  // Yes: the nodes that answered learn so. No: it offers the next most likely answers, worked out now,
+  // or none of them (and what is right, if you know); it learns from what you pick.
+  const UNCHECKED = ["tasks", "objectives", "toolsmith", "mind"];  // these hand work on rather than answer (corrections.py)
+  function answerCheck(orderId, text) {
+    const box = h("div", { class: "check", role: "group", "aria-label": "Was this answer right?" });
+    const upper = t => t.charAt(0).toUpperCase() + t.slice(1);
+    const again = () => text ? h("button", { type: "button", class: "quiet small", title: "Send the same order again",
+      onclick: () => { cmd.value = text; $("#command").requestSubmit(); } }, "Ask again") : null;
+    const thanks = r => fill(box, h("p", { class: "learned" }, r.learned?.length ? `Thanks. ${upper(r.learned.join("; "))}.` : "Thanks, noted."), again());
+    const ask = () => fill(box, h("span", { class: "q" }, "Was this right?"),
+      h("button", { type: "button", class: "small", onclick: e => act(e.target, () => api("/correct", { order_id: orderId, verdict: "right", by: "web" }),
+        r => { thanks(r); return "Marked right"; }) }, "Yes"),
+      h("button", { type: "button", class: "small", onclick: () => wrong() }, "No"));
+    async function wrong() {
+      fill(box, h("p", { class: "dim" }, "Working out the next most likely answers…"));
+      let alts;
+      try { alts = await api(`/alternatives?order=${encodeURIComponent(orderId)}`); }
+      catch (e) { fill(box, h("p", { class: "no" }, e.message), h("button", { type: "button", class: "quiet small", onclick: ask }, "Back")); return; }
+      const name = `alt-${orderId}`;
+      const typed = h("input", { type: "text", placeholder: "The right answer, if you know it", "aria-label": "The right answer, if you know it" });
+      const options = alts.alternatives.map((x, i) => h("label", { class: "alt" },
+        h("input", { type: "radio", name, value: x.id, checked: i === 0 }),
+        h("span", { class: "a" }, x.answer),
+        // square-root scale: a 1% long shot still shows, and a near-certain answer fills the bar
+        h("span", { class: "like", title: `How likely it found this: ${x.likelihood < 0.005 ? "under 1%" : pct(x.likelihood)}`, "aria-hidden": "true" },
+          h("b", { style: `width:${Math.max(2, Math.sqrt(x.likelihood) * 100).toFixed(1)}%` })),
+        h("span", { class: "why" }, `${x.source}; ${x.how}`)));
+      const none = h("label", { class: "alt none" }, h("input", { type: "radio", name, value: "none", checked: !alts.alternatives.length }),
+        h("span", { class: "a" }, "None of these"), typed);
+      typed.addEventListener("focus", () => { none.querySelector("input").checked = true; });
+      const form = h("form", { onsubmit: e => {
+        e.preventDefault();
+        const choice = form.querySelector(`input[name="${CSS.escape(name)}"]:checked`)?.value || "none";
+        act(form.querySelector("button[type=submit]"), () => api("/correct", { order_id: orderId, verdict: "wrong", choice,
+          answer: choice === "none" ? typed.value.trim() : "", by: "web" }), r => { thanks(r); return "Taught"; });
+      } },
+        h("fieldset", {}, h("legend", {}, alts.alternatives.length ? "Which is right? Its next most likely answers, best first:" : "It has no other answer to offer. Do you know the right one?"),
+          options, none),
+        h("div", { class: "row" }, h("button", { type: "submit", class: "primary small" }, "Teach it"),
+          h("button", { type: "button", class: "quiet small", onclick: ask }, "Cancel")));
+      fill(box, form);
+      form.querySelector("input[type=radio]:checked")?.focus();
+    }
+    ask();
+    return box;
+  }
+
   function setConn(ok, text) {
     const c = $("#conn");
     c.textContent = text;
@@ -270,6 +318,7 @@
     ];
     if (r.disposition) meta.push(h("span", {}, `temperament: ${r.disposition}`));
     kids.push(h("div", { class: "meta" }, meta, close));
+    if (r.order_id && !UNCHECKED.includes(r.route)) kids.push(answerCheck(r.order_id, a.text));
     if (r.trace?.length) kids.push(h("details", {}, h("summary", {}, "How it got there"), h("ul", {}, r.trace.map(t => h("li", {}, t)))));
     fill(box, kids);
   }
@@ -572,6 +621,14 @@
         onclick: () => { S.trace = open ? null : t.order; if (!open) followTrace(t); renderTraces(true); renderSpecimen(S.dash.mesh); } },
         h("span", { class: "t-text" }, cut(t.text, 64)),
         h("span", { class: "t-meta" }, `${clock(t.ts)}, ${t.route || "no route"}${t.ok ? "" : ", not fulfilled"}, ${t.latency_ms ?? "–"} ms`));
+      // the same check box is kept across redraws, so a half-made correction is not wiped by new orders arriving
+      const checkable = open && t.answer !== undefined && !UNCHECKED.includes(t.route);
+      if (checkable && !S.checks.has(t.order)) {
+        S.checks.set(t.order, answerCheck(t.order, t.text));
+        if (S.checks.size > 40) S.checks.delete(S.checks.keys().next().value);
+      }
+      const checked = checkable ? h("div", { class: "trace-answer" }, h("p", { class: "small" }, h("b", {}, "Answer: "), cut(t.answer || "(none)", 160)),
+        S.checks.get(t.order)) : null;
       const hops = open ? h("ol", { class: "hops" }, t.hops.map(hp => {
         const name = hp.node || hp.tool || STAGE[hp.stage] || hp.stage;
         const what = [hp.stage !== "director" && hp.stage !== hp.node ? STAGE[hp.stage] || hp.stage : null,
@@ -584,7 +641,7 @@
             onclick: () => selectNode(hp.node, hp.input || t.text, t.order) }, name) : h("span", {}, name),
           h("span", { class: "dim small" }, ` ${what}`));
       }), h("li", {}, h("span", { class: "hop-glyph you", "aria-hidden": "true" }, "→"), h("span", {}, "you"))) : null;
-      return h("li", {}, row, hops);
+      return h("li", {}, row, checked, hops);
     })));
   }
 

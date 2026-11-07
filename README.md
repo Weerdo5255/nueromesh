@@ -665,8 +665,10 @@ of orders at cold start to ~2% in steady state).
 
 ### Teachers
 Nodes never learn from themselves. They learn from:
-- **HumanTeacher**: corrections (`/feedback`), examples (`/teach`) and answers to questions
-  the system queues when nothing can label an input. Weighted highest.
+- **HumanTeacher**: whether an answer was right (the check under every answer, `/correct`),
+  corrections (`/feedback`), examples (`/teach`) and answers to questions the system queues when
+  nothing can label an input. Weighted highest, and what a person taught stands for that exact
+  wording at once.
 - **LLM teachers**: a language model labels inputs, writes synthetic training examples for
   the weakest labels, and answers open-ended orders no node or tool can handle. Use Claude
   (Anthropic API), a **local model on Ollama**, or any OpenAI-compatible server; configure
@@ -676,6 +678,34 @@ Nodes never learn from themselves. They learn from:
   data (see [Challenges](#challenges-open-source-llm-benchmarks-as-a-teacher)). Weighted just below
   a human.
 - **HeuristicTeacher**: an offline, lexicon-based stand-in so everything runs with no API key.
+
+### Was it right? Corrections and the next most likely answers
+Every answer (in the web interface, under the answer and in the closer look's orders) asks *Was
+this right?*
+
+- **Yes**: the nodes that gave it learn so. The router gets a human example for the route it chose,
+  the skill node for the label it gave, and a question answered from what it read or by a teacher
+  becomes a fact for a memory node, with its test.
+- **No**: it works out the next most likely answers there and then and lists them, best first, with
+  where each came from and how likely it found it: the other labels its skill node gave weight to,
+  the other routes the router gave weight to (each one actually run: the tool, the skill node, its
+  memory, what it has read), the other answers its memory nodes hold for the question, what it has
+  read about it, and a teacher's answer (with an LLM teacher). With few nodes trained, the long
+  shots are still offered. A route you named yourself (`sentiment: ...`) is not second-guessed.
+- Pick the right one and it learns from it: a route or label becomes a human example for the router
+  or the skill node; an answer becomes a fact for a memory node.
+- **None of these**: say what is right if you know. A route or a label teaches the node; anything
+  else becomes a fact for a memory node, and if the route it took gave nothing, the router learns
+  that questions like it are answered directly. If a memory node gave the wrong answer and you do
+  not know the right one, that node learns not to answer the question (an `[[unknown]]` test). If
+  no one knows yet, it stays an open question: it asks you (reply `answer: ...` when you find
+  out), keeps it among the requests it could not meet (the Investigator and the toolsmith look into
+  those), and thinks it over again in its second thoughts.
+
+What a person teaches stands at once for exactly that wording (a person's label beats a node's
+guess, P1), and the nodes train on it in the background so that wordings like it come out right
+too. It survives restarts. In the console: `/correct <order>` lists the alternatives, then
+`/correct <order> yes`, `/correct <order> a2`, or `/correct <order> none :: the right answer`.
 
 ### Temperament: emotional engines that never lie
 Every answer passes two more neural nodes on its way to the user. They are internal
@@ -1017,6 +1047,7 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /status    /lineage    /tools    /teachers
 /approvals    /approve apv-1    /deny apv-2
 /feedback ord-3f2a91c0 tool:calculator
+/correct ord-3f2a91c0    /correct ord-3f2a91c0 yes    /correct ord-3f2a91c0 a2    /correct ord-3f2a91c0 none :: Canberra
 /define language english,french,spanish :: Which language a sentence is in
 /questions    /answer q1 french
 /rollback sentiment    /pause    /halt    /resume
@@ -1092,7 +1123,9 @@ it next to the live console, run `python -m neuromesh run --web` (or `--web 9000
 - **Status**: directive goals, approvals, teachers, tools, background tasks (add, pause,
   remove), challenges (practise, sit the exam), retained knowledge.
 - **Command bar**: any order or `/command`. The answer appears below it first, then its sources
-  and how it got there. The header pauses background work, halts (click twice) and resumes.
+  and how it got there, and *Was this right?*: **Yes**, or **No** for its next most likely answers,
+  worked out there and then, to pick from (or *None of these*, with the right answer if you know
+  it); then **Ask again** to see what it says now. The header pauses background work, halts (click twice) and resumes.
 
 The page polls `GET /dashboard` every 1.5 s and fetches the activity log by sequence number
 (`GET /log?after=...`), so only what is new travels. It makes no external requests, so it works
@@ -1107,6 +1140,8 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 |---|---|---|
 | POST | `/order` | `{"text": "..."}` |
 | POST | `/feedback` | `{"order_id": "...", "label": "..."}` |
+| GET | `/alternatives` | `?order=<id>`: the next most likely answers to an order, best first, each worked out now (answer, source, how, likelihood) |
+| POST | `/correct` | `{"order_id": "...", "verdict": "right"}`, or `{"order_id": "...", "verdict": "wrong", "choice": "a2" \| "none", "answer": "..."}`: it learns from it |
 | POST | `/teach` | `{"capability": "...", "text": "...", "label": "..."}` |
 | POST | `/answer` | `{"question_id": "q1", "label": "..."}` |
 | POST | `/define` | `{"name": "...", "labels": [...], "description": "..."}` |
@@ -1439,11 +1474,12 @@ neuromesh/
   codelib.py             the code library: the building blocks made tools are written from, with probes to test them
   objectives.py          objectives: the planner teacher, plans, queries against itself, rumination, write-ups, second thoughts (P16)
   anatomy.py             a closer look: the paths orders take, how a node is built, and which synapses fire for an input
+  corrections.py         was it right? the next most likely answers, worked out now, and learning from what a person picks
   dreams.py              sleep and dreams: dream synthesis, dream nodes, waking review, their genetic algorithm, imagination (P13)
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   206 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   216 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -1464,7 +1500,9 @@ tests/                   206 tests: nodes, guardian, LLM wire formats and a mock
                          asked, delegation, surveys, reading up, second thoughts, initiative, P1/P2),
                          a closer look (a forward pass recorded faithfully: the strongest path, gradient ×
                          input adding up to the logit; node and memory-node anatomy; order paths),
-                         temperament and
+                         corrections (the next most likely labels, routes worked out and memory's other
+                         answers; yes, a pick, or none with or without the right answer, each learned and
+                         answered right next time; a memory node learning not to answer), temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,
                          questions, proposals, investigations), background tasks, full system,
                          live console (incl. a pseudo-terminal run), compute

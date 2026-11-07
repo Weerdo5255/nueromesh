@@ -38,6 +38,7 @@ from .teachers import HeuristicTeacher, HumanTeacher, LLMTeacher, TeacherPool
 from .temperament import Affect, TemperamentTeacher
 from .toolsmith import CoderTeacher, Toolsmith
 from .objectives import Objectives, PlannerTeacher, Ruminator
+from .corrections import Corrections
 from .tools import ACTIVE, APPROVED, QUARANTINED, RETIRED, Sandbox, Tool, ToolRegistry, ToolRun
 
 log = logging.getLogger("neuromesh")
@@ -108,6 +109,11 @@ class System:
         self.bus.listen(self.toolsmith.on_event)
         self.objectives = Objectives(self)  # long-term objectives: plans, queries against itself, rumination (P16)
         self.bus.listen(self.objectives.on_event)
+        self.corrections = Corrections(self)  # a person says an answer was right or wrong; it learns from it
+        for cap in self.capabilities:  # what people taught, exactly as they put it, stands (P1)
+            for ex in self.store.examples(cap):
+                if ex.source == "human":
+                    self.teachers.human.answers[(cap, ex.text)] = ex.label
 
         self.orders: asyncio.Queue = asyncio.Queue()
         self.inflight = 0
@@ -212,6 +218,9 @@ class System:
         investigations) uses the same cascade without turning answers into training data."""
         spec = self.capabilities[cap]
         exclude = frozenset(spec.inactive_labels)
+        taught = self.teachers.human.answers.get((cap, text)) if allow_teacher else None
+        if taught and taught not in exclude and taught in spec.labels:  # a person said so, for exactly this (P1)
+            return Inference(taught, 1.0, "human: a person taught it this", None, "teacher")
         node = self.registry.champion(cap)
         guess = None
         fired = None
