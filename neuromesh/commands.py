@@ -51,6 +51,8 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /objective <what>               set one (also as an order: "objective: understand the Berlin Wall")
   /objective show|report|pause|resume|remove|think <id>    a plan and its answers; the write-up; think it over now
   /objective <id> ask <question>  add a question to an objective     /ruminate   think again about recent answers
+  /kiwix                          its Kiwix sources (every book on every server) and its recent searches
+  /kiwix <question>               search Kiwix for the answer now (up to [research] kiwix_attempts searches)
   /thoughts                       its thinking nodes: thoughts in its own words, with its opinions and desires
   /thought <topic|id>             one thought and the facts it rests on      /thought forget <id>   drop it
   /think                          put what it holds into its own words again now
@@ -698,6 +700,17 @@ async def execute(system, line: str) -> Output:
             out = directors_command(system, rest)
         elif cmd in ("toolsmith", "coder"):
             out = await toolsmith_command(system, rest)
+        elif cmd == "kiwix":
+            if rest:
+                found = await system.seeker.seek(rest, "", background=False)
+                out = [f"  {'answered' if found.ok else 'gave up'} after {len(found.attempts)} search"
+                       f"{'es' if len(found.attempts) != 1 else ''}: " + (found.answer if found.ok else found.gave_up)]
+                if found.ok:
+                    out.append(f"  source: {found.source}")
+                out += [f"    {a.n}. {a.mode} '{a.query[:40]}' in {a.book}: {a.outcome}" + (f" ({a.title})" if a.title else "")
+                        + (f" - {a.why[:80]}" if a.why else "") for a in found.attempts]
+            else:
+                out = [f"  {line}" for line in await system.seeker.lines()]
         elif cmd in ("thoughts", "thinking"):
             out = [f"  {line}" for line in system.thinking.lines()]
         elif cmd == "thought":

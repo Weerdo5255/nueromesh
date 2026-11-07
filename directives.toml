@@ -129,6 +129,11 @@ research_questions = true       # questions no tool or skill fits ("who/what/whe
 prefer = ["kiwix", "wikipedia"]  # research tools in order: the first one that has the article wins; a miss
                                 # or an unreachable server falls through to the next
 unlimited = ["kiwix"]           # exempt from the budgets above: your own local Kiwix server (kiwix-serve)
+kiwix_attempts = 5              # the Kiwix search: to answer a question it searches every Kiwix book on every
+                                # server (other books, other wordings, title and full text) until an article
+                                # answers it, at most this many times; then it gives up and asks you
+                                # (1 = a single look-up). /kiwix shows its books and recent searches
+kiwix_coverage = 0.6            # how much of a question an article must cover to count as the answer
 
 [temperament]
 # The emotional engines. Every answer passes two learned nodes before a user sees it:
@@ -304,6 +309,19 @@ min_interest = 0.3                      # interest an area needs before "underst
 min_lack = 0.25                         # what an area must lack (with no interest) before it is an aim
 enough_facts = 5                        # facts about an area it is interested in that are enough for now
 
+[avatar]
+# An optional face for the mesh in the web interface (the Avatar button): its mind at a glance - mood,
+# what it is doing, the objective it works on, its latest thought and what it wants to know, what waits
+# for you - with an expression that follows its mood. It speaks through your ComfyUI server: export a
+# text-to-speech workflow from ComfyUI with "Save (API Format)", put {{text}} where the words go (or leave
+# the text input of the TTS node as it is: the first one is used), and make sure it ends in Save Audio.
+enabled = true                          # the web interface offers it (each viewer shows or hides it)
+comfyui_url = ""                        # e.g. "http://127.0.0.1:8188" (empty: no voice)
+tts_workflow = ""                       # e.g. "comfyui/tts.json" (relative to this folder)
+text_placeholder = "{{text}}"
+timeout_seconds = 120                   # how long one reply may take to speak
+max_chars = 600                         # longer texts are cut at a sentence
+
 [dreams]
 # Sleep and dreams: when there have been no orders for a while, it may fall asleep. Asleep, all
 # other background work waits and dream nodes make up questions and answers from what it already
@@ -440,6 +458,7 @@ default_timeout_s = 10
 # Per-tool settings, merged over the tool's own manifest [config], e.g.:
 # [tools.config.kiwix]
 # url = "http://localhost:8080"                     # your kiwix-serve (or start with --kiwix URL)
+# servers = ["http://nas:8081"]                     # more kiwix-serve servers to search too
 # books = ["wikipedia_en_all_maxi_2024-01"]         # which ZIMs to search, in order (default: all, Wikipedia first)
 # [tools.config.wikipedia]
 # language = "de"                                   # research German Wikipedia

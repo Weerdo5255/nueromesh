@@ -198,6 +198,10 @@ class ResearchPolicy:
     research_questions: bool = True     # research unroutable questions ("who/what/...") on Wikipedia
     prefer: tuple = ("kiwix", "wikipedia")  # research tools in order: the first that has the article wins
     unlimited: tuple = ("kiwix",)       # research tools exempt from the budgets above (your own server)
+    kiwix_attempts: int = 5             # Kiwix searches for one question (books, wordings, title and full text)
+                                        # before it gives up and asks you (1 = a single look-up, as before)
+    kiwix_coverage: float = 0.6         # how much of a question an article must cover to count as its answer
+    catalog_seconds: float = 600.0      # how long the list of Kiwix books is kept before it is read again
 
 
 @dataclass
@@ -491,6 +495,20 @@ class CuriosityPolicy:
 
 
 @dataclass
+class AvatarPolicy:
+    """The avatar: an optional face for the mesh in the web interface, its mind at a glance, and a voice
+    from a ComfyUI text-to-speech workflow (see avatar.py)."""
+    enabled: bool = True                    # the web interface offers it (each viewer shows or hides it)
+    comfyui_url: str = ""                   # your ComfyUI server, e.g. "http://127.0.0.1:8188" (empty: no voice)
+    tts_workflow: str = ""                  # a text-to-speech workflow exported from ComfyUI with Save (API Format)
+    text_placeholder: str = "{{text}}"      # where the words go in that workflow
+    timeout_seconds: float = 120.0          # how long one sentence may take to speak
+    max_chars: int = 600                    # longer texts are cut at a sentence
+    cache_files: int = 60                   # spoken audio kept in state/avatar (the same words are not spoken twice)
+    use_proxy: bool = False                 # talk to ComfyUI directly, even if HTTP(S)_PROXY is set
+
+
+@dataclass
 class Directives:
     name: str = "NeuroMesh"
     mission: str = ""
@@ -516,6 +534,7 @@ class Directives:
     objectives: ObjectivesPolicy = field(default_factory=ObjectivesPolicy)
     thinking: ThinkingPolicy = field(default_factory=ThinkingPolicy)
     curiosity: CuriosityPolicy = field(default_factory=CuriosityPolicy)
+    avatar: AvatarPolicy = field(default_factory=AvatarPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -545,6 +564,7 @@ class Directives:
             objectives=build(ObjectivesPolicy, d.get("objectives")),
             thinking=build(ThinkingPolicy, d.get("thinking")),
             curiosity=build(CuriosityPolicy, d.get("curiosity")),
+            avatar=build(AvatarPolicy, d.get("avatar")),
         )
 
     @classmethod

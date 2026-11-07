@@ -17,7 +17,14 @@ from . import web
 from .report import render_lineage
 
 REASONS = {200: "OK", 400: "Bad Request", 401: "Unauthorized", 404: "Not Found", 405: "Method Not Allowed",
-           500: "Internal Server Error"}
+           409: "Conflict", 410: "Gone", 500: "Internal Server Error", 502: "Bad Gateway", 503: "Service Unavailable"}
+
+
+class Raw:
+    """A response that is not JSON: bytes and their content type (the avatar's spoken audio)."""
+
+    def __init__(self, data: bytes, ctype: str):
+        self.data, self.ctype = data, ctype
 
 
 async def _route(system, method: str, path: str, query: dict, body: dict):
@@ -88,6 +95,12 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, {"traces": anatomy.traces(system, min(50, int(query.get("n", 15))))}
         if path == "/toolsmith":
             return 200, system.toolsmith.status()
+        if path == "/avatar":  # the avatar: its mind at a glance, and whether it has a voice
+            from .avatar import glance
+            return 200, {**glance(system), "enabled": system.directives.avatar.enabled, "voice": system.voice_tts.status()}
+        if path.startswith("/avatar/audio/"):  # what it said, as audio (only files it made)
+            got = system.voice_tts.audio(path.rsplit("/", 1)[-1])
+            return (200, Raw(*got)) if got else (404, {"error": "no such audio"})
         if path == "/thinking":  # its thinking nodes: thoughts in its own words, opinions, desires (P17)
             if query.get("thought"):
                 th = system.thinking.thoughts.get(query["thought"]) or system.thinking.find(query["thought"])
@@ -95,6 +108,9 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                     return 404, {"error": "no such thought"}
                 return 200, {"id": th.id, "lines": system.thinking.show(th.id, query.get("by", "api-operator"))}
             return 200, system.thinking.status()
+        if path == "/kiwix":  # its Kiwix sources and recent searches (?refresh=1 reads the book list again)
+            await system.seeker.catalog(refresh=bool(query.get("refresh")))
+            return 200, system.seeker.status()
         if path == "/curiosity":  # areas of interest, gaps in what it knows, the objectives it could set itself
             return 200, system.curiosity.status()
         if path == "/objectives":
@@ -231,6 +247,20 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             else:
                 return 400, {"error": 'give "verdict": "right", or "wrong" with "choice" (an alternative id, or "none")'}
             return (200 if ok else 400), {"ok": ok, "message": msg, "learned": learned}
+        if path == "/kiwix":  # {"question": "..."}: search Kiwix for its answer now
+            q = str(body.get("question", "")).strip()
+            if not q:
+                return 400, {"error": "question is required"}
+            found = await system.seeker.seek(q, "", background=False)
+            return 200, {**found.to_dict(), "summary": found.summary()}
+        if path == "/avatar/speak":  # {"text": "..."} says it with ComfyUI; no text: how it is (its glance)
+            from .avatar import SpeechError, glance
+            text = str(body.get("text") or "").strip() or glance(system)["line"]
+            try:
+                said = await system.voice_tts.speak(text, by=body.get("by", "api"))
+            except SpeechError as exc:
+                return 503, {"ok": False, "error": str(exc), "text": system.voice_tts.clean(text)}
+            return 200, {"ok": True, "url": f"/avatar/audio/{said['file']}", **said}
         if path == "/curiosity":  # {"pursue": true}: its director sets itself an objective from its curiosity now
             rec = await system.director.pursue_now(body.get("by", "api"))
             if rec is None:
@@ -369,6 +399,8 @@ async def serve_http(system, host: str = "127.0.0.1", port: int = 8765):
             code, payload = 500, {"error": repr(exc)}
         if page is not None:
             code, (data, ctype) = 200, page
+        elif isinstance(payload, Raw):
+            data, ctype = payload.data, payload.ctype
         else:
             data, ctype = json.dumps(payload, default=str).encode(), "application/json"
         writer.write(f"HTTP/1.1 {code} {REASONS.get(code, 'Error')}\r\nContent-Type: {ctype}\r\n"

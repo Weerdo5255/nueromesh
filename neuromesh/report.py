@@ -185,6 +185,11 @@ def describe_event(ev: Event) -> str | None:
         why = f"; why: {d['why'][:120]}" if d.get("why") else ""
         return (f"[objective] {d['by']} set {d['id']}{own}: {d['text'][:80]} - {d['strategy']} strategy, "
                 f"{d['steps']} steps, planned by {d['planned_by']}{why}")
+    if t == "kiwix.searched":
+        if d.get("ok"):
+            return (f"[research] Kiwix search found the answer to '{d['question'][:70]}' in '{d['title']}' "
+                    f"(search {d['attempts']} of {d['limit']})")
+        return f"[research] Kiwix search gave up on '{d['question'][:70]}' after {d['attempts']} searches: {d['why'][:100]}"
     if t == "thinking.thought":
         bits = [f"{d['grounds']} fact{'s' if d['grounds'] != 1 else ''}"]
         if d.get("stance"):

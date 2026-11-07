@@ -6,8 +6,14 @@ Wikipedia tool: a summary, the article split into passages by section, and the a
 introduction links to.
 
 Finding an article tries, in order, the server's /suggest (JSON), /search?format=xml (RSS) and
-the HTML search page, then a direct title guess, so it works across kiwix-serve versions.
-Books come from the OPDS catalog (/catalog/v2/entries). Talks only to the configured server.
+the HTML search page, then a direct title guess, so it works across kiwix-serve versions; with
+"search": "fulltext" the full-text search comes first (it finds articles that mention a thing, not
+only those named after it). Books come from each server's OPDS catalog (/catalog/v2/entries).
+
+More than one server: "url" and the extra "servers" are all searched, in that order; a server that
+is down is skipped. For one search of many (the mesh's Kiwix search, seeker.py) the request may
+narrow things down: "only" [{"server", "book"}] searches just those books, "exclude" skips articles
+already read. "__catalog__" lists every book on every server. Talks only to the configured servers.
 """
 import html
 import json
@@ -19,7 +25,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 
-DEFAULTS = {"url": "http://localhost:8080", "books": [], "language": "eng", "use_proxy": False, "timeout": 15,
+DEFAULTS = {"url": "http://localhost:8080", "servers": [], "books": [], "language": "eng", "use_proxy": False, "timeout": 15,
             "max_chars": 80000, "max_passages": 40, "links": 8,
             "user_agent": "NeuroMesh (+https://github.com/Weerdo5255/nueromesh) python-urllib"}
 DROP_SECTIONS = {"references", "external links", "see also", "notes", "further reading", "bibliography",
@@ -150,9 +156,31 @@ def _title_from_path(path: str) -> str:
     return last.replace("_", " ")
 
 
-def candidates(server: Server, book: dict, topic: str) -> list[tuple[str, str]]:
-    """(title, article URL path) pairs, best first."""
+def fulltext(server: Server, book: dict, topic: str) -> list[tuple[str, str]]:
+    """Articles that mention a topic (the server's full-text search), best first."""
     found: list[tuple[str, str]] = []
+    try:
+        text, _ = server.get("/search", {"books.name": book["name"], "pattern": topic, "format": "xml", "pageLength": "8"})
+        for item in _xml(text).iter():
+            if _local(item.tag) == "item":
+                title = link = ""
+                for child in item:
+                    if _local(child.tag) == "title" and child.text:
+                        title = child.text.strip()
+                    elif _local(child.tag) == "link" and child.text:
+                        link = child.text.strip()
+                if link:
+                    found.append((title or _title_from_path(link), link))
+    except (NotFound, ET.ParseError):
+        pass
+    return found
+
+
+def candidates(server: Server, book: dict, topic: str, full: bool = False) -> list[tuple[str, str]]:
+    """(title, article URL path) pairs, best first. full: the full-text search first."""
+    found: list[tuple[str, str]] = fulltext(server, book, topic) if full else []
+    if found:
+        return found
     for params in ({"content": book["name"], "term": topic, "count": "5"},
                    {"books.name": book["name"], "term": topic, "count": "5"}):
         try:
@@ -326,24 +354,75 @@ def read_article(server: Server, path: str, fallback_title: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------- main
+def servers_of(cfg: dict) -> list[Server]:
+    """The configured server and the extra ones, each once, in order."""
+    urls = [cfg["url"]] + [u for u in (cfg.get("servers") or []) if isinstance(u, str) and u.strip()]
+    out, seen = [], set()
+    for u in urls:
+        key = u.strip().rstrip("/")
+        if key and key not in seen:
+            seen.add(key)
+            out.append(Server({**cfg, "url": key}))
+    return out
+
+
+def catalog(cfg: dict) -> tuple[list[tuple[Server, dict]], list[str]]:
+    """Every book on every server, chosen and ranked per server ([books], [language]); and the servers that are down."""
+    out, down = [], []
+    for server in servers_of(cfg):
+        try:
+            served = books(server)
+        except Transient as exc:
+            down.append(f"{server.base} ({exc})")
+            continue
+        try:
+            picked = choose(served, cfg)
+        except RuntimeError:
+            picked = []  # this server serves none of the configured books
+        out += [(server, b) for b in picked]
+    return out, down
+
+
 def main() -> None:
     request = json.load(sys.stdin)
     cfg = {**DEFAULTS, **(request.get("config") or {})}
-    server = Server(cfg)
-    served = books(server)
-    if request["input"].strip() == "__selftest__":
-        if not served:
+    sources, down = catalog(cfg)
+    what = request["input"].strip()
+    if what in ("__selftest__", "__catalog__"):
+        if not sources:
+            if down and len(down) == len(servers_of(cfg)):
+                raise Transient("; ".join(down))
             raise RuntimeError("the Kiwix server is up but serves no books")
-        names = ", ".join(b["name"] for b in served[:4]) + (", ..." if len(served) > 4 else "")
-        print(json.dumps({"output": f"kiwix ok: {len(served)} book{'s' if len(served) != 1 else ''} ({names})"}))
+        if what == "__catalog__":
+            listed = [{"server": srv.base, "name": b["name"], "title": b["title"], "language": b["language"],
+                       "category": b["category"]} for srv, b in sources]
+            print(json.dumps({"output": f"{len(listed)} book{'s' if len(listed) != 1 else ''} on "
+                                        f"{len({x['server'] for x in listed})} server(s)", "books": listed, "down": down}))
+            return
+        names = ", ".join(b["name"] for _, b in sources[:4]) + (", ..." if len(sources) > 4 else "")
+        print(json.dumps({"output": f"kiwix ok: {len(sources)} book{'s' if len(sources) != 1 else ''} ({names})"}))
         return
-    if not served:
+    if not sources:
+        if down:
+            raise Transient("; ".join(down))
         raise NotFound("the Kiwix server serves no books")
-    topic = topic_of(request["input"])
+    only = [(str(o.get("server", "")).rstrip("/"), str(o.get("book", ""))) for o in (cfg.get("only") or []) if isinstance(o, dict)]
+    if only:
+        sources = [(srv, b) for srv, b in sources if any((not s_ or s_ == srv.base) and b["name"] == n for s_, n in only)]
+        if not sources:
+            raise NotFound(f"none of the books asked for is served: {', '.join(n for _, n in only)}")
+    exclude = {str(u) for u in (cfg.get("exclude") or [])}
+    full = str(cfg.get("search", "title")).lower() == "fulltext"
+    topic = topic_of(what)
     bare = re.sub(r"^(the|a|an)\s+", "", topic, flags=re.I)  # titles rarely start with an article
-    for book in choose(served, cfg):
+    unreachable = 0
+    for server, book in sources:
         seen: set[str] = set()
-        found = [c for term in dict.fromkeys([topic, bare]) for c in candidates(server, book, term)]
+        try:
+            found = [c for term in dict.fromkeys([topic, bare]) for c in candidates(server, book, term, full)]
+        except Transient:
+            unreachable += 1
+            continue
         for title, path in found:
             if path in seen:
                 continue
@@ -352,19 +431,24 @@ def main() -> None:
                 art = read_article(server, path, title)
             except NotFound:
                 continue
-            if art is None:
+            except Transient:
+                break
+            if art is None or art["url"] in exclude or path in exclude:
                 continue
             summary = summary_of(art["intro"])
             knowledge = {
                 "source": "kiwix", "language": book["language"] or cfg["language"], "title": art["title"],
                 "url": art["url"], "revision": book["name"], "topic": topic, "summary": summary,
                 "passages": passages(art["parts"], int(cfg["max_passages"])),
-                "links": art["links"][: int(cfg["links"])],
+                "links": art["links"][: int(cfg["links"])], "book": book["title"] or book["name"], "server": server.base,
             }
             print(json.dumps({"output": f"{summary}\n(Kiwix: {art['title']}, {book['title'] or book['name']})",
                               "knowledge": knowledge}))
             return
-    raise NotFound(f"no article matching '{topic}' in {', '.join(b['name'] for b in served)}")
+    if unreachable and unreachable == len(sources):
+        raise Transient(f"no Kiwix server could be searched for '{topic}'")
+    raise NotFound(f"no {'article mentioning' if full else 'article matching'} '{topic}' in "
+                   f"{', '.join(b['name'] for _, b in sources)}")
 
 
 if __name__ == "__main__":

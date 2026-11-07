@@ -266,6 +266,8 @@ class Orchestrator(Agent):
             hits, confidence, tool = [], 0.0, None
             if remembered is None:
                 hits, confidence = s.knowledge.recall(order.text, pol.recall_threshold)
+                if hits and not s.seeker.covers(order.text, hits):  # it never mentions a name the question asks about
+                    hits, confidence = [], 0.0
                 tool = s.knowledge_tool()
             if remembered is not None:
                 self.answer_from_memory_node(res, remembered)
@@ -354,7 +356,7 @@ class Orchestrator(Agent):
         if method == "knowledge":
             need = max(s.directives.directors.second_opinion_threshold, pol.recall_threshold - 0.2)
             hits, conf = s.knowledge.recall(order.text, need)
-            if hits and conf >= need:
+            if hits and conf >= need and s.seeker.covers(order.text, hits):
                 await self.answer_from_retained(res, order.text, hits, conf, learn=order.learn)
                 res.confidence = round(conf, 3)
                 return res
@@ -486,11 +488,29 @@ class Orchestrator(Agent):
             self.answer_from_memory_node(res, remembered)
             return
         hits, confidence = s.knowledge.recall(question, pol.recall_threshold)
+        if hits and not s.seeker.covers(question, hits):  # it never mentions a name the question asks about
+            hits, confidence = [], 0.0
         fresh = bool(hits) and hits[0].doc.age < pol.refresh_days * 86400
         if hits and confidence >= pol.recall_threshold and fresh:
             await self.answer_from_retained(res, question, hits, confidence, learn=learn)
             return
-        doc, note = await s.research(question, reason=f"order {res.order_id}", tool=tool, background=background)
+        skip: tuple = ()
+        if s.seeker.wanted(question):  # search the Kiwix books again and again until one answers (seeker.py)
+            found = await s.seeker.seek(question, res.order_id, background=background, learn=learn)
+            res.searched = found.summary()
+            if found.ok:
+                res.output, res.answer, res.knowledge = found.answer, found.answer, "researched"
+                res.sources.append(found.source)
+                res.trace.append(f"researched with kiwix: {found.how}")
+                if learn:
+                    self._remember(res, question, found.answer, found.source)
+                return
+            res.trace.append(f"the Kiwix search gave up: {found.gave_up}")
+            skip = ("kiwix",)
+        doc, note = await s.research(question, reason=f"order {res.order_id}", tool=tool, background=background, skip=skip)
+        if skip and doc is None:  # what it read while searching was judged not to answer: it is not an answer now
+            res.ok, res.note = False, f"the Kiwix search gave up: {res.searched['gave_up']}"
+            return
         if doc is not None:
             found = s.knowledge.search(question, doc_id=doc.id) or [Hit(doc, "Introduction", doc.summary, 1.0, 1.0)]
             s.knowledge.touch(doc)

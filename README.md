@@ -44,7 +44,10 @@ several facts about, it puts them together in its own words (checked word by wor
 facts, so a thought never adds one), forms a view from evidence it can name, and notes what it wants
 to find out. The thought appears after an answer from what it knows, marked as its own thinking.
 Its curiosity tracks what it finds interesting and where what it knows runs out, and its director
-sets itself objectives from there, saying why.
+sets itself objectives from there, saying why. To answer a question it searches every book on every
+Kiwix server it can reach, in other wordings, until an article answers it (or it has tried enough
+times, and asks you). An optional avatar in the web interface shows its mind at a glance, with a face
+that follows its mood, and speaks through your ComfyUI text-to-speech workflow.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
@@ -1129,7 +1132,8 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /approvals    /approve apv-1    /deny apv-2
 /feedback ord-3f2a91c0 tool:calculator
 /correct ord-3f2a91c0    /correct ord-3f2a91c0 yes    /correct ord-3f2a91c0 a2    /correct ord-3f2a91c0 none :: Canberra
-/thoughts    /thought Australia    /thought forget th-3    /think    /curiosity
+/thoughts    /thought Australia    /thought forget th-3    /think    /curiosity    /curiosity pursue
+/kiwix    /kiwix what does serendipity mean?
 what do you think of the Berlin Wall?    in your own words, what is Australia?    what do you want to find out?
 /define language english,french,spanish :: Which language a sentence is in
 /questions    /answer q1 french
@@ -1156,6 +1160,36 @@ what do you think of the calculator tool?    are you hiding anything?    what do
 ### Web interface
 `python -m neuromesh serve` also serves a live web interface at http://127.0.0.1:8765/. To have
 it next to the live console, run `python -m neuromesh run --web` (or `--web 9000` for another port).
+
+**The avatar (optional).** The **Avatar** button in the header shows a face for the mesh: an
+original anime-style character, a histologist in a lab coat with hematoxylin-violet hair and an
+eosin hexagon clip (a memory node). Beside it is its mind at a glance:
+
+- **Mood**: its mood and the five temperament numbers (spirits, energy, confidence, trust, patience).
+- **What it's on**: what it is doing, the objective it is working on and how far along it is, its
+  latest thought and what it wants to find out.
+- **What's open**: the gaps in what it knows, what waits for you (questions, approvals, tools to
+  check), its initiative, and how much it holds.
+
+Its face follows its mood and state: calm, content, happy, curious, thinking (a thought bubble),
+unsure, impatient, frustrated, sad, wary, asleep (zzz) or still (halted, in grey). It blinks
+unless you prefer reduced motion. Click the face to fold the card down to just the face, ringed
+in the colour of its spirits (on a phone that is how it starts).
+
+**Its voice comes from your ComfyUI.** Export a text-to-speech workflow from ComfyUI with
+**Save (API Format)**. Put `{{text}}` where the words go (otherwise the text input of the first
+node that looks like text to speech is used), and make sure it ends in a Save Audio node. Then set
+`[avatar] comfyui_url` and `tts_workflow` in `directives.toml`. **Ask how it is** makes it say its
+glance in the first person ("I'm content. I'm working on your objective: understand volcanoes,
+1 of 2 steps done. I'd like to learn more about Canberra. I have 2 questions for you."). **Read
+answers aloud** speaks each answer as it arrives. Its mouth moves with the sound (the audio runs
+through a Web Audio analyser).
+
+On the server side, the workflow is queued with `POST /prompt` as client `neuromesh`, followed on
+`/history/<id>`, and its audio fetched from `/view`. Only the server you set is ever contacted. The
+audio is cached by its words in `state/avatar`, so the same words are never spoken twice, and each
+time it speaks is audited. If ComfyUI isn't set up or can't be reached, the card says why. You can
+let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
 
 ![The web interface: the node network, an answer from a memory node, work in progress and the activity log](docs/web-interface.png)
 
@@ -1234,6 +1268,12 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | GET | `/thinking` | its thinking nodes, every thought (understanding, opinion, desire, the facts it rests on), its desires; `?thought=th-3` (or a topic) gives one in full |
 | POST | `/thinking` | `{"form": true}` thinks again now; `{"forget": "th-3"}` drops a thought |
 | GET | `/curiosity` | areas with their interest and what it lacks (and why), the objectives it could set itself, the ones it did |
+| POST | `/curiosity` | `{"pursue": true}`: its director sets itself one of those objectives now |
+| GET | `/kiwix` | the Kiwix search: every book on every server, the servers that are down, its recent searches attempt by attempt |
+| POST | `/kiwix` | `{"question": "..."}`: search Kiwix for the answer now |
+| GET | `/avatar` | its mind at a glance (mood, feelings, face, what it is doing, focus, thought, want, gaps, what waits for you, initiative, what it holds, a spoken line) and whether it has a voice |
+| POST | `/avatar/speak` | `{"text": "..."}` (or none: how it is) spoken by your ComfyUI workflow; returns the audio's `url` |
+| GET | `/avatar/audio/<file>` | the audio it spoke |
 | POST | `/teach` | `{"capability": "...", "text": "...", "label": "..."}` |
 | POST | `/answer` | `{"question_id": "q1", "label": "..."}` |
 | POST | `/define` | `{"name": "...", "labels": [...], "description": "..."}` |
@@ -1400,6 +1440,42 @@ neuromesh> who was Ada Lovelace?
   self-test only checks that the server answers and serves at least one book, so it works with
   whatever ZIMs you have.
 
+
+### Searching every Kiwix book before it asks you
+One look-up often isn't enough: the article named after a question's subject may not say what was
+asked, and the answer may be in another book entirely (Wiktionary, Wikivoyage, Stack Exchange,
+Project Gutenberg, ...) or on another server. So for a question, the mesh **searches Kiwix again and
+again** until an article actually answers it, up to `[research] kiwix_attempts` (5) times. Then it
+gives up and **asks you**.
+
+- **Every book on every server.** `[tools.config.kiwix] url` plus `servers = ["http://nas:8081", ...]`:
+  the catalog of each is read, and a server that is down is skipped.
+- **The likeliest books first.** Wiktionary for "what does X mean", Wikivoyage for travel, Wikiquote
+  for "who said", Stack Exchange and DevDocs for code, wikiHow and iFixit for how-to questions,
+  Gutenberg and Wikisource for the text of books. Wikipedia comes first otherwise.
+- **Other wordings.** The word a "what does X mean" asks about, the names in the question, what it
+  asks about ("who wrote X" means X), the question as it is, and its key words. Each is tried as a
+  title search first, then a full-text search (which finds articles that mention a thing, not only
+  those named after it).
+- **Does it answer?** Each article it finds is read and kept like any research. It only counts as the
+  answer when it mentions every name in the question, covers most of its words (`kiwix_coverage`),
+  and the answer fits what was asked: a time for "when", a number for "how many", a name for "who".
+  An article that does not ("A mural is any piece of artwork..." for "who painted the Zorblax
+  mural?") is noted as not it, and is never read twice for the same question. It is never used as
+  the answer later either: retained knowledge that doesn't mention a name the question asks about
+  doesn't answer it.
+- **Giving up.** After `kiwix_attempts` searches it falls back to the other research tools (Wikipedia).
+  If nothing else answers either, it asks you: "I searched Kiwix 5 times (wikipedia_en_all,
+  wiktionary_en_all; I read 'Mural') and couldn't find the answer to 'Who painted the Zorblax
+  mural?'. Do you know it?" Reply `answer: ...` and a memory node keeps it, so it answers at once
+  next time. Its curiosity counts the question as a gap, and its director may set itself an
+  objective to find out.
+- Every search is within the research budgets (your own server is exempt: `unlimited`). The result
+  says what was searched (`Result.searched`), and the activity log notes each search and its
+  outcome. `/kiwix` lists the books and the last searches, attempt by attempt. `/kiwix <question>`
+  searches now. `kiwix_attempts = 1` brings back the single look-up.
+
+The kiwix tool changed for this (version 1.1.0), so approve it once more after updating (P3).
 ### Adding a tool
 Drop a folder into `plugins/`. The Explorer finds it within seconds.
 ```
@@ -1569,11 +1645,13 @@ neuromesh/
   corrections.py         was it right? the next most likely answers, worked out now, and learning from what a person picks
   thinking.py            thinking nodes after the memory nodes: thoughts in its own words (the honesty guard), opinions, desires (P17)
   curiosity.py           areas of interest and gaps in what it knows: the objectives its director sets itself
+  seeker.py              the Kiwix search: every book on every server, other wordings, until an article answers
+  avatar.py              the avatar: its mind at a glance, and its voice from a ComfyUI text-to-speech workflow
   dreams.py              sleep and dreams: dream synthesis, dream nodes, waking review, their genetic algorithm, imagination (P13)
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   226 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   235 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -1594,7 +1672,8 @@ tests/                   226 tests: nodes, guardian, LLM wire formats and a mock
                          asked, delegation, surveys, reading up, second thoughts, initiative, P1/P2),
                          a closer look (a forward pass recorded faithfully: the strongest path, gradient ×
                          input adding up to the logit; node and memory-node anatomy; order paths),
-                         thinking nodes (rephrasing that adds nothing, the honesty guard turning down an
+                         the avatar (its glance, faces, speaking with a mock ComfyUI, cached audio), the Kiwix
+                         search (books on two servers, retries, giving up and asking), thinking nodes (rephrasing that adds nothing, the honesty guard turning down an
                          LLM draft, thoughts after the knowledge and never in it, opinions about people kept
                          private, desires; restarts), curiosity (gaps, interest, the director setting itself
                          objectives and saying why), corrections (the next most likely labels, routes worked out and memory's other

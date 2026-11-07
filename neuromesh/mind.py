@@ -363,13 +363,23 @@ class Mind:
                                              next_try=self.clock() + self.pol.retry_unmet_after_seconds)
             while len(self.unmet) > 200:
                 self.unmet.pop(next(iter(self.unmet)))
-            if res.route == DIRECT:
+            if res.route == DIRECT or res.searched:
                 routes = [r for r in s.dispatch.active_labels() if r != DIRECT]
                 short = " ".join(order.text.split())[:80]
                 tell = " or tell me the answer ('answer: ...')," if s.memory.allows("people") else ""
-                inq = self.ask("clarify", f"I couldn't fulfil '{short}'. What did you mean? Say it another way,"
-                               f"{tell} or name a route: {', '.join(routes)}.", "an order nothing could fulfil",
-                               options=routes, order_id=res.order_id)
+                sought = res.searched
+                if sought and not sought.get("ok"):  # it searched Kiwix as far as it may: now it asks you
+                    books = ", ".join(sought["books"][:4]) + (", ..." if len(sought["books"]) > 4 else "")
+                    read = f"; I read {', '.join(repr(t) for t in sought['read'][:3])}" if sought["read"] else ""
+                    question = (f"I searched Kiwix {sought['attempts']} time{'s' if sought['attempts'] != 1 else ''} "
+                                f"({books}{read}) and couldn't find the answer to '{short}'. Do you know it? Tell me "
+                                f"the answer ('answer: ...'), say it another way, or name a route: {', '.join(routes)}.")
+                    why = "a question its Kiwix search could not answer"
+                else:
+                    question = (f"I couldn't fulfil '{short}'. What did you mean? Say it another way,"
+                                f"{tell} or name a route: {', '.join(routes)}.")
+                    why = "an order nothing could fulfil"
+                inq = self.ask("clarify", question, why, options=routes, order_id=res.order_id)
                 if inq is not None:
                     res.inquiry = {"id": inq.id, "question": inq.question}
         n = self.pol.ask_interests_after_orders

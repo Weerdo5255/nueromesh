@@ -109,6 +109,7 @@ class Result:
     review: str = ""         # what that director decided
     attempts: int = 1        # ways it was tried: a director tries again when it deems an order unanswered
     thought: dict | None = None  # its own thought after the knowledge, from a thinking node (thinking.py); never the answer
+    searched: dict | None = None  # the Kiwix search behind it: books, wordings, articles read (seeker.py)
 
     def to_dict(self) -> dict:
         return asdict(self)

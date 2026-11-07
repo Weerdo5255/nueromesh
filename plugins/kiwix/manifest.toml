@@ -1,5 +1,5 @@
 name = "kiwix"
-version = "1.0.0"
+version = "1.1.0"
 description = "Looks a topic up on a local Kiwix server (kiwix-serve: offline Wikipedia and other ZIM archives) and returns the article as knowledge the mesh retains. Preferred over Wikipedia and not rate-limited (see [research] in directives.toml)."
 entrypoint = "tool.py"
 permissions = ["network"]      # HTTP to the Kiwix server -> needs a human's approval once (P3)
@@ -23,6 +23,7 @@ place = ["Kyoto", "the Atacama Desert", "Lake Baikal", "Machu Picchu", "Reykjavi
 # NeuroMesh with --kiwix http://host:port.
 [config]
 url = "http://localhost:8080"  # where kiwix-serve listens (a prefix such as http://host/kiwix works too)
+servers = []                   # more kiwix-serve servers to search after it (e.g. ["http://nas:8081"])
 books = []                     # ZIM names to search, in order (e.g. ["wikipedia_en_all_maxi_2024-01"]);
                                # empty: every book served, Wikipedia ones in your language first
 language = "eng"               # preferred book language (ISO 639-3, as in the Kiwix catalog)

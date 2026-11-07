@@ -39,7 +39,9 @@ from .temperament import Affect, TemperamentTeacher
 from .toolsmith import CoderTeacher, Toolsmith
 from .objectives import Objectives, PlannerTeacher, Ruminator
 from .corrections import Corrections
+from .avatar import ComfyTTS
 from .curiosity import Curiosity
+from .seeker import Seeker
 from .thinking import Thinker, ThinkingBank
 from .tools import ACTIVE, APPROVED, QUARANTINED, RETIRED, Sandbox, Tool, ToolRegistry, ToolRun
 
@@ -115,6 +117,8 @@ class System:
         self.curiosity = Curiosity(self)      # areas of interest and gaps in what it knows (the director's aims)
         self.thinking = ThinkingBank(self)    # after the memory nodes: its thoughts, opinions and desires (P17)
         self.bus.listen(self.thinking.on_event)
+        self.voice_tts = ComfyTTS(self)       # the avatar's voice: a ComfyUI text-to-speech workflow (avatar.py)
+        self.seeker = Seeker(self)            # searching every Kiwix book, again and again, for an answer (seeker.py)
         for cap in self.capabilities:  # what people taught, exactly as they put it, stands (P1)
             for ex in self.store.examples(cap):
                 if ex.source == "human":
@@ -508,12 +512,12 @@ class System:
         return tool is not None and tool.name in self.directives.research.unlimited
 
     async def research(self, topic: str, *, reason: str, background: bool = False,
-                       tool: Tool | None = None):
+                       tool: Tool | None = None, skip: tuple = ()):
         """Look something up and retain what comes back. Research tools are tried in the preferred
         order (kiwix, then wikipedia): the first that has the article wins, and a miss or an
         unreachable server falls through to the next. Returns (Document, "learned") or (None, why not)."""
-        chain = self.knowledge_tools()
-        if tool is not None and tool not in chain:
+        chain = [t for t in self.knowledge_tools() if t.name not in skip]
+        if tool is not None and tool not in chain and tool.name not in skip:
             chain = [tool]
         if not chain:
             return None, "no active research tool (approve kiwix or wikipedia: /approvals)"

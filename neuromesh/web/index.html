@@ -20,6 +20,7 @@
   <dl class="stats" id="stats"></dl>
   <div class="tools-right">
     <span id="conn" class="conn" aria-live="polite"></span>
+    <button id="avatar-toggle" class="quiet" type="button" aria-pressed="false" aria-controls="avatar">Avatar</button>
     <button id="theme" class="quiet" type="button" aria-label="Switch between light and dark">Dark</button>
   </div>
 </header>
@@ -124,5 +125,6 @@
 </dialog>
 
 <script src="/ui/app.js" defer></script>
+<aside id="avatar" class="avatar" hidden aria-label="NeuroMesh at a glance"></aside>
 </body>
 </html>

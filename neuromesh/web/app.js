@@ -331,6 +331,7 @@
     if (r.thought && r.route !== "thinking") kids.push(thoughtAside(r.thought));
     kids.push(h("div", { class: "meta" }, meta, close));
     if (r.order_id && !UNCHECKED.includes(r.route)) kids.push(answerCheck(r.order_id, a.text));
+    if (AV.on && store.get("avatar.read", "") === "1" && r.answer) setTimeout(() => speakNow(String(r.answer).split("\nSource")[0]), 50);
     if (r.trace?.length) kids.push(h("details", {}, h("summary", {}, "How it got there"), h("ul", {}, r.trace.map(t => h("li", {}, t)))));
     fill(box, kids);
   }
@@ -1755,6 +1756,310 @@
       timer = setTimeout(tick, document.hidden ? Math.max(wait, 5000) : wait);
     }
   }
+
+  // ================================================================== the avatar
+  // An optional face for the mesh (an original character, drawn here), its mind at a glance (GET /avatar),
+  // and a voice from your ComfyUI text-to-speech workflow (POST /avatar/speak). Its face follows its mood.
+  const AV = { on: store.get("avatar", "") === "1", data: null, at: 0,
+               open: store.get("avatar.open", window.matchMedia("(max-width: 560px)").matches ? "0" : "1") === "1",  // on a phone: just the face
+               refs: null, face: "", talking: false, level: 0, audio: null, ctx: null, busy: false };
+  const BROWS = {
+    neutral: ["M71 99 C76 95.5 85 95 92 97.5", "M108 97.5 C115 95 124 95.5 129 99"],
+    low: ["M71 101 C76 98 85 97.5 92 100", "M108 100 C115 97.5 124 98 129 101"],
+    up: ["M71 96 C76 92 85 91.5 92 94", "M108 94 C115 91.5 124 92 129 96"],
+    curious: ["M71 99 C76 95.5 85 95 92 97.5", "M108 94 C115 90 124 90 129 94.5"],
+    worried: ["M71 99 C77 98 86 96 92 93.5", "M108 93.5 C114 96 123 98 129 99"],
+    angry: ["M71 95.5 C77 96 86 98 92 101", "M108 101 C114 98 123 96 129 95.5"],
+    wary: ["M71 97 C77 97 86 98.5 92 100", "M108 100 C114 98.5 123 97 129 97"],
+    flat: ["M71 98 L92 98.5", "M108 98.5 L129 98"],
+  };
+  const MOUTHS = {
+    smile: "M93 142 C97 146 103 146 107 142", side: "M95 143 C99 143 103 141 106 140",
+    wavy: "M92 143 C95 140 98 140 100 143 C102 146 105 146 108 143", flat: "M94 143 L106 143",
+    frown: "M93 145 C97 140 103 140 107 145",
+  };
+  // eyes: open (with how far the lid is down, -10 = wide open), happy (closed arcs), sleep; look = where the irises point
+  const FACES = {
+    calm: { eyes: "open", lid: -10, look: [0, 0], brows: "neutral", mouth: "smile", blush: 0.25 },
+    content: { eyes: "open", lid: -10, look: [0, 0.5], brows: "neutral", mouth: "smile", blush: 0.45 },
+    happy: { eyes: "happy", brows: "up", mouth: "grin", blush: 0.6 },
+    curious: { eyes: "open", lid: -11, look: [1.5, -0.6], brows: "curious", mouth: "o", blush: 0.3, extra: "sparkle" },
+    thinking: { eyes: "open", lid: -7, look: [2.4, -2], brows: "curious", mouth: "side", blush: 0.2, extra: "dots" },
+    unsure: { eyes: "open", lid: -10, look: [-1, 1], brows: "worried", mouth: "wavy", blush: 0.2 },
+    impatient: { eyes: "open", lid: -2.5, look: [0, 1], brows: "flat", mouth: "flat", blush: 0.1, extra: "sweat" },
+    frustrated: { eyes: "open", lid: -4, look: [0, 0.5], brows: "angry", mouth: "frown", blush: 0.1 },
+    sad: { eyes: "open", lid: -4, look: [0, 2], brows: "worried", mouth: "frown", blush: 0.15 },
+    wary: { eyes: "open", lid: -3, look: [-2.6, 0], brows: "wary", mouth: "flat", blush: 0 },
+    asleep: { eyes: "sleep", brows: "low", mouth: "small", blush: 0.35, extra: "zzz" },
+    still: { eyes: "open", lid: -10, look: [0, 0], brows: "flat", mouth: "flat", blush: 0 },
+  };
+  const MOOD_NAMES = { upbeat: "In good spirits", content: "Content", steady: "Steady", alert: "Alert", subdued: "A little low",
+                       tense: "Tense", wary: "Wary" };
+
+  function avatarSvg() {
+    const EYE = "M-11 1 C-7 -6 7 -7 11 -1 C7 5 -7 6 -11 1 Z";
+    const svg = sv("svg", { viewBox: "26 32 148 198", class: "av-svg", role: "img", "aria-label": "The mesh's avatar" });
+    const defs = sv("defs", {},
+      sv("radialGradient", { id: "av-iris", cx: "50%", cy: "35%", r: "65%" },
+        sv("stop", { offset: "0%", "stop-color": "var(--av-iris-1)" }), sv("stop", { offset: "70%", "stop-color": "var(--av-iris-2)" }),
+        sv("stop", { offset: "100%", "stop-color": "var(--av-iris-3)" })),
+      sv("clipPath", { id: "av-eye-clip" }, sv("path", { d: EYE })));
+    const eye = side => {
+      const iris = sv("g", { class: "av-iris" }, sv("circle", { cx: 0, cy: 0.5, r: 6, fill: "url(#av-iris)" }),
+        sv("circle", { cx: 0, cy: 0.8, r: 2.7, class: "av-pupil" }), sv("circle", { cx: -2, cy: -1.8, r: 1.7, fill: "#fff" }),
+        sv("circle", { cx: 2.2, cy: 2.6, r: 0.8, fill: "#fff", opacity: 0.85 }));
+      const lid = sv("path", { class: "av-lid", d: "" });
+      const lidLine = sv("path", { class: "av-lash", d: "" });
+      const open = sv("g", { class: "av-open" }, sv("path", { d: EYE, class: "av-white" }),
+        sv("g", { "clip-path": "url(#av-eye-clip)" }, iris, lid),
+        sv("path", { d: "M-12 1.5 C-8 -7 7 -8.5 12 -1.5", class: "av-lash" }), sv("path", { d: "M10 -2 L14.5 -4.6", class: "av-lash thin" }),
+        sv("path", { d: "M-7 4.6 C-2 6.5 4 6 8 3.4", class: "av-lower" }), lidLine);
+      const happy = sv("path", { d: "M-10 2.5 C-5 -5 5 -5 10 2.5", class: "av-lash av-happy" });
+      const sleep = sv("g", { class: "av-sleep" }, sv("path", { d: "M-10 -1 C-5 5 5 5 10 -1", class: "av-lash" }),
+        sv("path", { d: "M-6 3 L-7.5 6 M0 4.4 L0 7.6 M6 3 L7.5 6", class: "av-lash thin" }));
+      const g = sv("g", { transform: side === "L" ? "translate(82 113)" : "translate(118 113) scale(-1 1)", class: "av-eye" }, open, happy, sleep);
+      return { g, iris, lid, lidLine, open, happy, sleep };
+    };
+    const L = eye("L"), R = eye("R");
+    const browL = sv("path", { class: "av-brow" }), browR = sv("path", { class: "av-brow" });
+    const mouth = sv("path", { class: "av-mouth" });
+    const mouthO = sv("ellipse", { class: "av-mouth-o", cx: 100, cy: 143, rx: 2.6, ry: 3.2 });
+    const blush = sv("g", { class: "av-blush" }, sv("ellipse", { cx: 76, cy: 129.5, rx: 6.5, ry: 3 }), sv("ellipse", { cx: 124, cy: 129.5, rx: 6.5, ry: 3 }));
+    const hex = (cx, cy, r) => Array.from({ length: 6 }, (_, i) => `${(cx + r * Math.cos(Math.PI / 3 * i + Math.PI / 6)).toFixed(1)},${(cy + r * Math.sin(Math.PI / 3 * i + Math.PI / 6)).toFixed(1)}`).join(" ");
+    const extras = {
+      dots: sv("g", { class: "av-extra av-dots" }, sv("circle", { cx: 147, cy: 74, r: 2.2 }), sv("circle", { cx: 155, cy: 64, r: 3.2 }), sv("circle", { cx: 164, cy: 52, r: 4.6 })),
+      zzz: sv("g", { class: "av-extra av-zzz" }, sv("text", { x: 143, y: 82 }, "z"), sv("text", { x: 151, y: 70, class: "b" }, "z"), sv("text", { x: 160, y: 57, class: "c" }, "Z")),
+      sparkle: sv("g", { class: "av-extra av-sparkle" }, sv("path", { d: "M150 84 L152 90 L158 92 L152 94 L150 100 L148 94 L142 92 L148 90 Z" })),
+      sweat: sv("g", { class: "av-extra av-sweat" }, sv("path", { d: "M141 96 C138 102 138 106 141 107 C144 106 144 102 141 96 Z" })),
+    };
+    svg.append(defs,
+      sv("path", { class: "av-hair back", d: "M50 104 C46 60 70 40 100 40 C130 40 154 60 150 104 C150 132 156 154 148 176 C140 168 136 160 134 150 L66 150 C64 160 60 168 52 176 C44 154 50 132 50 104 Z" }),
+      sv("path", { class: "av-coat", d: "M18 230 C22 200 44 186 76 180 L86 182 L96 214 L98 230 Z" }),
+      sv("path", { class: "av-coat", d: "M182 230 C178 200 156 186 124 180 L114 182 L104 214 L102 230 Z" }),
+      sv("path", { class: "av-top", d: "M80 186 L100 230 L120 186 Q100 196 80 186 Z" }),
+      sv("path", { class: "av-skin", d: "M88 148 L88 180 Q100 186 112 180 L112 148 Z" }),
+      sv("path", { class: "av-shade", d: "M88 160 Q100 171 112 160 L112 168 Q100 177 88 168 Z" }),
+      sv("path", { class: "av-collar", d: "M82 176 Q100 187 118 176 L121 192 Q100 201 79 192 Z" }),
+      sv("path", { class: "av-line-only", d: "M76 180 L90 201 L86 212 M124 180 L110 201 L114 212" }),
+      sv("polygon", { class: "av-pin", points: hex(138, 207, 4.5) }),
+      sv("path", { class: "av-skin", d: "M60 96 C60 128 70 148 86 159 C93 164 107 164 114 159 C130 148 140 128 140 96 C140 70 124 58 100 58 C76 58 60 70 60 96 Z" }),
+      blush, L.g, R.g, browL, browR,
+      sv("path", { class: "av-nose", d: "M100.5 126 L98.6 132 L101.4 132.6" }),
+      mouth, mouthO,
+      sv("path", { class: "av-hair", d: "M57 100 C52 128 56 152 66 168 C64 150 64 128 66 108 Z" }),
+      sv("path", { class: "av-hair", d: "M143 100 C148 128 144 152 134 168 C136 150 136 128 134 108 Z" }),
+      sv("path", { class: "av-hair", d: "M54 112 C48 70 70 46 100 46 C132 46 154 70 146 112 C144 100 141 92 136 86 L134 101 C130 92 125 86 119 82 L116 97 C112 90 107 85 101 81 C97 89 91 95 83 99 L86 86 C78 91 71 99 65 109 L66 94 C61 99 57 105 54 112 Z" }),
+      sv("path", { class: "av-shine", d: "M72 58 C86 50 112 50 128 58" }), sv("path", { class: "av-shine thin", d: "M80 65 C92 59 106 59 117 62" }),
+      sv("polygon", { class: "av-clip", points: hex(129, 70, 5.6) }), sv("circle", { class: "av-clip-dot", cx: 129, cy: 70, r: 1.7 }),
+      ...Object.values(extras));
+    return { svg, L, R, browL, browR, mouth, mouthO, blush, extras };
+  }
+
+  function setFace(refs, name) {
+    const f = FACES[name] || FACES.calm;
+    for (const [side, e] of [["L", refs.L], ["R", refs.R]]) {
+      e.open.style.display = f.eyes === "open" ? "" : "none";
+      e.happy.style.display = f.eyes === "happy" ? "" : "none";
+      e.sleep.style.display = f.eyes === "sleep" ? "" : "none";
+      if (f.eyes === "open") {
+        const [dx, dy] = f.look;
+        e.iris.setAttribute("transform", `translate(${side === "L" ? dx : -dx} ${dy})`);
+        const ly = f.lid;
+        const shown = ly > -8.5;
+        e.lid.setAttribute("d", shown ? `M-13 -10 L13 -10 L13 ${ly} C6 ${ly - 1.4} -6 ${ly - 1.4} -13 ${ly} Z` : "");
+        e.lidLine.setAttribute("d", shown ? `M-12 ${ly + 0.3} C-6 ${ly - 1.2} 6 ${ly - 1.2} 12 ${ly - 0.4}` : "");
+      }
+    }
+    const [bl, br] = BROWS[f.brows] || BROWS.neutral;
+    refs.browL.setAttribute("d", bl);
+    refs.browR.setAttribute("d", br);
+    refs.blush.style.opacity = f.blush;
+    for (const [k, el] of Object.entries(refs.extras)) el.style.display = f.extra === k ? "" : "none";
+    refs.svg.dataset.face = name;
+    mouthShape(refs, f.mouth);
+  }
+
+  function mouthShape(refs, kind, level = 0) {
+    const m = refs.mouth, o = refs.mouthO;
+    m.classList.toggle("open", kind === "grin");
+    if (kind === "talk") {
+      m.style.display = "none"; o.style.display = "";
+      o.setAttribute("rx", (3.4 + level * 1.6).toFixed(2)); o.setAttribute("ry", (0.9 + level * 4.6).toFixed(2));
+    } else if (kind === "o" || kind === "small") {
+      m.style.display = "none"; o.style.display = "";
+      o.setAttribute("rx", kind === "o" ? 2.6 : 2.1); o.setAttribute("ry", kind === "o" ? 3.2 : 1.3);
+    } else {
+      o.style.display = "none"; m.style.display = "";
+      m.setAttribute("d", kind === "grin" ? "M91 140 C95 149 105 149 109 140 C104 142.2 96 142.2 91 140 Z" : (MOUTHS[kind] || MOUTHS.smile));
+    }
+  }
+
+  function avatarDock() {
+    const dock = $("#avatar");
+    if (!AV.refs) {
+      AV.refs = avatarSvg();
+      const face = h("button", { type: "button", class: "av-face", title: "Show or hide its mind at a glance", "aria-expanded": String(AV.open),
+        onclick: () => { AV.open = !AV.open; store.set("avatar.open", AV.open ? "1" : "0"); renderAvatar(); } }, AV.refs.svg);
+      dock.append(h("div", { class: "av-portrait" }, face, h("p", { class: "av-say", "aria-live": "polite" })), h("div", { class: "av-info" }));
+    }
+    return dock;
+  }
+
+  function feeling(label, v, signed) {
+    const pctv = signed ? (v + 1) / 2 : v;
+    return h("div", { class: "av-meter" }, h("span", {}, label),
+      h("span", { class: `bar${signed ? " signed" : ""}`, role: "img", "aria-label": `${label} ${signed ? (v >= 0 ? "+" : "") + v.toFixed(2) : pct(v)}` },
+        h("b", { style: signed ? `left:${Math.min(50, pctv * 100)}%;width:${Math.abs(v) * 50}%` : `width:${(v * 100).toFixed(0)}%` })));
+  }
+
+  function renderAvatar() {
+    const dock = $("#avatar");
+    const btn = $("#avatar-toggle");
+    btn.setAttribute("aria-pressed", String(AV.on));
+    dock.hidden = !AV.on;
+    if (!AV.on) return;
+    avatarDock();
+    dock.classList.toggle("closed", !AV.open);
+    $(".av-face", dock).setAttribute("aria-expanded", String(AV.open));
+    const g = AV.data;
+    if (!g) { fill($(".av-info", dock), h("p", { class: "dim small" }, "Looking at how it is…")); return; }
+    if (!AV.talking && AV.face !== g.face) { setFace(AV.refs, g.face); AV.face = g.face; }
+    dock.style.setProperty("--av-ring", g.feelings.valence > 0.25 ? "var(--good)" : g.feelings.valence < -0.25 ? "var(--eosin)" : "var(--hema)");
+    if (!AV.open) return;
+    const info = $(".av-info", dock);
+    if (busy(info)) return;
+    const row = (label, ...v) => [h("dt", {}, label), h("dd", {}, ...v)];
+    const w = g.waiting, f = g.focus, ini = g.initiative, hold = g.holds;
+    const asks = [w.questions && `${w.questions} question${w.questions === 1 ? "" : "s"}`, w.approvals && `${w.approvals} approval${w.approvals === 1 ? "" : "s"}`,
+                  w.tools && `${w.tools} tool${w.tools === 1 ? "" : "s"} to check`].filter(Boolean);
+    const voice = g.voice || {};
+    const readAloud = store.get("avatar.read", "") === "1", browserVoice = store.get("avatar.browser", "") === "1";
+    fill(info,
+      h("div", { class: "av-head" }, h("b", { class: "av-mood" }, MOOD_NAMES[g.mood] || g.mood),
+        h("span", { class: "small dim" }, g.state === "working" ? "working" : g.state),
+        h("button", { type: "button", class: "quiet small av-hide", title: "Hide the avatar", "aria-label": "Hide the avatar", onclick: () => toggleAvatar(false) }, "Hide")),
+      h("div", { class: "av-feel" }, feeling("Spirits", g.feelings.valence ?? 0, true), feeling("Energy", g.feelings.arousal ?? 0),
+        feeling("Confidence", g.feelings.confidence ?? 0), feeling("Trust", g.feelings.trust ?? 0), feeling("Patience", g.feelings.patience ?? 0)),
+      h("dl", { class: "av-glance" },
+        row("Doing", g.doing.length ? g.doing.map(d => cut(d.text, 70)).join("; ") : g.state === "asleep" ? "dreaming" : "nothing right now"),
+        f ? row("Working on", cut(f.text, 80), h("span", { class: "dim" }, ` ${f.done} of ${f.total}${f.self_set ? ", its own" : ""}`)) : null,
+        g.thought ? row("Thinking about", h("b", {}, g.thought.topic), h("span", { class: "dim" },
+          ` ${cut(g.thought.text.replace(/^(?:As I understand it, |Putting together what I hold about [^:]+: )/, ""), 90)}`)) : null,
+        g.want ? row("Wants", cut(g.want.want, 110), g.want.status === "pursuing" ? h("span", { class: "hit" }, " (on it)") : null) : null,
+        g.lacks.gaps ? row("Lacks", `${g.lacks.gaps} gap${g.lacks.gaps === 1 ? "" : "s"} in what it knows`, g.lacks.aim ? h("span", { class: "dim" }, `; next: ${cut(g.lacks.aim, 60)}`) : null) : null,
+        row("For you", asks.length ? h("a", { href: "#mind/questions" }, asks.join(", ")) : "nothing waiting"),
+        row("Initiative", ini.on ? `on (${ini.mode})` : "off", ini.last ? h("span", { class: "dim" }, `; last: ${cut(ini.last, 70)}`) : null),
+        row("Holds", `${hold.facts} facts, ${hold.thoughts} thoughts, ${hold.articles} articles, ${hold.nodes} serving nodes`)),
+      h("div", { class: "av-voice" },
+        h("button", { type: "button", class: "primary small", disabled: AV.busy, onclick: () => speakNow("") }, AV.busy ? "Speaking…" : "Ask how it is"),
+        h("label", { class: "small" }, h("input", { type: "checkbox", checked: readAloud, onchange: e => store.set("avatar.read", e.target.checked ? "1" : "") }), " Read answers aloud"),
+        h("label", { class: "small" }, h("input", { type: "checkbox", checked: browserVoice, onchange: e => store.set("avatar.browser", e.target.checked ? "1" : "") }), " Browser voice when ComfyUI can't speak"),
+        h("p", { class: "small dim" }, voice.ready ? `Voice: ComfyUI at ${voice.server}${voice.spoken ? `, ${voice.spoken} spoken` : ""}.`
+          : `No voice yet: ${voice.why || "set up [avatar] in directives.toml"}.`, voice.last_error ? h("span", { class: "no" }, ` Last try: ${cut(voice.last_error, 120)}`) : null)));
+  }
+
+  async function avatarTick(force) {
+    if (!AV.on || document.hidden) return;
+    if (!force && Date.now() - AV.at < 3000) return;
+    AV.at = Date.now();
+    try {
+      AV.data = await api("/avatar");
+      if (AV.data.enabled === false) { toggleAvatar(false); toast("The avatar is off in the directives ([avatar] enabled)"); return; }
+    } catch { /* the next tick tries again */ }
+    renderAvatar();
+  }
+
+  function toggleAvatar(on) {
+    AV.on = on;
+    store.set("avatar", on ? "1" : "");
+    renderAvatar();
+    if (on) avatarTick(true);
+  }
+  $("#avatar-toggle").addEventListener("click", () => toggleAvatar(!AV.on));
+
+  // speaking: ComfyUI's audio, played through an analyser so its mouth moves with the sound
+  async function speakNow(text) {
+    if (!AV.on || AV.busy) return;
+    AV.busy = true;
+    renderAvatar();
+    const say = $("#avatar .av-say");
+    try {
+      const r = await api("/avatar/speak", { text, by: "web" });
+      if (say) say.textContent = r.text;
+      const headers = S.token ? { Authorization: "Bearer " + S.token } : {};
+      const blob = await (await fetch(r.url, { headers })).blob();
+      await playWithLips(blob);
+    } catch (e) {
+      const words = e.data?.text || text || AV.data?.line || "";
+      if (store.get("avatar.browser", "") === "1" && "speechSynthesis" in window && words) {
+        if (say) say.textContent = words;
+        await browserSpeak(words);
+      } else {
+        toast(`It can't speak: ${e.message}`);
+      }
+    } finally {
+      AV.busy = false;
+      stopTalking();
+      renderAvatar();
+    }
+  }
+
+  function stopTalking() {
+    AV.talking = false;
+    if (AV.refs) { const f = FACES[AV.face] || FACES.calm; mouthShape(AV.refs, f.mouth); }
+    const say = $("#avatar .av-say");
+    if (say) setTimeout(() => { if (!AV.talking) say.textContent = ""; }, 2500);
+  }
+
+  async function playWithLips(blob) {
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    AV.audio = audio;
+    let analyser = null, data = null;
+    try {
+      AV.ctx = AV.ctx || new (window.AudioContext || window.webkitAudioContext)();
+      if (AV.ctx.state === "suspended") await AV.ctx.resume();
+      const src = AV.ctx.createMediaElementSource(audio);
+      analyser = AV.ctx.createAnalyser();
+      analyser.fftSize = 512;
+      src.connect(analyser);
+      analyser.connect(AV.ctx.destination);
+      data = new Uint8Array(analyser.fftSize);
+    } catch { analyser = null; /* plays without lip sync */ }
+    AV.talking = true;
+    const frame = () => {
+      if (!AV.talking) return;
+      let level = 0.35 + 0.35 * Math.sin(Date.now() / 90);
+      if (analyser) {
+        analyser.getByteTimeDomainData(data);
+        let sum = 0;
+        for (const v of data) sum += (v - 128) * (v - 128);
+        level = Math.min(1, Math.sqrt(sum / data.length) / 40);
+      }
+      AV.level = AV.level * 0.5 + level * 0.5;
+      if (AV.refs) mouthShape(AV.refs, AV.level > 0.06 ? "talk" : "small", AV.level);
+      requestAnimationFrame(frame);
+    };
+    await new Promise(resolve => {
+      audio.onended = audio.onerror = resolve;
+      audio.play().then(() => requestAnimationFrame(frame)).catch(resolve);
+    });
+    URL.revokeObjectURL(url);
+  }
+
+  function browserSpeak(words) {
+    return new Promise(resolve => {
+      const u = new SpeechSynthesisUtterance(words);
+      AV.talking = true;
+      let open = false;
+      const flap = setInterval(() => { open = !open; if (AV.refs) mouthShape(AV.refs, open ? "talk" : "small", open ? 0.6 : 0); }, 140);
+      u.onend = u.onerror = () => { clearInterval(flap); resolve(); };
+      speechSynthesis.speak(u);
+    });
+  }
+
+  setInterval(() => avatarTick(false), 1000);
+  renderAvatar();
 
   async function loadHistory() {
     try {

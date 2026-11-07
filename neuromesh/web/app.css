@@ -378,7 +378,7 @@ pre.report { white-space: pre-wrap; max-height: 60vh; margin-top: 8px; font-size
 .meter .track i { position: absolute; top: -3px; width: 2px; height: 12px; background: var(--ink-3); }
 .meter .track b { position: absolute; left: 0; top: 0; bottom: 0; background: var(--eosin); border-radius: 3px; }
 .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--slide);
-  padding: 8px 16px; border-radius: 8px; font-size: 14px; z-index: 20; max-width: min(90vw, 640px); }
+  padding: 8px 16px; border-radius: 8px; font-size: 14px; z-index: 50; max-width: min(90vw, 640px); }
 
 dialog { border: 1px solid var(--rule); border-radius: 12px; background: var(--panel); color: var(--ink); max-width: 440px; padding: 20px 22px; }
 dialog::backdrop { background: rgb(20 16 40 / .45); }
@@ -405,4 +405,86 @@ dialog .row { margin-top: 14px; justify-content: flex-end; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
+}
+
+/* ------------------------------------------------------------------ the avatar
+   An original character: a histologist in a lab coat, hair in hematoxylin, an eosin hexagon clip (a memory
+   node). Its own colours stay the same in both themes; only its card follows the page. */
+:root {
+  --av-skin: #f7dfd2; --av-shade: #e8c2b0; --av-line: #2f2440; --av-hair: #3b2d72; --av-hair-back: #2b2058;
+  --av-hair-hi: #9786e6; --av-iris-1: #8b7cf0; --av-iris-2: #4a3aa8; --av-iris-3: #d63f7c; --av-pupil: #1d1533;
+  --av-coat: #fdfcff; --av-mouth: #8a2f52; --av-ring: var(--hema);
+}
+.avatar { position: fixed; right: 16px; bottom: 16px; z-index: 40; width: min(460px, calc(100vw - 32px));
+  display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 4px 12px; padding: 12px; background: var(--panel);
+  border: 1px solid var(--rule); border-radius: 14px; box-shadow: 0 10px 30px rgba(36, 28, 59, .18); max-height: calc(100vh - 32px); overflow: auto; }
+.avatar[hidden] { display: none; }
+.avatar.closed { width: auto; grid-template-columns: 96px; padding: 6px; border-radius: 999px; overflow: visible; }
+.avatar.closed .av-info, .avatar.closed .av-say { display: none; }
+.av-portrait { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.av-face { all: unset; cursor: pointer; display: block; width: 150px; aspect-ratio: 148 / 198; border-radius: 12px;
+  background: radial-gradient(circle at 50% 40%, var(--hema-soft), transparent 70%); }
+.av-face:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.avatar.closed .av-face { width: 84px; height: 84px; aspect-ratio: auto; border-radius: 50%; overflow: hidden;
+  box-shadow: 0 0 0 3px var(--av-ring); background: var(--hema-soft); }
+.avatar.closed .av-svg { width: 124px; height: 166px; margin: -14px 0 0 -20px; }
+.av-svg { width: 100%; height: 100%; display: block; }
+.av-svg[data-face="still"] { filter: grayscale(1); opacity: .8; }
+.av-say { margin: 0; font-size: 13px; line-height: 1.35; color: var(--ink-2); text-align: center; max-width: 150px; }
+.av-say:not(:empty) { padding: 6px 8px; background: var(--hema-soft); border-radius: 10px; color: var(--ink); }
+.av-info { min-width: 0; font-size: 13.5px; }
+.av-head { display: flex; align-items: baseline; gap: 8px; }
+.av-mood { font-size: 18px; }
+.av-hide { margin-left: auto; }
+.av-feel { display: grid; gap: 3px; margin: 6px 0 8px; }
+.av-meter { display: grid; grid-template-columns: 78px 1fr; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); }
+.av-meter .bar { position: relative; height: 6px; border-radius: 3px; background: var(--rule); overflow: hidden; }
+.av-meter .bar b { position: absolute; top: 0; bottom: 0; left: 0; background: var(--hema); border-radius: 3px; }
+.av-meter .bar.signed::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--ink-3); }
+.av-glance { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 10px; margin: 0 0 8px; }
+.av-glance dt { color: var(--ink-3); font-size: 12.5px; }
+.av-glance dd { margin: 0; overflow-wrap: anywhere; }
+.av-voice { display: grid; gap: 4px; justify-items: start; border-top: 1px solid var(--rule); padding-top: 8px; }
+.av-voice p { margin: 0; }
+/* the character */
+.av-skin { fill: var(--av-skin); stroke: var(--av-line); stroke-width: 1.1; }
+.av-shade { fill: var(--av-shade); }
+.av-hair { fill: var(--av-hair); stroke: var(--av-line); stroke-width: 1; }
+.av-hair.back { fill: var(--av-hair-back); }
+.av-shine { fill: none; stroke: var(--av-hair-hi); stroke-width: 3; stroke-linecap: round; opacity: .55; }
+.av-shine.thin { stroke-width: 1.6; opacity: .4; }
+.av-coat { fill: var(--av-coat); stroke: var(--av-line); stroke-width: 1.1; }
+.av-top { fill: #2e2a4f; }
+.av-collar { fill: var(--av-iris-2); stroke: var(--av-line); stroke-width: 1; }
+.av-line-only { fill: none; stroke: var(--av-line); stroke-width: 1; opacity: .6; }
+.av-pin, .av-clip { fill: var(--av-iris-3); stroke: var(--av-line); stroke-width: .8; }
+.av-clip-dot { fill: #fff; }
+.av-white { fill: #fff; }
+.av-pupil { fill: var(--av-pupil); }
+.av-lid { fill: var(--av-skin); }
+.av-lash { fill: none; stroke: var(--av-line); stroke-width: 2.5; stroke-linecap: round; }
+.av-lash.thin { stroke-width: 1.4; }
+.av-lower { fill: none; stroke: var(--av-line); stroke-width: .8; opacity: .55; }
+.av-brow { fill: none; stroke: var(--av-hair); stroke-width: 2.3; stroke-linecap: round; }
+.av-nose { fill: none; stroke: var(--av-shade); stroke-width: 1.2; stroke-linecap: round; filter: brightness(.85); }
+.av-mouth { fill: none; stroke: var(--av-line); stroke-width: 1.6; stroke-linecap: round; }
+.av-mouth.open, .av-mouth-o { fill: var(--av-mouth); stroke: var(--av-line); stroke-width: 1.2; }
+.av-blush ellipse { fill: var(--av-iris-3); opacity: .28; }
+.av-dots circle { fill: var(--panel); stroke: var(--ink-3); stroke-width: 1.2; }
+.av-zzz text { fill: var(--av-iris-2); font: 700 11px var(--sans); }
+.av-zzz .b { font-size: 13px; } .av-zzz .c { font-size: 16px; }
+.av-sparkle path { fill: #f2c94c; }
+.av-sweat path { fill: #8ec5ff; stroke: var(--av-line); stroke-width: .6; }
+.av-open { transform-box: fill-box; transform-origin: center; animation: av-blink 5.4s infinite; }
+.av-eye:nth-of-type(2) .av-open { animation-delay: .02s; }
+@keyframes av-blink { 0%, 94%, 100% { transform: scaleY(1); } 96.5% { transform: scaleY(.08); } }
+.av-zzz text { animation: av-float 3s ease-in-out infinite; }
+.av-zzz .b { animation-delay: .5s; } .av-zzz .c { animation-delay: 1s; }
+@keyframes av-float { 0%, 100% { opacity: .35; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) { .av-open, .av-zzz text { animation: none; } }
+@media (max-width: 560px) {
+  .avatar { right: 8px; left: 8px; bottom: 8px; width: auto; grid-template-columns: 96px minmax(0, 1fr); max-height: 58vh; }
+  .av-face { width: 96px; }
+  .av-say { max-width: 96px; }
+  .avatar.closed { left: auto; }
 }
