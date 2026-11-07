@@ -77,6 +77,10 @@ text = "The mesh pursues long-term objectives - set by people, or by its own ini
 id = "P17-own-thoughts"
 text = "Thinking nodes put what the mesh holds into its own words, after the knowledge context: they recombine and rephrase only facts its memory nodes hold, and every thought is checked word by word against those facts, so a thought adds no fact (a draft that does is turned down). A thought is always labelled as its own thinking, with the node and the facts it rests on; it is shown beside an answer, never inside it (P8, P14), and is never stored as a fact or used as a source. The opinions it expresses are ones its thinking nodes hold, from evidence they name (P9: opinions about people stay private). Its desires do nothing on their own: the director may take one up as an objective it sets itself, only within [agency] max_self_objectives and its budgets, saying why (P12, P16). (Enforced in code by neuromesh/thinking.py.)"
 
+[[prime]]
+id = "P18-ego"
+text = "The ego is the outer layer, wrapped around every other node: it reads the mood an order is taken in, and on the way out its ego node may add a remark of its own - what it is curious about, a dream, its view, how it feels, or a doubt. The ego node only chooses the kind of remark; the words are built from what is so (its curiosity, its dreams and whether they checked out, its temperament and what moved it, what its thinking nodes and its record show), so a remark adds no fact (P8). A remark is always labelled as its ego's, shown after the answer and never in it, never stored as a fact or used as a source; it stays quiet when the answer was held back or the person is upset. Its ego is never about a person (P9). What its ego says it is curious about raises that area among the objectives the director may set itself, only within [agency] max_self_objectives and its budgets (P12, P16). People can turn the ego off. (Enforced in code by neuromesh/ego.py.)"
+
 # ------------------------------------------------------------------------- goals
 [[goals]]
 id = "G1-competence"
@@ -263,7 +267,7 @@ max_decisions_per_hour = 12             # its own budget (P4)
 max_self_tasks = 3                      # tasks it has set itself at once
 explore = 0.1                           # chance of trying another possible mode, to learn what it is worth
 modes = ["research", "practise", "examine", "improve", "consolidate", "build", "experiment", "pursue", "ruminate", "rest"]
-max_self_objectives = 2                 # objectives it has set itself at once (pursue)
+max_self_objectives = 4                 # objectives it has set itself at once (pursue: what it is curious about)
 research_articles = 3                   # a self-set learn task reads this many articles
 practice_items = 20
 improve_window_seconds = 600            # a self-set improve task is scored after this long (or when met)
@@ -309,6 +313,21 @@ min_interest = 0.3                      # interest an area needs before "underst
 min_lack = 0.25                         # what an area must lack (with no interest) before it is an aim
 enough_facts = 5                        # facts about an area it is interested in that are enough for now
 
+[ego]
+# The ego (P18): the outer layer, wrapped around every other node. It reads the mood an order is taken in;
+# on the way out the ego node decides whether to add a remark of its own - curious (and the area becomes one
+# it wants to understand, so the director sets itself objectives for it sooner), a dream, its view, how it
+# feels, or a doubt - built from its curiosity, dreams and temperament, and labelled. It also answers
+# "tell me about yourself", "how are you feeling?", "what did you dream about?", "what do you like?".
+#   /ego   /ego on   /ego off
+enabled = true
+express = true                          # its remarks after answers
+quiet_for = 1                           # answers it stays quiet after a remark
+min_confidence = 0.5                    # below this an answer counts as unsure (doubt)
+fascinate = true                        # what it says it is curious about becomes an area it wants to understand
+fascination_weight = 0.35               # the interest that adds (curiosity; the director's aims)
+fascination_days = 7                    # how long it lasts
+
 [avatar]
 # An optional face for the mesh in the web interface (the Avatar button): its mind at a glance - mood,
 # what it is doing, the objective it works on, its latest thought and what it wants to know, what waits
@@ -323,15 +342,19 @@ timeout_seconds = 120                   # how long one reply may take to speak
 max_chars = 600                         # longer texts are cut at a sentence
 
 [dreams]
-# Sleep and dreams: when there have been no orders for a while, it may fall asleep. Asleep, all
+# Sleep and dreams: when there have been no orders for a while, it tosses a coin each check: most of
+# the time it works on an objective, otherwise it falls asleep (unless sleep is turned off). Asleep, all
 # other background work waits and dream nodes make up questions and answers from what it already
 # knows (its memory nodes and retained passages - never a research tool or a teacher). Upon
 # waking, the answers are checked against its own memory; if any check out, the dream nodes go
 # through a genetic algorithm. Awake, "imagine ..." uses the best dream node (always labelled).
 enabled = true
-sleep_after_idle_seconds = 60           # quiet time (no orders from people) before it may fall asleep
-sleep_chance = 0.3                      # the chance, at each check, that it falls asleep then
-check_every_seconds = 30
+sleep_after_idle_seconds = 60           # quiet time (no orders from people) before the idle coin flip
+objective_chance = 0.75                 # idle coin flip: work on an objective (one it has, or one it sets itself from
+                                        # its curiosity) this often; otherwise it sleeps
+sleep_chance = 1.0                      # when the coin lands on sleep, the chance it does fall asleep then
+allow_sleep = true                      # false: it never sleeps (toggle it with /sleep off, /sleep on or the web)
+check_every_seconds = 30                # how often it tosses the coin while idle
 sleep_max_seconds = 120                 # longest sleep; an order always wakes it at once
 duty_cycle = 0.9                        # the background capacity dreaming may use while asleep
 dreams_per_step = 24
@@ -416,6 +439,7 @@ coder = 1.0                             # the code library's cues (teach only th
 experiment = 2.0                        # a request a made tool met when it tried the tool out
 approved = 2.5                          # a recipe a person approved a made tool for
 planner = 1.0                           # the strategies' cues (teach only the planner node)
+ego = 1.0                               # the ego policy (teaches only the ego node)
 
 # Each [teachers.<name>] table with a `provider` is an LLM teacher with its own budget.
 [teachers.ollama]
@@ -527,7 +551,7 @@ llm_code = true                         # an LLM teacher may write a tool no rec
 # asks you what nothing it has can answer, and follows up what the answers raise. It writes it all up
 # in state/objectives/<id>.md. Agency mode ruminate also thinks again about recent answers (P16).
 enabled = true
-max_objectives = 6                      # open at once (active or paused)
+max_objectives = 8                      # open at once (active or paused)
 steps_per_hour = 120                    # queries against itself, checks and readings, for all objectives (P4)
 step_seconds = 2                        # rest between two steps of one objective
 max_questions = 24                      # questions one objective may have, follow-ups included

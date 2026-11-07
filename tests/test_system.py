@@ -29,8 +29,9 @@ FAST = {
 
 
 def work_trace(res) -> list[str]:
-    """What the tools, nodes and engines did: the trace without the directors' intake and review lines."""
-    return [t for t in res.trace if not t.startswith(("director-", "reviewed by director"))]
+    """What the tools, nodes and engines did: the trace without the directors' intake and review lines, and
+    without the ego's lines around them (ego.py)."""
+    return [t for t in res.trace if not t.startswith(("director-", "reviewed by director", "ego (the outer layer)", "ego: "))]
 
 
 def make_root(tmp: Path, wikipedia: bool = False, kiwix: bool = False) -> Path:

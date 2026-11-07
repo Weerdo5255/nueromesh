@@ -72,7 +72,7 @@ def mesh(system) -> dict:
         routes.append(item)
     waiting = [{"name": t.name, "state": t.state, "note": t.note, "route": t.manifest.route}
                for t in s.tools.tools.values() if t.manifest.route not in spec.labels]
-    engines = ([_family(s, c) for c, sp in s.capabilities.items() if sp.internal and sp.kind not in ("agency", "coder", "planner")]
+    engines = ([_family(s, c) for c, sp in s.capabilities.items() if sp.internal and sp.kind not in ("agency", "coder", "planner", "ego")]
                if s.affect.enabled else [])
     mem = s.memory
     memory = [{"id": n.id, "facts": len(n.facts()), "bytes": n.bytes, "first_bytes": n.first_bytes,
@@ -114,7 +114,14 @@ def mesh(system) -> dict:
                             "state": s.tools.tools[d["name"]].state if d["name"] in s.tools.tools else None}
                            for d in sm.drafts.values()],
                  "recent": [h["line"] for h in list(sm.history)[-3:]]}
-    return {"directors": directors, "toolsmith": toolsmith, "dreams": dreams, "director": director, "router": _family(s, DISPATCH), "routes": routes, "waiting": waiting, "engines": engines,
+    eg = s.ego
+    ego_champ = s.registry.champion("ego") if "ego" in s.capabilities else None
+    last_remark = eg.remarks[-1] if eg.remarks else None
+    ego = ({"enabled": True, "mood": s.affect.snapshot().get("mood", "steady"),
+            "node": node_brief(ego_champ) if ego_champ else None, "examples": s.store.count("ego") if "ego" in s.capabilities else 0,
+            "last": {k: last_remark.get(k) for k in ("kind", "text", "mood", "about", "ts")} if last_remark else None,
+            "remarks": sum(v for k, v in eg.stats.items() if k not in ("quiet", "fascinated"))} if eg.enabled else None)
+    return {"ego": ego, "directors": directors, "toolsmith": toolsmith, "dreams": dreams, "director": director, "router": _family(s, DISPATCH), "routes": routes, "waiting": waiting, "engines": engines,
             "memory": memory, "memory_enabled": mem.enabled,
             "thinking": [{"id": n.id, "thoughts": len(n.outputs) - 1, "status": n.status, "passed": n.passed, "total": n.total,
                           "served": n.served, "spec": n.spec()} for n in s.thinking.nodes.values()] if s.thinking.enabled else [],

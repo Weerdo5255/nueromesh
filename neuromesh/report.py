@@ -240,6 +240,15 @@ def describe_event(ev: Event) -> str | None:
     if t == "dream.wake":
         return (f"[sleep]    woke up ({d['reason']}) after {d['seconds']:g}s: {d['dreams']} dreams, {d['rehearsed']} rehearsed, "
                 f"{d['answered']} answered on its own ({d['imagined']} imagined)")
+    if t == "dream.flip":
+        return (f"[idle]     tossed the coin ({d['roll']:.2f}; an objective below {d['chance']:.2f}, sleep above): "
+                f"{d['outcome']} - {_cut(d['detail'], 140)}")
+    if t == "dream.toggled":
+        return f"[sleep]    {d['by']} {'let it sleep again' if d['allow'] else 'turned sleep off: it stays awake'}"
+    if t == "ego.spoke":
+        return f"[ego]      after {d['order']}, in a {d['mood']} mood ({d['kind']}, {d['node']}): {_cut(d['text'], 140)}"
+    if t == "ego.toggled":
+        return f"[ego]      {d['by']} turned its ego {'on' if d['on'] else 'off'}"
     if t == "dream.dreamt":
         return f"[dream]    {d['kind']}: '{_cut(d['question'], 70)}' -> '{_cut(d['answer'], 40)}' ({d['confidence']:.0%})"
     if t == "dream.reviewed":

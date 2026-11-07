@@ -165,6 +165,23 @@ pursue = "set itself a long-term objective: plan it, and work on it by asking it
 ruminate = "think again about recent answers it was unsure of, and what it would say now"
 rest = "do nothing for now"
 
+[ego]
+answer = "In that situation my ego would choose: {label} ({description})."
+description = "The ego, the nodes wrapped around all the others: given its mood, the tone of the message, how the answer went, what it makes of the topic, whether it dreamt about it, whether it has a view of it and whether it spoke a moment ago, decide whether to say something of its own after the answer, and what kind of thing. The words are built from what is so, and always labelled as its ego's (P18)."
+labels = ["quiet", "curious", "dream", "opinion", "feeling", "doubt"]
+open_labels = false
+internal = true
+kind = "ego"
+teachers = ["human", "ego"]       # people, and the ego policy
+
+[ego.label_descriptions]
+quiet = "say nothing of its own"
+curious = "say it is curious about the topic, and why; the area becomes one it wants to understand"
+dream = "say what it dreamt about the topic, and whether that checked out"
+opinion = "give its own view of the topic, with its reasons"
+feeling = "say how it feels right now, and what moved it"
+doubt = "say it doubts itself here, and why"
+
 [planner]
 answer = "I would pursue that with the {label} strategy ({description})."
 description = "The planner node: given a long-term objective, choose how to pursue it. The plan's questions are then asked of the mesh itself, one at a time, checked, followed up and written up (P16)."

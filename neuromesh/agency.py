@@ -86,7 +86,7 @@ MOOD_DRIVES = {"upbeat": {"research": 0.15, "practise": 0.05, "build": 0.1, "pur
                "alert": {"examine": 0.08, "consolidate": 0.05, "experiment": 0.05, "ruminate": 0.05},
                "tense": {"consolidate": 0.15, "examine": 0.1, "research": -0.1, "build": -0.1, "ruminate": 0.15},
                "subdued": {"rest": 0.3, "research": -0.1, "build": -0.1, "ruminate": 0.1},
-               "wary": {"consolidate": 0.2, "research": -0.3, "build": -0.5, "pursue": -0.3, "ruminate": 0.1}}
+               "wary": {"consolidate": 0.2, "research": -0.3, "build": -0.5, "pursue": -0.6, "ruminate": 0.1}}
 MOOD_WHY = {"upbeat": "it is in good spirits, so it reads up and practises",
             "content": "it is content, so it follows its curiosity",
             "alert": "it is alert, so it measures and checks itself",
@@ -135,10 +135,10 @@ def drives(f: dict) -> dict[str, float]:
         d["build"] = 0.5 + (0.15 if f.get("needs") == "many" else 0.0)
     if f.get("newtools") == "fresh":                                                         # try what it made
         d["experiment"] = 0.7
-    if f.get("aims") == "some":                                                              # understand properly
-        d["pursue"] = 0.45
+    if f.get("aims") == "some":                                                              # understand what it is
+        d["pursue"] = 0.6                                                                    # curious about
     elif f.get("aims") == "gaps":                                                            # find out what it lacks
-        d["pursue"] = 0.55
+        d["pursue"] = 0.7
     if f.get("doubts") == "some":                                                            # think it over again
         d["ruminate"] = 0.5
     last = f.get("last")

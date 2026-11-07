@@ -172,7 +172,10 @@ class TemperamentSystemTests(unittest.IsolatedAsyncioTestCase):
             res = await self.system.submit(text)
             self.assertEqual(res.disposition, "", (text, res.answer))
             self.assertIsNone(res.original)
-            self.assertEqual([st["capability"] for st in res.steps][-2:], ["affect", "disposition"])
+            caps = [st["capability"] for st in res.steps]
+            self.assertEqual([c for c in caps if c != "ego"][-2:], ["affect", "disposition"])
+            if "ego" in caps:  # the ego sees every answer to a question off, last (P18)
+                self.assertEqual(caps[-1], "ego")
         self.assertGreater(self.system.affect.state.values["valence"], 0.2)
 
     async def test_care_floor_overrules_withholding_for_distress(self):

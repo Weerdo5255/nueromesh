@@ -60,7 +60,9 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(policy(flags(needs="some", mood="wary"))[1], "it is wary, so it checks what it already holds instead of reaching outside")
         # objectives (P16): something to understand properly, and answers worth a second thought
         self.assertEqual(policy(flags(aims="some"))[0], "pursue")
-        self.assertEqual(policy(flags(doubts="some", aims="some"))[0], "ruminate")
+        self.assertEqual(policy(flags(doubts="some", aims="some"))[0], "pursue")      # curiosity comes first
+        self.assertEqual(policy(flags(doubts="some", aims="some", mood="tense"))[0], "ruminate")
+        self.assertEqual(policy(flags(aims="gaps", topics="many", research="ready"))[0], "pursue")
         self.assertEqual(policy(flags(aims="some", mood="wary"))[0], "rest")      # wary: no new aims
         self.assertEqual(policy(flags(doubts="some", mood="tense"))[0], "ruminate")
 

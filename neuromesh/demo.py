@@ -312,10 +312,12 @@ async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7,
         demo.say("Phase 8 - sleep: it dreams about what it knows, checks its dreams on waking, then imagines")
         dp = system.directives.dreams
         dp.enabled, dp.sleep_after_idle_seconds, dp.check_every_seconds, dp.sleep_chance = True, 0.5, 0.3, 1.0
+        dp.objective_chance = 0.0  # the idle coin always lands on sleep here
         dp.sleep_max_seconds, dp.dreams_per_night, dp.ga_epochs = 5, 400, 40
         evolved = lambda: any(e.topic == "dream.evolved" for e in system.bus.recent("dream.*", 300))  # noqa: E731
         await demo.wait_for(evolved, 40, "a night's dreams to be checked")
         dp.sleep_chance = 0.0
+        dp.objective_chance = 0.75
         system.dreams.wake("the demo moves on")
         for prompt in ("imagine the capital of Australia", "what if Jane Austen painted the Mona Lisa",
                        "imagine a mountain on Jupiter"):

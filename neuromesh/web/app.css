@@ -133,6 +133,54 @@ input[type="text"], input[type="password"], input:not([type]), textarea, select 
 .pair-bar.interest b { background: var(--hema); }
 .pair-bar.lack b { background: var(--eosin); }
 .gaps { margin: 4px 0 0; padding-left: 18px; font-size: 13px; color: var(--ink-2); }
+/* the ego: the membrane wrapped around everything, tinted by its mood */
+.mood-upbeat, .mood-content { --ego-tone: var(--good); }
+.mood-steady { --ego-tone: var(--hema); }
+.mood-alert { --ego-tone: var(--tool); }
+.mood-subdued { --ego-tone: var(--warn); }
+.mood-tense, .mood-wary { --ego-tone: var(--bad); }
+.ego { --ego-tone: var(--hema); margin: 10px 0 2px; padding: 8px 12px 9px; border-left: 4px double var(--ego-tone);
+  background: color-mix(in srgb, var(--ego-tone) 8%, var(--panel)); border-radius: 0 8px 8px 0; }
+.ego.mood-upbeat, .ego.mood-content { --ego-tone: var(--good); }
+.ego.mood-alert { --ego-tone: var(--tool); }
+.ego.mood-subdued { --ego-tone: var(--warn); }
+.ego.mood-tense, .ego.mood-wary { --ego-tone: var(--bad); }
+.ego p { margin: 0; }
+.ego p + p { margin-top: 4px; }
+.ego-by { font-size: 12.5px; color: var(--ego-tone); font-weight: 600; margin-bottom: 3px !important; }
+.ego-by span { font-weight: 400; color: var(--ink-3); }
+.ego-now { border: 1px solid var(--rule); border-left: 4px double var(--ego-tone, var(--hema)); border-radius: 0 10px 10px 0; padding: 10px 14px; margin: 4px 0 12px; }
+.ego-now p { margin: 0; }
+.ego-mood { font-size: 15.5px; }
+.ego-mood b { color: var(--ego-tone, var(--hema)); text-transform: capitalize; }
+.ego-remark { border-left: 3px solid color-mix(in srgb, var(--ego-tone, var(--hema)) 55%, transparent); padding-left: 10px !important; }
+.kind-chip.ego-chip { background: color-mix(in srgb, var(--ego-tone, var(--hema)) 15%, transparent); color: var(--ego-tone, var(--hema)); }
+.kind-chip.flip-objective { background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good); }
+.kind-chip.flip-sleep { background: var(--hema-soft); color: var(--hema); }
+.kind-chip.flip-awake, .kind-chip.flip-nothing { background: color-mix(in srgb, var(--ink-3) 15%, transparent); color: var(--ink-2); }
+.m-ego { --ego-tone: var(--hema); }
+.m-ego.mood-upbeat, .m-ego.mood-content { --ego-tone: var(--good); }
+.m-ego.mood-alert { --ego-tone: var(--tool); }
+.m-ego.mood-subdued { --ego-tone: var(--warn); }
+.m-ego.mood-tense, .m-ego.mood-wary { --ego-tone: var(--bad); }
+.m-ego-outer { fill: none; stroke: var(--ego-tone); stroke-width: 1.6; opacity: .6; }
+.m-ego-inner { fill: none; stroke: var(--ego-tone); stroke-width: 1.1; stroke-dasharray: 1.5 5; stroke-linecap: round; opacity: .75; }
+.m-ego-pad { fill: var(--panel); }
+.m-ego-node { fill: var(--ego-tone); }
+.m-ego-node.sel { stroke: var(--eosin); stroke-width: 3; }
+.m-ego-label { font: 13px var(--sans); fill: var(--ink-2); paint-order: stroke; stroke: var(--panel); stroke-width: 8px; stroke-linejoin: round; }
+.m-ego-name { font-weight: 700; fill: var(--ego-tone); }
+.m-ego-hop { fill: none; stroke: var(--hema); stroke-width: 1.6; stroke-dasharray: 2 2.2; }
+.switch { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; color: var(--ink); cursor: pointer; margin-left: 4px; }
+.switch input, .row .switch input { width: 34px; min-width: 0; height: 19px; appearance: none; border-radius: 999px; background: var(--rule); position: relative; cursor: pointer;
+  transition: background .15s; margin: 0; flex: none; padding: 0; border: 0; }
+.switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: var(--panel);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: transform .15s; }
+.switch input:checked { background: var(--hema); }
+.switch input:checked::after { transform: translateX(15px); }
+.switch input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.switch input:disabled { opacity: .6; }
+@media (prefers-reduced-motion: reduce) { .switch input, .switch input::after { transition: none; } }
 .kind-chip { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px; vertical-align: 1px; }
 .kind-chip.gap { background: var(--eosin-soft); color: var(--eosin); }
 .kind-chip.interest { background: var(--hema-soft); color: var(--hema); }
@@ -488,3 +536,8 @@ dialog .row { margin-top: 14px; justify-content: flex-end; }
   .av-say { max-width: 96px; }
   .avatar.closed { left: auto; }
 }
+.av-ego { border-left: 3px double var(--ego-tone, var(--hema)); padding-left: 6px; display: inline-block; }
+.av-switch { margin-left: 8px; vertical-align: middle; }
+.av-switch input { width: 28px; height: 16px; }
+.av-switch input::after { width: 12px; height: 12px; }
+.av-switch input:checked::after { transform: translateX(12px); }

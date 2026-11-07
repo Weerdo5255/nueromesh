@@ -27,6 +27,7 @@ FACTS = [("What is the capital of France?", "Paris is the capital and largest ci
 
 DREAMS = {**FAST, "memory": {"enabled": True, "interval_seconds": 0.02},
           "dreams": {"enabled": True, "sleep_after_idle_seconds": 0.3, "check_every_seconds": 0.2, "sleep_chance": 1.0,
+                     "objective_chance": 0.0,
                      "sleep_max_seconds": 3, "dreams_per_night": 300, "ga_epochs": 30}}
 
 

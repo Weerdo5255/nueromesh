@@ -206,10 +206,20 @@
       view ? h("p", { class: "dim small" }, view) : null);
   }
 
+  // ------------------------------------------------------------------ its ego, on the way out
+  // The ego is wrapped around everything: after the answer it may say something of its own - what it is
+  // curious about, a dream, its view, how it feels, a doubt - built from what is so and labelled (P18).
+  const EGO_KIND = { curious: "curious", dream: "a dream", opinion: "its view", feeling: "how it feels", doubt: "a doubt", self: "itself" };
+  function egoAside(e) {
+    return h("aside", { class: `ego mood-${e.mood}`, "aria-label": "Its ego" },
+      h("p", { class: "ego-by" }, "Its ego", h("span", {}, ` ${EGO_KIND[e.kind] || e.kind}, in a ${e.mood} mood; its own view, not part of the answer`)),
+      h("p", {}, e.text));
+  }
+
   // ------------------------------------------------------------------ was it right?
   // Yes: the nodes that answered learn so. No: it offers the next most likely answers, worked out now,
   // or none of them (and what is right, if you know); it learns from what you pick.
-  const UNCHECKED = ["tasks", "objectives", "toolsmith", "mind", "thinking"];  // these hand work on rather than answer (corrections.py)
+  const UNCHECKED = ["tasks", "objectives", "toolsmith", "mind", "thinking", "ego"];  // these hand work on rather than answer (corrections.py)
   function answerCheck(orderId, text) {
     const box = h("div", { class: "check", role: "group", "aria-label": "Was this answer right?" });
     const upper = t => t.charAt(0).toUpperCase() + t.slice(1);
@@ -329,6 +339,7 @@
     ];
     if (r.disposition) meta.push(h("span", {}, `temperament: ${r.disposition}`));
     if (r.thought && r.route !== "thinking") kids.push(thoughtAside(r.thought));
+    if (r.ego) kids.push(egoAside(r.ego));
     kids.push(h("div", { class: "meta" }, meta, close));
     if (r.order_id && !UNCHECKED.includes(r.route)) kids.push(answerCheck(r.order_id, a.text));
     if (AV.on && store.get("avatar.read", "") === "1" && r.answer) setTimeout(() => speakNow(String(r.answer).split("\nSource")[0]), 50);
@@ -357,8 +368,9 @@
     const lane = top + n * rowH + 42;
     const longest = Math.max(10, ...m.routes.map(r => Math.min(26, r.route.length)));
     const label = 300, target = label + Math.round(longest * 7.8) + 30;
+    const inset = m.ego ? 34 : 12;  // inside the ego's membrane, when there is one
     return { W: width, H: lane + 34 + (m.dreams ? 56 : 0), rowH, top, yMid, lane, routerR, X: { inlet: 16, router: 160, label, target },
-             y: i => top + i * rowH + rowH / 2, chars: x => Math.max(12, Math.floor((width - x - 12) / 6.9)) };
+             y: i => top + i * rowH + rowH / 2, chars: x => Math.max(12, Math.floor((width - x - inset) / 6.9)) };
   }
   function routePath(g, i) {
     const y = g.y(i), X = g.X;
@@ -510,7 +522,10 @@
         const txt = sv("text", { x: x + 8, y: y + 4.5, class: "m-text" });
         const room = g.chars(x + 8);
         const head = `memory nodes first (${facts} facts)` + (thinkNodes.length ? `, then thinking (${thoughts} thoughts)` : "");
-        if (memNodes.length) txt.append(sv("tspan", {}, head), sv("tspan", { class: "m-sub", dx: 8 }, cut(`then ${teachers}`, Math.max(8, room - head.length - 2))));
+        if (memNodes.length) {
+          txt.append(sv("tspan", {}, cut(head, room)));
+          if (room - head.length > 14) txt.append(sv("tspan", { class: "m-sub", dx: 8 }, cut(`then ${teachers}`, room - head.length - 2)));
+        }
         else txt.append(sv("tspan", { class: "m-sub" }, cut(teachers, room)));
         svg.append(txt);
       } else {
@@ -563,13 +578,44 @@
         : "no dream nodes yet: it dreams the first time it sleeps";
       svg.append(sv("text", { x: Math.max(x + 8, X.label), y: dy + 4.5, class: dm.asleep ? "m-route hit" : "m-text" }, cut(text, g.chars(Math.max(x + 8, X.label)))));
     }
+    if (m.ego) {  // the ego: a membrane wrapped around every other node, tinted by its mood
+      const pad = 30, inner = sv("g", { transform: `translate(0 ${pad})` });
+      while (svg.firstChild) inner.append(svg.firstChild);
+      g.H += pad * 2;
+      g.offset = pad;
+      svg.setAttribute("viewBox", `0 0 ${g.W} ${g.H}`);
+      svg.setAttribute("height", g.H);
+      svg.setAttribute("aria-label", `${svg.getAttribute("aria-label")}; its ego wraps around all of it, in a ${m.ego.mood} mood`);
+      svg.append(inner, egoMembrane(m.ego, g));
+    }
     return { svg, g };
+  }
+
+  function egoMembrane(e, g) {
+    const W = g.W, H = g.H, last = e.last;
+    const grp = sv("g", { class: `m-ego mood-${e.mood}` });
+    grp.append(sv("rect", { x: 4, y: 12, width: W - 8, height: H - 24, rx: 26, class: "m-ego-outer" }),
+      sv("rect", { x: 9, y: 17, width: W - 18, height: H - 34, rx: 21, class: "m-ego-inner" }));
+    const n = e.node, cx = 36, cy = 14;
+    grp.append(sv("circle", { cx, cy, r: 8, class: "m-ego-pad" }));
+    grp.append(n ? sv("circle", { cx, cy, r: 6.5, class: "m-ego-node" + mark(n.id), ...nodeAttrs(n.id) },
+      sv("title", {}, `ego node: ${nodeTip(n)}
+it decides whether to say something of its own after an answer, and what`))
+      : sv("circle", { cx, cy, r: 6, class: "m-none" }, sv("title", {}, `ego node: not built yet (${e.examples} examples); the ego policy decides`)));
+    grp.append(sv("text", { x: cx + 15, y: cy + 4.5, class: "m-ego-label" },
+      sv("tspan", { class: "m-ego-name" }, "ego"), sv("tspan", { dx: 8 }, `takes every order in, in a ${e.mood} mood`)));
+    const room = g.chars(cx + 15);
+    grp.append(sv("text", { x: cx + 15, y: H - 7.5, class: "m-ego-label m-ego-out" },
+      cut(last ? `on the way out it said (${EGO_KIND[last.kind] || last.kind}): ${last.text}` : "on the way out it may add a view of its own, labelled", room)));
+    return grp;
   }
 
   function drawLayer(m, g) {
     const svg = sv("svg", { viewBox: `0 0 ${g.W} ${g.H}`, "aria-hidden": "true" });
+    const shift = sv("g", { transform: `translate(0 ${g.offset || 0})` });
+    svg.append(shift);
     m.routes.forEach((r, i) => {
-      svg.append(sv("path", { id: `pulse-${i}`, d: `M 70 ${g.yMid} L ${g.X.router} ${g.yMid} ` + routePath(g, i).replace(/^M [\d.]+ [\d.]+ /, ""), fill: "none", stroke: "none" }));
+      shift.append(sv("path", { id: `pulse-${i}`, d: `M 70 ${g.yMid} L ${g.X.router} ${g.yMid} ` + routePath(g, i).replace(/^M [\d.]+ [\d.]+ /, ""), fill: "none", stroke: "none" }));
     });
     return svg;
   }
@@ -582,7 +628,7 @@
     const label = $(`#specimen [data-route="${CSS.escape(route)}"]`);
     if (label) { label.classList.add("hit"); setTimeout(() => label.classList.remove("hit"), 900); }
     if (reduceMotion()) return;
-    const layer = $("#specimen .layer svg");
+    const layer = $("#specimen .layer svg g") || $("#specimen .layer svg");
     if (!layer) return;
     const dot = sv("circle", { r: 4.5, class: "m-pulse" });
     const anim = sv("animateMotion", { dur: "0.8s", fill: "freeze", begin: "indefinite", calcMode: "paced" });
@@ -603,7 +649,7 @@
     if (key === S.meshKey && host.querySelector("svg")) return;
     S.meshKey = key;
     const { svg, g } = drawMesh(m, width);
-    const layerKey = `${m.routes.map(r => r.route).join("|")}:${g.routerR}:${width}`;
+    const layerKey = `${m.routes.map(r => r.route).join("|")}:${g.routerR}:${width}:${g.H}`;
     let stage = host.querySelector(".stage");
     if (!stage) { stage = h("div", { class: "stage", style: "position:relative;width:max-content" }); fill(host, stage); }
     const oldLayer = stage.querySelector(".layer");
@@ -620,7 +666,7 @@
   }
 
   // ------------------------------------------------------------------ a closer look
-  const STAGE = { director: "director", router: "router", memory: "memory node", thinking: "thinking node", tool: "tool", knowledge: "retained knowledge",
+  const STAGE = { ego: "ego", director: "director", router: "router", memory: "memory node", thinking: "thinking node", tool: "tool", knowledge: "retained knowledge",
                   teacher: "teacher", affect: "affect", disposition: "disposition" };
   // a thinking node: a thought bubble (a cell with a small one trailing it)
   function thinkGlyph(g, cx, cy, r, learning = false) {
@@ -633,6 +679,7 @@
     const g = sv("svg", { width: 18, height: 18, viewBox: "0 0 18 18", "aria-hidden": "true", class: "hop-glyph" });
     if (hp.kind === "thinking") thinkGlyph(g, 10, 8, 5.5);
     else if (hp.kind === "director") g.append(sv("polygon", { points: "9,2 16,9 9,16 2,9", class: "m-director" }));
+    else if (hp.kind === "ego" || hp.stage === "ego") g.append(sv("rect", { x: 1.5, y: 3.5, width: 15, height: 11, rx: 5, class: "m-ego-hop" }));
     else if (hp.kind === "memory") g.append(sv("polygon", { points: hexagon(9, 9, 7), class: "m-mem" }));
     else if (hp.kind === "tool") g.append(sv("rect", { x: 3, y: 3, width: 12, height: 12, rx: 2, class: "m-tool" }));
     else if (hp.kind === "node") g.append(sv("circle", { cx: 9, cy: 9, r: 6.5, class: "m-champ" }));
@@ -1227,8 +1274,21 @@
       catch (err) { toast(err.message); } finally { b.disabled = false; }
     } }, prompt, h("button", { type: "submit", class: "primary" }, "Imagine"));
     const ln = dr.last_night || {};
+    const chance = pct(dr.objective_chance ?? 0.75), rest = pct(1 - (dr.objective_chance ?? 0.75));
     const state = dr.asleep ? `Asleep for ${span(dr.slept_for)}, dreaming: ${dr.dreams_tonight} dreams so far. Everything else waits; an order wakes it.`
-      : `Awake for ${span(dr.awake_for)}. When there are no orders for a while it may fall asleep and dream about what it already knows, with no research tools or teachers.`;
+      : `Awake for ${span(dr.awake_for)}. When there are no orders for a while it tosses a coin: ${chance} of the time it works on an objective (one it has, or one it sets itself from what it is curious about), ` +
+        (dr.allow_sleep === false ? `and the other ${rest} it rests awake, because sleep is off.` : `and ${rest} of the time it falls asleep and dreams about what it already knows, with no research tools or teachers.`);
+    const sleepSwitch = h("label", { class: "switch" },
+      h("input", { type: "checkbox", role: "switch", checked: dr.allow_sleep !== false, onchange: e => {
+        const on = e.target.checked;
+        e.target.disabled = true;
+        api("/dreams", { allow_sleep: on, by: "web" }).then(r => { toast(cut(r.message, 140)); tick(true); }).catch(err => { e.target.checked = !on; toast(err.message); })
+          .finally(() => { e.target.disabled = false; });
+      } }), h("span", {}, "Let it sleep"));
+    const flips = (dr.flips || []).slice().reverse().slice(0, 6).map(f => h("li", { class: "ask" },
+      h("p", {}, h("span", { class: `kind-chip flip-${f.outcome}` }, f.outcome === "objective" ? "objective" : f.outcome === "sleep" ? "slept" : f.outcome === "awake" ? "stayed awake" : "nothing to do"),
+        h("span", { class: "dim small" }, ` at ${clock(f.ts)}, rolled ${f.roll.toFixed(2)}`)),
+      h("p", { class: "why" }, f.detail)));
     const nodes = dr.nodes.map(n => h("li", { class: "ask" }, h("p", {}, n.champion ? h("b", {}, `${n.id} (dreams best)`) : h("b", {}, n.id),
       ` generation ${n.generation}, ${shape(n.shape)}, ${num(n.weights)} weights: `, h("span", { class: n.fitness === null ? "dim" : "ok" }, n.fitness === null ? "not checked yet" : `${pct(n.fitness)} of checked dreams right`)),
       n.parent ? h("p", { class: "why" }, `from ${n.parent}${n.changes.length ? ": " + n.changes.join("; ") : ""}`) : null));
@@ -1239,7 +1299,11 @@
       h("p", { class: "lede" }, state),
       h("div", { class: "row" },
         dr.asleep ? h("button", { type: "button", class: "primary", onclick: e => act(e.target, () => api("/dreams", { action: "wake", by: "web" }), "Awake") }, "Wake up")
-          : h("button", { type: "button", onclick: e => act(e.target, () => api("/dreams", { action: "sleep", by: "web" }), r => r.message) }, "Sleep now")),
+          : h("button", { type: "button", disabled: dr.allow_sleep === false, title: dr.allow_sleep === false ? "Sleep is off" : "",
+              onclick: e => act(e.target, () => api("/dreams", { action: "sleep", by: "web" }), r => r.message) }, "Sleep now"),
+        h("button", { type: "button", disabled: dr.asleep, onclick: e => act(e.target, () => api("/dreams", { action: "flip", by: "web" }), r => cut(`${r.flip.outcome}: ${r.flip.detail}`, 160)) }, "Toss the coin now"),
+        sleepSwitch),
+      flips.length ? h("div", { style: "margin-top:12px" }, h("h3", {}, "Idle coin flips"), h("ul", { class: "rows" }, flips)) : null,
       h("h3", { style: "margin-top:14px" }, "Imagine"), imagine,
       h("p", { class: "dim small" }, "Its best dream node suggests what comes to mind and blends it into something it remembers. Imagined answers are labelled and never stored as facts."),
       h("div", { class: "cols", style: "margin-top:10px" },
@@ -1415,6 +1479,42 @@
           mine.length ? h("ul", { class: "rows" }, mine) : h("p", { class: "dim" }, "None yet."))));
   }
 
+  function egoPanel(eg, brief) {
+    if (!eg) return h("div", { class: "section" }, h("h2", {}, "Ego"), h("p", { class: "dim" }, "Loading…"));
+    const toggle = h("button", { type: "button", class: eg.enabled ? "" : "primary",
+      onclick: e => act(e.target, () => api("/ego", { enabled: !eg.enabled, by: "web" }), r => { S.extraAt.ego = 0; return cut(r.message, 120); }) },
+      eg.enabled ? "Turn its ego off" : "Turn its ego on");
+    const lede = h("p", { class: "lede" }, "Its ego is the outer layer, wrapped around all its other nodes. Every order passes it on the way in, where it notes the mood it takes it in, " +
+      "and again on the way out, where its ego node decides whether to say something of its own: what it is curious about, a dream, its view, how it feels, or a doubt. " +
+      "The words come from what is so - its curiosity, dreams, temperament and thinking nodes - and are always labelled as its own, never part of the answer.");
+    if (!eg.enabled) return h("div", { class: "section" }, h("h2", {}, "Ego"), lede, h("div", { class: "row" }, toggle), h("p", { class: "dim" }, "Its ego is off: no remarks of its own after answers."));
+    const v = eg.views || { likes: [], dislikes: [] };
+    const curious = (eg.curious || []).map(c => h("li", { class: "ask" }, h("p", {}, h("b", {}, c.name)), h("p", { class: "why" }, c.why || "–")));
+    const view = (x, like) => h("li", { class: "ask" }, h("p", {}, h("span", { class: `kind-chip ${like ? "interest" : "gap"}` }, like ? "likes" : "not fond of"), " ", h("b", {}, x.name)),
+      h("p", { class: "why" }, (like ? x.for : x.against).concat(x.colour ? [x.colour] : []).join("; ")));
+    const views = [...v.likes.map(x => view(x, true)), ...v.dislikes.map(x => view(x, false))];
+    const remarks = (eg.remarks || []).slice().reverse().map(r => h("li", { class: `ask ego-remark mood-${r.mood}` },
+      h("p", {}, h("span", { class: "kind-chip ego-chip" }, EGO_KIND[r.kind] || r.kind), " ", r.text),
+      h("p", { class: "why" }, `after ${r.order}${r.about ? ` (about ${r.about})` : ""}, in a ${r.mood} mood; ${r.how}`)));
+    const nodes = (eg.nodes || []).map(n => h("li", {}, h("b", {}, n.id), ` ${n.champion ? "serving" : n.status}${n.accuracy == null ? "" : `, held-out ${pct(n.accuracy)}`}`));
+    const st = eg.stats || {};
+    const spoke = Object.entries(st).filter(([k]) => EGO_KIND[k]).reduce((a, [, n]) => a + n, 0);
+    const d = eg.dreams || {};
+    return h("div", { class: "section" }, h("h2", {}, "Ego"), lede,
+      h("div", { class: `ego-now mood-${eg.mood}` },
+        h("p", { class: "ego-mood" }, h("b", {}, eg.mood), eg.feeling ? ` ${eg.feeling}` : ""),
+        h("p", { class: "small dim" }, `${spoke} remark${spoke === 1 ? "" : "s"} so far, ${st.quiet || 0} times it stayed quiet; it stays quiet for ${eg.quiet_for} answer${eg.quiet_for === 1 ? "" : "s"} after speaking. ` +
+          (d.allow_sleep === false ? "Sleep is off, so it is not dreaming." : d.asleep ? "It is asleep, dreaming." : ""))),
+      h("div", { class: "row" }, toggle, h("button", { type: "button", onclick: e => act(e.target, () => api("/order", { text: "Tell me about yourself", source: "web" }),
+        r => { showAnswer({ text: "Tell me about yourself", order: r }); window.scrollTo(0, 0); return "Asked"; }) }, "Ask about itself")),
+      h("div", { class: "cols", style: "margin-top:14px" },
+        h("div", {}, h("h3", {}, "Curious about"), curious.length ? h("ul", { class: "rows" }, curious) : h("p", { class: "dim" }, "Nothing yet: ask it things."),
+          h("p", { class: "small dim" }, "What its ego says it is curious about becomes an area it wants to understand: its director sets itself objectives from these sooner."),
+          h("h3", { style: "margin-top:14px" }, "Its views"), views.length ? h("ul", { class: "rows" }, views) : h("p", { class: "dim" }, "No likes or dislikes yet: they come from how it does, what it holds, what its thinking nodes and dreams make of things."),
+          h("h3", { style: "margin-top:14px" }, "Ego nodes"), nodes.length ? h("ul", { class: "rows small" }, nodes) : h("p", { class: "dim small" }, "No node yet: the ego policy decides while its node learns.")),
+        h("div", {}, h("h3", {}, "What it said lately"), remarks.length ? h("ul", { class: "rows" }, remarks) : h("p", { class: "dim" }, "Nothing yet: ask it a question."))));
+  }
+
   // open a node in the Live view's closer look, firing on a text
   function lookInside(id, text) {
     if (!S.closer) { S.closer = true; store.set("closer", "1"); }
@@ -1471,7 +1571,7 @@
   function offPanel(title, text) { return h("div", { class: "section" }, h("h2", {}, title), h("p", { class: "dim" }, text)); }
 
   // the Mind view is divided into tabs; the open one is in the address (#mind/tools) and remembered
-  const MIND_TABS = ["questions", "thinking", "curiosity", "objectives", "directors", "initiative", "tools", "dreams", "temperament", "thoughts"];
+  const MIND_TABS = ["questions", "ego", "thinking", "curiosity", "objectives", "directors", "initiative", "tools", "dreams", "temperament", "thoughts"];
   if (MIND_TABS.includes(store.get("mindTab", ""))) S.mindTab = store.get("mindTab", "");
 
   function mindBadges(st) {
@@ -1486,6 +1586,7 @@
     $("#note-mind-objectives").textContent = live ? `${live} active` : "";
     $("#note-mind-thinking").textContent = st.thinking?.enabled && st.thinking.thoughts ? `${st.thinking.thoughts}` : "";
     $("#badge-mind-curiosity").textContent = st.curiosity?.enabled && st.curiosity.gaps ? String(st.curiosity.gaps) : "";
+    $("#note-mind-ego").textContent = st.ego?.enabled ? st.ego.mood : "off";
   }
 
   function renderMind(force) {
@@ -1496,6 +1597,7 @@
     if (!force && busy(host)) return;
     const panel = {
       questions: () => questionsPanel(st.mind),
+      ego: () => egoPanel(S.extra.ego, st.ego),
       thinking: () => thinkingPanel(S.extra.thinking, st.thinking),
       curiosity: () => curiosityPanel(S.extra.curiosity, st.curiosity),
       objectives: () => objectivesPanel(st.objectives),
@@ -1697,6 +1799,7 @@
       }
     }
     if (S.view === "mind" && S.mindTab === "thinking" && due("thinking", 4000)) jobs.push(get("thinking", "/thinking"));
+    if (S.view === "mind" && S.mindTab === "ego" && due("ego", 4000)) jobs.push(get("ego", "/ego"));
     if (S.view === "mind" && S.mindTab === "curiosity" && due("curiosity", 4000)) jobs.push(get("curiosity", "/curiosity"));
     if (S.view === "mind" && S.mindTab === "thoughts") {
       if (due("opinions", 5000)) jobs.push(get("opinions", "/opinions"));
@@ -1948,7 +2051,14 @@
         g.want ? row("Wants", cut(g.want.want, 110), g.want.status === "pursuing" ? h("span", { class: "hit" }, " (on it)") : null) : null,
         g.lacks.gaps ? row("Lacks", `${g.lacks.gaps} gap${g.lacks.gaps === 1 ? "" : "s"} in what it knows`, g.lacks.aim ? h("span", { class: "dim" }, `; next: ${cut(g.lacks.aim, 60)}`) : null) : null,
         row("For you", asks.length ? h("a", { href: "#mind/questions" }, asks.join(", ")) : "nothing waiting"),
+        g.ego?.last ? row("Its ego", h("span", { class: `av-ego mood-${g.ego.last.mood}` }, cut(g.ego.last.text, 140))) : null,
         row("Initiative", ini.on ? `on (${ini.mode})` : "off", ini.last ? h("span", { class: "dim" }, `; last: ${cut(ini.last, 70)}`) : null),
+        row("When idle", g.sleep?.allowed === false ? `works on an objective ${pct(g.sleep.chance)} of the time, never sleeps`
+          : `works on an objective ${pct(g.sleep?.chance ?? 0.75)} of the time, sleeps otherwise`,
+          h("label", { class: "switch av-switch" }, h("input", { type: "checkbox", role: "switch", checked: g.sleep?.allowed !== false, "aria-label": "Let it sleep",
+            onchange: e => { const on = e.target.checked; e.target.disabled = true;
+              api("/dreams", { allow_sleep: on, by: "web" }).then(r => { toast(cut(r.message, 120)); avatarTick(true); }).catch(err => { e.target.checked = !on; toast(err.message); }); } }),
+            h("span", { class: "small" }, "sleep"))),
         row("Holds", `${hold.facts} facts, ${hold.thoughts} thoughts, ${hold.articles} articles, ${hold.nodes} serving nodes`)),
       h("div", { class: "av-voice" },
         h("button", { type: "button", class: "primary small", disabled: AV.busy, onclick: () => speakNow("") }, AV.busy ? "Speaking…" : "Ask how it is"),

@@ -116,8 +116,8 @@ class AnatomyTests(unittest.IsolatedAsyncioTestCase):
         t = anatomy.traces(s, 3)[0]
         self.assertEqual(t["text"], "what is 9 * 9")
         stages = [h["stage"] for h in t["hops"]]
-        self.assertEqual(stages[0], "director")
-        self.assertEqual(stages[-1], "director")
+        self.assertEqual((stages[0], stages[1]), ("ego", "director"))   # the ego wraps around everything (P18)
+        self.assertEqual((stages[-2], stages[-1]), ("director", "ego"))
         rhop = next(h for h in t["hops"] if h["stage"] == "router")
         self.assertEqual((rhop["node"], rhop["label"], rhop["input"]), (router.id, "tool:calculator", "what is 9 * 9"))
         self.assertIn(("tool", "calculator"), [(h["stage"], h.get("tool")) for h in t["hops"]])

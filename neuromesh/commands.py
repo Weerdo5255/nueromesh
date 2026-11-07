@@ -64,6 +64,8 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /toolsmith try <tool>           have it experiment with a tool it made now
   /dreams                         sleep and dreams: the dream nodes, last night's dreams, what checked out
   /sleep    /wake                 send it to sleep (dreaming) now, or wake it
+  /sleep off | on | flip          keep it awake (no sleep) or let it sleep; toss the idle coin now (75% objective, 25% sleep)
+  /ego [on | off]                 its ego: its mood, what it is curious about, its views, what it said lately
   /imagine <prompt>               its dream nodes imagine something (also: "imagine ...", "what if ...")
   /challenges                     benchmark suites, exam scores and trends
   /challenge run <suite> [n]      sit the exam now (graded, never learned from)
@@ -461,10 +463,14 @@ def dream_lines(system) -> list[str]:
     if st["asleep"]:
         head = f"dreams: asleep for {st['slept_for']}s, dreaming ({st['dreams_tonight']} dreams so far; everything else waits)"
     else:
-        head = (f"dreams: awake for {st['awake_for']}s; it may fall asleep after {d.pol.sleep_after_idle_seconds:g}s with no "
-                f"orders (chance {d.pol.sleep_chance:.0%} each {d.pol.check_every_seconds:g}s)")
+        head = (f"dreams: awake for {st['awake_for']}s; after {d.pol.sleep_after_idle_seconds:g}s with no orders it tosses a coin "
+                f"every {d.pol.check_every_seconds:g}s: an objective {d.pol.objective_chance:.0%} of the time, otherwise sleep"
+                + ("" if d.allow_sleep else " - but sleep is off, so it stays awake (/sleep on)"))
     out = [head, f"  {st['verified']} checked dreams kept; {st.get('sleeps', 0)} sleeps, {st.get('dreams', 0)} dreams, "
-                 f"{st.get('evolutions', 0)} evolutions, {st.get('imagined', 0)} things imagined"]
+                 f"{st.get('evolutions', 0)} evolutions, {st.get('imagined', 0)} things imagined; "
+                 f"{st.get('coin flips', 0)} coin flips ({st.get('flip objective', 0)} objective, {st.get('flip sleep', 0)} sleep)"]
+    for f in st["flips"][-4:][::-1]:
+        out.append(f"  flip {f['roll']:.2f}: {f['outcome']} - {f['detail'][:140]}")
     for n in st["nodes"]:
         fit = "-" if n["fitness"] is None else f"{n['fitness']:.0%}"
         out.append(f"  {'*' if n['champion'] else ' '} {n['id']} gen {n['generation']} {n['shape']} ({n['weights']:,} weights): "
@@ -615,7 +621,9 @@ async def execute(system, line: str) -> Output:
                if res.inquiry else [])
         thought = ([f"   ~ its own thinking ({res.thought['node']}, from {res.thought['grounds']} facts; not part of the answer): "
                     f"{res.thought['text']}"] if res.thought and res.route != "thinking" else [])
-        return Output([first] + [f"   {m}" for m in more] + thought + ask + [f"   . {step}" for step in res.trace],
+        ego = ([f"   @ its ego ({res.ego['kind']}, in a {res.ego['mood']} mood; its own view, not part of the answer): "
+                f"{res.ego['text']}"] if res.ego else [])
+        return Output([first] + [f"   {m}" for m in more] + thought + ego + ask + [f"   . {step}" for step in res.trace],
                       is_order=True)
     cmd, _, rest = line[1:].partition(" ")
     rest = rest.strip()
@@ -686,8 +694,21 @@ async def execute(system, line: str) -> Output:
         elif cmd in ("dreams", "dream"):
             out = dream_lines(system)
         elif cmd == "sleep":
-            ok, msg = system.dreams.fall_asleep("asked to", by=os.environ.get("USER", "operator"))
-            out = [f"  {msg}"]
+            who = os.environ.get("USER", "operator")
+            arg = rest.strip().lower()
+            if arg in ("off", "never", "no", "prevent", "stop"):
+                out = [f"  {system.dreams.set_allow_sleep(False, who)}"]
+            elif arg in ("on", "allow", "yes"):
+                out = [f"  {system.dreams.set_allow_sleep(True, who)}"]
+            elif arg in ("flip", "coin"):
+                rec = await system.dreamer.flip()
+                out = [f"  tossed the coin ({rec['roll']:.2f} against {system.dreams.pol.objective_chance:.2f}): "
+                       f"{rec['outcome']} - {rec['detail']}"]
+            elif arg:
+                out = ["  /sleep (now)   /sleep off (keep it awake)   /sleep on (let it sleep)   /sleep flip (toss the idle coin now)"]
+            else:
+                ok, msg = system.dreams.fall_asleep("asked to", by=who)
+                out = [f"  {msg}"]
         elif cmd == "wake":
             out = ["  awake" if system.dreams.wake("woken by a person", by=os.environ.get("USER", "operator"))
                    else "  it is not asleep"]
@@ -732,6 +753,12 @@ async def execute(system, line: str) -> Output:
             out = ["  its initiative is off or the mesh is halted (/director on)"] if rec is None else [f"  {rec.get('summary', '')}"]
         elif cmd in ("curiosity", "interests", "gaps"):
             out = [f"  {line}" for line in system.curiosity.lines()]
+        elif cmd == "ego":
+            who = os.environ.get("USER", "operator")
+            if rest.strip().lower() in ("on", "off"):
+                out = [f"  {system.ego.set_enabled(rest.strip().lower() == 'on', who)}"]
+            else:
+                out = system.ego.lines()
         elif cmd == "correct":
             book = system.corrections
             head, _, typed = rest.partition("::")

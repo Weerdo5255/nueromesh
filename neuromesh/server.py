@@ -72,6 +72,8 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, system.director.status()
         if path == "/dreams":
             return 200, system.dreams.status()
+        if path == "/ego":
+            return 200, system.ego.status()
         if path == "/directors":
             return 200, system.directors.status()
         if path == "/anatomy":  # ?node=<id or skill>&text=<input>: how a node is built, and what fires in it
@@ -198,15 +200,26 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                     return 400, {"ok": False, "message": "its initiative is off or the mesh is halted"}
                 out["decision"] = await d.decide(force=True)
             return 200, {"ok": True, **out, "status": d.status()}
-        if path == "/dreams":  # {"action": "sleep" | "wake"}
+        if path == "/ego":  # {"enabled": bool}
+            if not isinstance(body.get("enabled"), bool):
+                return 400, {"ok": False, "message": "send {\"enabled\": true | false}"}
+            msg = system.ego.set_enabled(body["enabled"], by=body.get("by", "api-operator"))
+            return 200, {"ok": True, "message": msg, "status": system.ego.status()}
+        if path == "/dreams":  # {"action": "sleep" | "wake" | "flip"} or {"allow_sleep": bool}
             action, by = body.get("action", ""), body.get("by", "api-operator")
+            if isinstance(body.get("allow_sleep"), bool):
+                msg = system.dreams.set_allow_sleep(body["allow_sleep"], by=by)
+                return 200, {"ok": True, "message": msg, "status": system.dreams.status()}
+            if action == "flip":
+                rec = await system.dreamer.flip()
+                return 200, {"ok": True, "flip": rec, "status": system.dreams.status()}
             if action == "sleep":
                 ok, msg = system.dreams.fall_asleep("asked to", by=by)
                 return (200 if ok else 400), {"ok": ok, "message": msg, "status": system.dreams.status()}
             if action == "wake":
                 ok = system.dreams.wake("woken by a person", by=by)
                 return (200 if ok else 400), {"ok": ok, "message": "awake" if ok else "it is not asleep"}
-            return 400, {"ok": False, "message": "action is sleep or wake"}
+            return 400, {"ok": False, "message": "action is sleep, wake or flip (or send allow_sleep: true | false)"}
         if path == "/directors":  # {"action": "spawn"} or {"action": "retire", "id": "director-1"}
             pool, by = system.directors, body.get("by", "api")
             if body.get("action") == "spawn":

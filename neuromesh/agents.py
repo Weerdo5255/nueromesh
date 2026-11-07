@@ -103,6 +103,10 @@ class Orchestrator(Agent):
         t0 = time.perf_counter()
         try:
             with self.sys.activity.track("order", order.source, " ".join(order.text.split())[:100]):
+                try:  # the ego, wrapped around everything: the mood it takes the order in (ego.py, P18)
+                    self.sys.ego.before(order)
+                except Exception:
+                    self.log.exception("the ego could not take in %s", order.id)
                 try:
                     result = await self.fulfil(order, review=False)  # a director takes it first (P14)
                     try:  # the emotional engines see every answer before the user does (P8 limits them)
@@ -133,6 +137,10 @@ class Orchestrator(Agent):
                     result.thought = self.sys.thinking.after(order, result)
                 except Exception:
                     self.log.exception("no thought could be added to %s", order.id)
+                try:  # and the ego last, around everything: its own view, labelled, after the answer (P18)
+                    result.ego = await self.sys.ego.after(order, result)
+                except Exception:
+                    self.log.exception("the ego could not see %s off", order.id)
         finally:
             self.sys.inflight -= 1
             sem.release()
@@ -186,6 +194,11 @@ class Orchestrator(Agent):
         prompt = imagine_prompt(order.text) if s.dreams.enabled else None
         if prompt is not None:  # "imagine ...": its dream nodes, labelled as imagination (P13)
             self.imagine(res, prompt)
+            return res
+        mine = s.ego.answer(order.text, order.id)  # questions about itself: its mood, dreams, likes, itself (P18)
+        if mine is not None:
+            res.route, res.output, res.confidence, res.served_by = "ego", mine[0], 1.0, "explicit"
+            res.trace.append(f"answered by its ego ({mine[2]}): {mine[1]}")
             return res
         thought = s.thinking.answer(order.text, order.id)  # what it thinks of a topic, or wants to find out (P17)
         if thought is not None:

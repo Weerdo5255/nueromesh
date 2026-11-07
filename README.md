@@ -653,9 +653,72 @@ activity log. It never sets the same aim twice, and you can pause or remove its 
 yours. `/curiosity` shows the areas, the objectives it could set itself and the ones it did. Ask
 it "what are you curious about?" too.
 
+It sets itself these objectives **more often** than it used to. Pursuing what it is curious about
+now outweighs reading up on links and second thoughts (pursue is worth 0.6, or 0.7 where it lacks
+information), up to 4 objectives of its own at once (`max_self_objectives`). Most idle coin flips
+(see sleep below) also work on an objective, and with none to work on it sets itself one from here.
+Whatever its **ego** says it is curious about (see below) gets more interest in its curiosity
+("its ego is curious about it", `[ego] fascination_weight` for `fascination_days`). That pushes it
+up the aims, so an area it finds itself curious about soon becomes "understand <area>".
+
+### The ego: nodes wrapped around all the others
+The **ego** is the outer layer of the mesh. Every order passes it twice:
+
+```
+order --> [ego: the mood it takes it in] --> director --> router, tools, memory, thinking, engines --> director --> [ego: its own remark] --> you
+```
+
+On the way in it notes the mood (temperament) it takes the order in. On the way out the **ego node**
+decides whether to say something of its own, and what kind of thing. The ego node is an ordinary
+learnable capability (`[ego]` in `capabilities.toml`), taught by the ego policy and replaced by
+better nodes like any other. It reads the situation as single words: its mood, the tone of the
+message, how the answer went (ok, unsure, failed, held back), what it makes of the topic (new,
+known, curious about), whether it dreamt about it, whether it has a view of it, and whether it
+spoke a moment ago. It chooses one of:
+
+| remark | when (the ego policy) | what it says |
+|---|---|---|
+| quiet | it spoke a moment ago (`quiet_for` answers), the answer was held back, the person is upset or frustrated | nothing |
+| curious | it is curious about the topic; or it could not answer, and in good spirits it wants to find out | "I'm really curious about Zorblax! (People asked about it 2 times; I hold no facts about it yet.) I've made it something I want to understand, so I may set myself an objective for it." |
+| dream | a recent dream touches on the topic (not when tense or wary) | "I dreamt about this. I asked myself "Paris is the capital of what?" and answered "France", and when I woke up that checked out against what I know." |
+| opinion | it has a view of the topic | "I like France: you told me I got it right 2 times." / "I'm not fond of Zorblax: I was told I got it wrong 2 times." |
+| feeling | its mood colours things (upbeat, tense, subdued, wary) | "I'm in good spirits right now: my mood turned upbeat after a message read as friendly." |
+| doubt | it could not answer, or was unsure | "I'm unsure of myself here: I couldn't answer it and I hold no facts about Zorblax." |
+
+**Its mood shapes all of it**: whether it speaks, the kind of remark and the words ("I'm really
+curious" when upbeat, "I'd like to understand it better" when low). Its views come from what it can
+point to: what its thinking nodes make of an area, how many facts it holds, how often people ask,
+answers you marked right or wrong, its dreams about it and whether they checked out. Its mood tips
+the balance a little, and it says so when it does ("I'm in good spirits").
+
+**A remark adds no fact (P18).** The node only chooses the kind of remark. The words are built
+from counts, dreams, moods and causes that are real. A remark is labelled as its ego's, shown after
+the answer and never in it ("@ its ego" in the console, "Its ego" on the web), and never stored as
+a fact, used as a source or offered for correction. Its ego is never about a person (P9).
+
+It also answers questions about **itself** from the same picture: "tell me about yourself", "how
+are you feeling?", "what did you dream about?", "what do you like?". `/ego` shows its mood, what it
+is curious about, its likes and dislikes, its ego nodes and what it said lately; `/ego off` and
+`/ego on` turn it off and on (or `[ego] enabled`, or the Ego tab in the web interface).
+
 ### Sleep and dreams: dream nodes, and imagination
-When no one has given it an order for a while (`sleep_after_idle_seconds`), the mesh has a chance
-(`sleep_chance`, checked every `check_every_seconds`) to **fall asleep**. Asleep, all other
+When no one has given it an order for a while (`sleep_after_idle_seconds`), the mesh **tosses a
+coin** every `check_every_seconds`:
+
+- **75% of the time** (`objective_chance`) it **works on an objective**: the next one waiting (not
+  one stuck on your answer), worked one step now. If it has none, its initiative sets itself one
+  from what it is curious about and starts on it.
+- **Otherwise it falls asleep** (`sleep_chance` of those times, 1.0 by default).
+
+Every flip, and what came of it, is logged (`[idle]` in the activity log) and shown in `/dreams` and
+the Dreams tab. `/sleep flip` tosses the coin now.
+
+**Sleep can be turned off**: `/sleep off` (or the "Let it sleep" switch in the Dreams tab and on the
+avatar, or `POST /dreams {"allow_sleep": false}`, or `[dreams] allow_sleep = false`). It wakes at
+once if it is asleep and stays awake. When the coin lands on sleep, it rests awake instead.
+`/sleep on` lets it sleep again. The setting survives a restart.
+
+Asleep, all other
 background work waits (training, evaluation, research, tasks, initiative) and the background
 capacity goes to dreaming, up to `duty_cycle`. An order always wakes it at once (P2), and so do
 a halt and a pause (P1); otherwise it wakes after `sleep_max_seconds` or `dreams_per_night` dreams.
@@ -704,8 +767,8 @@ the one it displaced takes the newcomer's place in turn.
 dream node it came from. It is never stored in a memory node, never used to answer an ordinary
 question, and dreaming never reaches outside the mesh. Every sleep, waking and evolution is
 audited. `/dreams` shows whether it is asleep, its dream nodes and their fitness, last night and
-recent dreams; `/sleep` and `/wake` send it to sleep or wake it now; `[dreams] enabled = false`
-turns sleep off.
+recent dreams and coin flips; `/sleep` and `/wake` send it to sleep or wake it now; `/sleep off`
+keeps it awake; `[dreams] enabled = false` turns dreams off entirely.
 
 ### Replies: the result first, in its own words
 Every reply leads with the result, said in the mesh's own words. Sources come after it, then
@@ -1049,6 +1112,7 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P15 self-made tools | no code the mesh wrote runs before a person approves it (the Explorer runs an `author = "neuromesh"` tool only if those exact files were approved, so changed code asks again); its code is standard library only and checked before it is offered (no files, network, processes, `eval` or `exec`); made tools never get permissions and are self-tested like any tool (P3); experiments run only when idle and within budget; every draft, approval, experiment and refinement is audited |
 | P16 honest objectives | objectives are pursued only when idle and within `steps_per_hour`, never while asleep, halted or paused; every question it asks itself passes a director; every answer keeps its source and confidence and says whether a second source confirmed it; disagreements are recorded and settled, not hidden; what it could not find out is written up as open; one question to a person at a time, and a person's answer stands; self-set objectives count against `max_self_objectives` and can be removed |
 | P17 own thoughts | thinking nodes recombine and rephrase only facts its memory nodes hold, and every thought is checked word by word against them (a draft that adds a word, name or number is turned down); a thought is labelled as its own thinking with its node and facts, shown beside an answer and never in it, never stored as a fact or used as a source; the opinions it states are ones its thinking nodes hold, from evidence they name, and opinions about people stay private; desires act only through the director's self-set objectives, within `max_self_objectives` and its budgets, each saying why |
+| P18 ego | the ego wraps every other node: it reads the mood an order is taken in, and on the way out its ego node only chooses the kind of remark (quiet, curious, dream, opinion, feeling, doubt); the words are built from what is so, so a remark adds no fact; a remark is labelled as its ego's, shown after the answer and never in it, never stored, used as a source or corrected; it stays quiet when the answer was held back or the person is upset, and is never about a person; what it is curious about raises that aim only within `max_self_objectives` and its budgets; people can turn it off |
 | P13 dreams are not facts | dreaming uses only what the mesh already holds, never a research tool or a teacher; an imagined response always says so and names the dream node it came from; imagination is never stored as a fact or used to answer an ordinary question |
 
 **Goals** are measured continuously and shown on the scorecard (`/status`): competence
@@ -1133,6 +1197,8 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /feedback ord-3f2a91c0 tool:calculator
 /correct ord-3f2a91c0    /correct ord-3f2a91c0 yes    /correct ord-3f2a91c0 a2    /correct ord-3f2a91c0 none :: Canberra
 /thoughts    /thought Australia    /thought forget th-3    /think    /curiosity    /curiosity pursue
+/ego    /ego off    /ego on    /sleep off    /sleep on    /sleep flip
+tell me about yourself    how are you feeling?    what did you dream about?    what do you like?
 /kiwix    /kiwix what does serendipity mean?
 what do you think of the Berlin Wall?    in your own words, what is Australia?    what do you want to find out?
 /define language english,french,spanish :: Which language a sentence is in
@@ -1170,6 +1236,7 @@ eosin hexagon clip (a memory node). Beside it is its mind at a glance:
   latest thought and what it wants to find out.
 - **What's open**: the gaps in what it knows, what waits for you (questions, approvals, tools to
   check), its initiative, and how much it holds.
+- **Its ego**: what its ego said last, and what it does when idle, with a switch to keep it awake.
 
 Its face follows its mood and state: calm, content, happy, curious, thinking (a thought bubble),
 unsure, impatient, frustrated, sad, wary, asleep (zzz) or still (halted, in grey). It blinks
@@ -1199,7 +1266,9 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
   before it reaches you, its dream nodes at the bottom (they glow while it sleeps), the router, every route
   and what serves it (champion nodes sized by their weights, challengers and retired nodes
   beside them, tools, the memory nodes asked first on `answer:direct`), and the emotional
-  engines every answer passes on its way out. Each order pulses along the route it took. Beside
+  engines every answer passes on its way out, all of it inside the ego's membrane: a double line
+  around the whole drawing, tinted by its mood, with the ego node at the top left, the mood it takes
+  orders in, and what it said last on the way out. Each order pulses along the route it took. Beside
   it: the work in progress and the activity log. Below it: what is waiting for you (approvals,
   questions, lessons) and the directive goals. Hover a node for its shape, size and scores.
   **Closer look** (the button above the network; it stays on until you turn it off) opens a
@@ -1222,7 +1291,9 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
   forget a fact.
 - **Mind**: divided into tabs, each with its own address (`#mind/tools`), and the one you used
   last opens next time. Arrow keys move between them. **Questions** (with a count of what is
-  waiting): its questions for you (reply) and its proposals (adopt or decline). **Thinking** (with
+  waiting): its questions for you (reply) and its proposals (adopt or decline). **Ego** (with its
+  mood): how it feels, what it is curious about, its likes and dislikes with its reasons, its ego
+  nodes and what it said lately; ask it about itself, turn it off or on. **Thinking** (with
   how many thoughts it holds): each thought in its own words, its view and what it wants to find
   out, the facts it rests on, and its thinking nodes (look inside one); think again now.
   **Curiosity** (with a count of the gaps in what it knows): each area's interest and what it lacks,
@@ -1236,7 +1307,8 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
   **Initiative**: turn it on or off, pin a mode, take initiative now, recent decisions, what has
   paid off, the tasks it set itself. **Tools it writes** (with a count of drafts waiting for you):
   ask for a tool, approve or decline a draft, try one out, the requests it could write a tool for.
-  **Dreams** (marked while it sleeps): send it to sleep or wake it, imagine something, its dream
+  **Dreams** (marked while it sleeps): send it to sleep or wake it, toss the idle coin, the "Let it
+  sleep" switch and its recent coin flips, imagine something, its dream
   nodes, last night, recent dreams. **Temperament** (with its mood): the five dimensions against
   their baseline, what it decided, the answers it is holding (release them), reset its mood.
   **Opinions and notes**: investigate something, and the opinions and notes it shares.
@@ -1305,7 +1377,9 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | POST | `/objectives` | `{"text": "understand jazz"}` sets one; `{"id": "obj-1", "action": "pause" \| "resume" \| "remove" \| "think"}`; `{"id": "obj-1", "ask": "..."}` adds a question; `{"ruminate": true}` has second thoughts now |
 | POST | `/toolsmith` | `{"build": "reverse a word"}` writes a tool and asks permission; `{"try": "reverser"}` experiments with one it made. Approve a draft with `POST /approve` |
 | GET | `/dreams` | asleep or awake, the dream nodes and their fitness, last night, recent dreams |
-| POST | `/dreams` | `{"action": "sleep" \| "wake"}` |
+| POST | `/dreams` | `{"action": "sleep" \| "wake" \| "flip"}` (flip: toss the idle coin now), or `{"allow_sleep": false}` to keep it awake (`true` lets it sleep) |
+| GET | `/ego` | its ego: mood and feeling, what it is curious about, its likes and dislikes, its dreams, its ego nodes, what it said lately |
+| POST | `/ego` | `{"enabled": false}` turns its ego off (`true` on) |
 | POST | `/imagine` | `{"prompt": "a city on Mars"}`: an imagined response (labelled, never stored) |
 | GET | `/dashboard?after=<seq>` | everything the web interface's live view shows, in one request |
 | GET | `/log?after=<seq>&n=500&routine=0` | the activity log after a sequence number (`routine=0` hides routine work) |
@@ -1647,11 +1721,12 @@ neuromesh/
   curiosity.py           areas of interest and gaps in what it knows: the objectives its director sets itself
   seeker.py              the Kiwix search: every book on every server, other wordings, until an article answers
   avatar.py              the avatar: its mind at a glance, and its voice from a ComfyUI text-to-speech workflow
+  ego.py                 the ego, wrapped around every other node: its mood on the way in, its own remark on the way out (P18)
   dreams.py              sleep and dreams: dream synthesis, dream nodes, waking review, their genetic algorithm, imagination (P13)
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   235 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   245 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),

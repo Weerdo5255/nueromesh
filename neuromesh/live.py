@@ -129,6 +129,9 @@ def network_lines(system, g: dict) -> list[Line]:
     to tools or to skill nodes; challengers and retired nodes hang under their champion."""
     s = system
     lines: list[Line] = [("orders", "title")]
+    ego = ego_line(s, g, "in")
+    if ego:
+        lines.append(ego)
     router = s.registry.champion(DISPATCH)
     if router is not None:
         lines.append((f" {g['end']}{g['arrow']} router {g['star']} {_node_detail(s, router, g)}", "champ"))
@@ -159,11 +162,30 @@ def network_lines(system, g: dict) -> list[Line]:
         lines.append((f"    {g['dot']} tool {t.name} [{t.state}]{note}", style))
     lines += memory_lines(s, g)
     lines += engine_lines(s, g)
+    ego = ego_line(s, g, "out")
+    if ego:
+        lines.append(ego)
     lineage = s.registry.lineage.values()
     disposed = sum(1 for m in lineage if m["status"] == "disposed")
     lines.append((f"nodes: {len(s.registry.live())} live {g['dot']} {len(s.registry.lineage)} built "
                   f"{g['dot']} {disposed} disposed", "dim"))
     return lines
+
+
+def ego_line(system, g: dict, end: str) -> Line | None:
+    """The ego, wrapped around everything: the mood it takes orders in, and what it said last on the way out."""
+    s = system
+    ego = getattr(s, "ego", None)
+    if ego is None or not ego.enabled:
+        return None
+    champ = s.registry.champion("ego") if "ego" in s.capabilities else None
+    who = f"ego node {champ.id}" if champ is not None else "ego policy (its node is learning)"
+    mood = s.affect.snapshot().get("mood", "steady")
+    if end == "in":
+        return (f"ego {g['to']} the outer layer: takes every order in, in a {mood} mood ({who})", "title")
+    last = ego.remarks[-1] if ego.remarks else None
+    said = f"last said ({last['kind']}): {last['text'][:70]}" if last else "has said nothing of its own yet"
+    return (f"ego {g['to']} on the way out it may add its own view, labelled; {said}", "dim")
 
 
 def _size(n: int) -> str:
@@ -208,7 +230,7 @@ def engine_lines(system, g: dict) -> list[Line]:
     if not a.enabled:
         return [("answers -> a director reviews -> user (temperament off)", "dim")]
     lines: list[Line] = [("answers", "title")]
-    engines = [c for c, spec in s.capabilities.items() if spec.internal and spec.kind not in ("agency", "coder", "planner")]
+    engines = [c for c, spec in s.capabilities.items() if spec.internal and spec.kind not in ("agency", "coder", "planner", "ego")]
     what = {"affect": "reads the tone", "disposition": "decides"}
     for cap in engines:
         champ = s.registry.champion(cap)

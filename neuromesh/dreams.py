@@ -1,8 +1,11 @@
 """Sleep and dreams: dream nodes that make up questions and answers from what the mesh already knows.
 
-When no one has given it an order for a while, the mesh has a chance to fall asleep. Asleep, all
-other background work waits (training, evaluation, research, tasks, initiative) and the capacity
-goes to dreaming. An order always wakes it at once (P2).
+When no one has given it an order for a while, the mesh tosses a coin each time it checks: most of the
+time ([dreams] objective_chance, 75%) it works on an objective - one it has, or one it sets itself from
+what it is curious about (agency.py, curiosity.py) - and otherwise it falls asleep. Sleep can be turned
+off (/sleep off, the web toggle): then it stays awake. Asleep, all other background work waits
+(training, evaluation, research, tasks, initiative) and the capacity goes to dreaming. An order
+always wakes it at once (P2).
 
 Dreaming uses only what the mesh already holds - the facts in its memory nodes and the passages it
 has retained - never a research tool or a teacher. Each dream step picks random pieces of that
@@ -322,12 +325,41 @@ class DreamBank:
         self.recent: deque = deque(state.get("recent", []), maxlen=40)
         self.stats.update(state.get("stats", {}))
         self._next_id = int(state.get("next_id", 1))
+        self.allow_override: bool | None = state.get("allow_sleep")  # a person turned sleep on or off
+        self.flips: deque = deque(state.get("flips", []), maxlen=40)    # the idle coin flips, and what came of them
         if self.enabled:
             self._load()
 
     @property
     def enabled(self) -> bool:
         return bool(self.pol.enabled)
+
+    @property
+    def allow_sleep(self) -> bool:
+        return bool(self.pol.allow_sleep if self.allow_override is None else self.allow_override)
+
+    def set_allow_sleep(self, on: bool, by: str) -> str:
+        """A person lets it sleep, or keeps it awake (it wakes now if it is asleep)."""
+        self.allow_override = bool(on)
+        self.save()
+        s = self.sys
+        s.guardian.audit(by, "dream.allow" if on else "dream.prevent", "sleep")
+        s.bus.publish("dream.toggled", allow=bool(on), by=by)
+        woke = False if on else self.wake("sleep was turned off", by=by)
+        return ("sleep allowed: when it is idle it tosses a coin - an objective "
+                f"{self.pol.objective_chance:.0%} of the time, otherwise it sleeps and dreams" if on else
+                "sleep turned off: it stays awake (when the idle coin lands on sleep it rests awake instead)"
+                + ("; it woke up" if woke else ""))
+
+    def note_flip(self, roll: float, outcome: str, detail: str) -> dict:
+        rec = {"ts": round(time.time(), 1), "roll": round(roll, 3), "outcome": outcome, "detail": detail[:300]}
+        self.flips.append(rec)
+        self.stats["coin flips"] += 1
+        self.stats[f"flip {outcome}"] += 1
+        self.save()
+        self.sys.bus.publish("dream.flip", roll=rec["roll"], outcome=outcome, detail=detail[:200],
+                             chance=self.pol.objective_chance)
+        return rec
 
     # ---------------------------------------------------------------- storage
     def _load(self) -> None:
@@ -348,7 +380,8 @@ class DreamBank:
 
     def save(self) -> None:
         state = {"verified": list(self.verified), "vocab": self.vocab, "last_night": self.last_night,
-                 "recent": list(self.recent), "stats": dict(self.stats), "next_id": self._next_id}
+                 "recent": list(self.recent), "stats": dict(self.stats), "next_id": self._next_id,
+                 "allow_sleep": self.allow_override, "flips": list(self.flips)}
         self.sys.store.set_kv("dreams.state", json.dumps(state))
 
     def save_node(self, node: DreamNode) -> None:
@@ -425,6 +458,8 @@ class DreamBank:
         s = self.sys
         if not self.enabled:
             return False, "dreams are off ([dreams] enabled = false)"
+        if not self.allow_sleep:
+            return False, "sleep is turned off: it stays awake (/sleep on lets it sleep again)"
         if self.asleep:
             return False, "already asleep"
         if s.guardian.halted:
@@ -697,7 +732,8 @@ class DreamBank:
     # ---------------------------------------------------------------- status
     def status(self) -> dict:
         champ = self.champion()
-        return {"enabled": self.enabled, "asleep": self.asleep,
+        return {"enabled": self.enabled, "asleep": self.asleep, "allow_sleep": self.allow_sleep,
+                "objective_chance": self.pol.objective_chance, "flips": list(self.flips)[-12:],
                 "slept_for": round(time.time() - self.slept_at) if self.asleep else None,
                 "awake_for": None if self.asleep else round(time.time() - self.woke_at),
                 "dreams_tonight": self.night_dreams if self.asleep else 0,
@@ -779,7 +815,52 @@ class Dreamer(Agent):
             return
         if not s.guardian.background_allowed():
             return
-        if self.rng.random() < pol.sleep_chance:
-            ok, _ = d.fall_asleep("idle")
-            if ok:
-                self.stats["sleeps"] += 1
+        await self.flip()
+
+    async def flip(self) -> dict:
+        """Idle: toss a coin. Most of the time ([dreams] objective_chance) it works on an objective - one it
+        has, or one it sets itself from its curiosity - and otherwise it sleeps (unless sleep is off)."""
+        s, d = self.sys, self.sys.dreams
+        roll = self.rng.random()
+        if roll < d.pol.objective_chance:
+            outcome, detail = await self.attempt_objective()
+            return d.note_flip(roll, outcome, detail)
+        if not d.allow_sleep:
+            return d.note_flip(roll, "awake", "the coin landed on sleep, but sleep is turned off: it rests awake")
+        if self.rng.random() >= d.pol.sleep_chance:
+            return d.note_flip(roll, "awake", "the coin landed on sleep, but it was not sleepy yet")
+        ok, why = d.fall_asleep("idle (the coin landed on sleep)")
+        if ok:
+            self.stats["sleeps"] += 1
+        return d.note_flip(roll, "sleep" if ok else "awake", why)
+
+    async def attempt_objective(self) -> tuple[str, str]:
+        """Work on an objective now: the next one waiting (not one stuck on a person's answer), or, when there is
+        none, one its initiative sets itself from what it is curious about."""
+        s = self.sys
+        book = s.objectives
+        if not book.enabled:
+            return "nothing", "the coin landed on an objective, but objectives are off"
+        if book.budget_left() <= 0:
+            return "nothing", f"the coin landed on an objective, but its {book.pol.steps_per_hour} steps this hour are spent"
+
+        def workable(o) -> bool:
+            return any(q["status"] == "todo" for q in o.questions) or not any(q["status"] == "waiting" for q in o.questions)
+        ready = sorted((o for o in book.active() if workable(o)), key=lambda o: (o.next_at, o.created_at))
+        how = ""
+        if not ready:
+            d = s.director
+            if not d.enabled:
+                return "nothing", "the coin landed on an objective, but it has none to work on (and initiative is off)"
+            rec = await d.pursue_now(by="dreamer")
+            obj = book.get(rec.get("task", "")) if rec else None
+            if obj is None:
+                why = (rec or {}).get("summary") or "nothing it is curious about is worth an objective right now"
+                return "nothing", f"the coin landed on an objective; it has none, and could not set itself one: {why}"
+            ready, how = [obj], f"set itself {obj.id} from its curiosity ({obj.why or 'it wanted to'}), then "
+        obj = ready[0]
+        with s.activity.track("objective", "dreamer", f"idle coin flip: {obj.text}"[:100]):
+            line = await book.work(obj, by="dreamer")
+        done, total = obj.progress()
+        return "objective", (f"{how}worked on {obj.id} ({obj.text}; {done}/{total} answered): "
+                             f"{line or obj.note or 'nothing more to do on it yet'}")

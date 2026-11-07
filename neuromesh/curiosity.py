@@ -136,6 +136,7 @@ class Area:
     linked: int = 0                  # articles it read that link to it
     people: bool = False             # a person said they are interested in it
     stance: str = ""                 # what its thinking nodes (or mind) make of it
+    ego: int = 0                     # times its ego said it is curious about it (ego.py)
     gaps: list = field(default_factory=list)   # [{"question", "why", "order"}]
     interest: float = 0.0
     lack: float = 0.0
@@ -182,7 +183,7 @@ class Curiosity:
         for w in re.findall(r"(?<![.!?]\s)(?<!^)\b([a-z][a-z'\-]{3,})\b", order.text):  # "meeting", not "Meeting"
             self.lower[w] += 1
         route = res.route or ""
-        if route in ("tasks", "mind", "toolsmith", "objectives", "thinking", "corrections") or route.startswith("skill:"):
+        if route in ("tasks", "mind", "toolsmith", "objectives", "thinking", "corrections", "ego") or route.startswith("skill:"):
             return
         tool = self.sys.tools.tools.get(route[5:]) if route.startswith("tool:") else None
         knowledge = tool is not None and tool.manifest.provides == "knowledge"
@@ -286,8 +287,12 @@ class Curiosity:
         for g in self._gap_questions():
             names = topics_in(g["question"]) or [question_core(g["question"])[:60]]
             area(names[0]).gaps.append(g)
+        ego = getattr(s, "ego", None)
+        fascinated = ego.fascinations() if ego is not None else {}  # what its ego said it is curious about (ego.py)
+        for k, rec in fascinated.items():
+            area(rec.get("name") or k).ego = int(rec.get("times", 1))
         common = self.common_words()
-        for k in [k for k, a in areas.items() if " " not in k and k in common and not a.people and not a.gaps]:
+        for k in [k for k, a in areas.items() if " " not in k and k in common and not a.people and not a.gaps and not a.ego]:
             del areas[k]  # a word people write in lower case is not a name ("Meeting", "Overall")
         p = self.pol
         for a in areas.values():
@@ -307,6 +312,9 @@ class Curiosity:
             if a.linked:
                 i += min(0.15, 0.05 * a.linked)
                 why_i.append(f"{a.linked} article{'s' if a.linked != 1 else ''} it read link to it")
+            if a.ego:  # its ego is curious about it: it wants to understand it, so it sets objectives for it sooner
+                i += ego.pol.fascination_weight
+                why_i.insert(0, "its ego is curious about it")
             lack, why_l = 0.0, []
             if a.gaps:
                 lack += min(0.8, 0.4 * len(a.gaps))

@@ -336,6 +336,15 @@ def glance(s) -> dict:
                   "articles": s.knowledge.count(),
                   "nodes": sum(1 for c in s.capabilities if s.registry.champion(c) is not None)},
     }
+    ego = getattr(s, "ego", None)
+    if ego is not None and ego.enabled:  # its ego: what it said last, and what it is curious about (ego.py)
+        last = ego.remarks[-1] if ego.remarks else None
+        fasc = sorted(ego.fascinations().values(), key=lambda r: -r.get("ts", 0))
+        g["ego"] = {"on": True, "last": {"kind": last["kind"], "text": _cut(last["text"], 220), "mood": last["mood"]} if last else None,
+                    "curious": fasc[0]["name"] if fasc else ""}
+    else:
+        g["ego"] = {"on": False, "last": None, "curious": ""}
+    g["sleep"] = {"allowed": s.dreams.allow_sleep, "chance": s.dreams.pol.objective_chance}
     g["line"] = spoken_line(g)
     return g
 
@@ -365,6 +374,8 @@ def spoken_line(g: dict) -> str:
         out.append(f"I've been thinking about {g['thought']['topic']}.")
     if g["want"] and g["want"]["status"] == "open":
         out.append(g["want"]["want"] + ".")
+    elif g.get("ego", {}).get("curious"):
+        out.append(f"I'm curious about {g['ego']['curious']}.")
     w = g["waiting"]
     asks = []
     if w["questions"]:

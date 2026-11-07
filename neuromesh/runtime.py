@@ -15,6 +15,7 @@ import numpy as np
 
 from .activity import ActivityLog, ActivityTracker
 from .agency import AgencyTeacher, Director
+from .ego import Ego, EgoTeacher
 from .anatomy import record as record_firing
 from .directors import DirectorPool
 from .dreams import DreamBank, Dreamer
@@ -91,6 +92,7 @@ class System:
         teachers["agency"] = AgencyTeacher(seed)        # specialist: the drive policy for the agency node
         teachers["coder"] = CoderTeacher(seed)          # specialist: the code library's cues, for the coder node
         teachers["planner"] = PlannerTeacher(seed)      # specialist: the strategies' cues, for the planner node
+        teachers["ego"] = EgoTeacher(seed)              # specialist: the ego policy, for the ego node
         self.teachers = TeacherPool(teachers, tp.order, tp.weights)
         self.teachers.activity, self.teachers.bus = self.activity, self.bus
 
@@ -119,6 +121,8 @@ class System:
         self.bus.listen(self.thinking.on_event)
         self.voice_tts = ComfyTTS(self)       # the avatar's voice: a ComfyUI text-to-speech workflow (avatar.py)
         self.seeker = Seeker(self)            # searching every Kiwix book, again and again, for an answer (seeker.py)
+        self.ego = Ego(self)                  # the outer layer: its mood on the way in, its own view on the way out (P18)
+        self.bus.listen(self.ego.on_event)
         for cap in self.capabilities:  # what people taught, exactly as they put it, stands (P1)
             for ex in self.store.examples(cap):
                 if ex.source == "human":
@@ -139,9 +143,10 @@ class System:
         self.investigator = Investigator(self)
         self.orchestrator = Orchestrator(self)
         self.director = Director(self)  # independent agency: the agency node chooses its mode
+        self.dreamer = Dreamer(self)    # idle: the coin flip (an objective, or sleep), and dreaming
         self.agents = [self.directors, self.orchestrator, Architect(self), Trainer(self), Evaluator(self), Curator(self),
                        Explorer(self), self.researcher, self.investigator, TaskRunner(self), Compressor(self),
-                       self.director, Dreamer(self), Ruminator(self), Thinker(self), Sentinel(self)]
+                       self.director, self.dreamer, Ruminator(self), Thinker(self), Sentinel(self)]
 
     # ------------------------------------------------------------- lifecycle
     async def start(self) -> "System":
@@ -643,6 +648,9 @@ class System:
             "curiosity": {"enabled": self.curiosity.enabled,
                           "gaps": sum(len(a.gaps) for a in self.curiosity.areas().values()) if self.curiosity.enabled else 0},
             "dreams": self.dreams.status(),
+            "ego": {"enabled": self.ego.enabled, "mood": self.affect.snapshot().get("mood", "steady"),
+                    "remarks": sum(v for k, v in self.ego.stats.items() if k not in ("quiet", "fascinated")),
+                    "last": (list(self.ego.remarks)[-1] if self.ego.remarks else None)},
             "scorecard": self.scorecard(),
             "agents": {a.name: dict(a.stats) for a in self.agents},
         }

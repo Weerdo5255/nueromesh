@@ -110,8 +110,12 @@ class DirectorTests(unittest.IsolatedAsyncioTestCase):
         s, pool = self.system, self.system.directors
         res = await s.submit("what is 12 * 7")
         self.assertEqual((res.ok, res.output), (True, 84))
-        self.assertTrue(res.trace[0].startswith(f"{PRIMARY} took the order (steady"), res.trace)
-        self.assertTrue(res.trace[-1].startswith(f"reviewed by {PRIMARY} (steady): approved"), res.trace)
+        # the ego is wrapped around everything (P18): in first and out last; the directors just inside it
+        self.assertTrue(res.trace[0].startswith("ego (the outer layer): took it in"), res.trace)
+        self.assertTrue(res.trace[-1].startswith("ego: "), res.trace)
+        inner = [t for t in res.trace if not t.startswith("ego")]
+        self.assertTrue(inner[0].startswith(f"{PRIMARY} took the order (steady"), res.trace)
+        self.assertTrue(inner[-1].startswith(f"reviewed by {PRIMARY} (steady): approved"), res.trace)
         self.assertEqual(res.director, PRIMARY)
         self.assertEqual((pool.counts["intake"], pool.counts["review"]), (1, 1))
         self.assertEqual(s.store.get_order(res.order_id)["result"]["director"], PRIMARY)
@@ -186,7 +190,7 @@ class DirectorTests(unittest.IsolatedAsyncioTestCase):
         # impatient: no second opinions at all
         feel(s, patience=0.1)
         res = await s.submit("who invented the zorblax, really?")
-        self.assertIn("no second opinions (impatient)", res.trace[0])
+        self.assertIn("no second opinions (impatient)", res.trace[1])  # (just inside the ego)
         self.assertNotIn("[director:", res.answer)
 
     async def test_it_duplicates_itself_when_work_waits_and_they_retire(self):

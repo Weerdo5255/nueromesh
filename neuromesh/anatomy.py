@@ -296,14 +296,23 @@ def traces(system, n: int = 15) -> list[dict]:
     for oid, ts, text, res in system.store.recent_orders(n):
         hops = []
         trace = res.get("trace") or []
+        mood_in = next((m.group(1) for t in trace for m in [re.match(r"^ego \(the outer layer\): took it in an? (\w+) mood", str(t))]
+                        if m), None)
+        if mood_in:  # the ego is wrapped around everything: first in (ego.py)
+            hops.append({"stage": "ego", "node": None, "label": f"took it in a {mood_in} mood", "kind": "ego"})
         took = next((m.group(1) for t in trace for m in [re.match(r"^(director-\d+) took", str(t))] if m), None)
         hops.append({"stage": "director", "node": took or "director-0", "label": "took it", "kind": "director"})
         steps = res.get("steps") or []
         route = res.get("route") or ""
         served = False
+        ego_out = None
         for st in steps:
             cap = st.get("capability", "")
             m = _NODE.search(str(st.get("provenance", "")))
+            if cap == "ego":  # ... and last out
+                ego_out = {"stage": "ego", "capability": "ego", "node": m.group(1) if m else None, "label": st.get("label"),
+                           "how": st.get("provenance", ""), "input": st.get("input"), "kind": "node" if m else "teacher"}
+                continue
             hop = {"stage": {"dispatch": "router"}.get(cap, cap), "capability": cap, "node": m.group(1) if m else None,
                    "label": st.get("label"), "confidence": st.get("confidence"), "how": st.get("provenance", ""),
                    "input": st.get("input") or text, "kind": "node" if m else "teacher"}
@@ -316,6 +325,10 @@ def traces(system, n: int = 15) -> list[dict]:
         if res.get("director"):
             hops.append({"stage": "director", "node": res["director"], "label": res.get("review", "")[:80] or "reviewed it",
                          "kind": "director"})
+        if ego_out is not None:
+            said = res.get("ego") or {}
+            ego_out["label"] = f"{ego_out['label']}: {_short(said.get('text', ''), 60)}" if said else ego_out["label"]
+            hops.append(ego_out)
         out.append({"order": oid, "ts": ts, "text": text[:200], "route": route, "ok": bool(res.get("ok")),
                     "answer": _short(str(res.get("output") or res.get("note") or "").split("\n")[0], 200),
                     "confidence": res.get("confidence"), "served_by": res.get("served_by"),

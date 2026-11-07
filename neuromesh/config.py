@@ -153,7 +153,7 @@ class TeacherPolicy:
     weights: dict = field(default_factory=lambda: {
         "human": 3.0, "challenge": 2.5, "tool-manifest": 2.0, "outcome": 2.0, "llm": 1.5, "ollama": 1.2,
         "heuristic": 1.0, "temperament": 1.0, "agency": 1.0, "director": 1.8,
-        "coder": 1.0, "experiment": 2.0, "approved": 2.5, "planner": 1.0})
+        "coder": 1.0, "experiment": 2.0, "approved": 2.5, "planner": 1.0, "ego": 1.0})
     models: dict = field(default_factory=dict)  # teacher name -> LLMConfig, from [teachers.<name>]
 
     @property
@@ -337,7 +337,7 @@ class AgencyPolicy:
     explore: float = 0.1                  # chance of trying another possible mode, to learn what it is worth
     modes: tuple = ("research", "practise", "examine", "improve", "consolidate", "build", "experiment", "pursue",
                     "ruminate", "rest")
-    max_self_objectives: int = 2          # objectives it has set itself at once
+    max_self_objectives: int = 4          # objectives it has set itself at once
     research_articles: int = 3            # a self-set learn task reads this many articles
     practice_items: int = 20
     max_task_runs: int = 5                # a self-set task is scored and retired after this many runs
@@ -356,9 +356,11 @@ class DreamsPolicy:
     """Sleep and dreams: dream nodes that make up questions and answers from what the mesh already
     knows, checked on waking, evolved by a genetic algorithm, and used to imagine (see dreams.py)."""
     enabled: bool = True
-    sleep_after_idle_seconds: float = 60.0  # quiet time (no orders from people) before it may fall asleep
-    sleep_chance: float = 0.3               # the chance, at each check, that it falls asleep then
-    check_every_seconds: float = 30.0
+    sleep_after_idle_seconds: float = 60.0  # quiet time (no orders from people) before the idle coin flip
+    objective_chance: float = 0.75          # idle coin flip: the chance it works on an objective; otherwise it sleeps
+    sleep_chance: float = 1.0               # when the flip lands on sleep, the chance it does fall asleep then
+    allow_sleep: bool = True                # false: it never sleeps (a person can toggle it: /sleep off, /sleep on)
+    check_every_seconds: float = 30.0       # how often it tosses the coin while idle
     sleep_max_seconds: float = 120.0        # longest sleep; an order always wakes it at once
     duty_cycle: float = 0.9                 # the background capacity dreaming may use while asleep
     dreams_per_step: int = 24
@@ -431,7 +433,7 @@ class ObjectivesPolicy:
     """Objectives: long-term aims it plans for, pursues by asking itself, ruminates over and writes up
     (see objectives.py, P16)."""
     enabled: bool = True
-    max_objectives: int = 6                 # open at once (active or paused)
+    max_objectives: int = 8                 # open at once (active or paused)
     steps_per_hour: int = 120               # queries against itself, checks and readings, for all objectives (P4)
     step_seconds: float = 2.0               # rest between two steps of one objective
     max_questions: int = 24                 # questions one objective may have, follow-ups included
@@ -509,6 +511,20 @@ class AvatarPolicy:
 
 
 @dataclass
+class EgoPolicy:
+    """The ego: the nodes wrapped around all the others. It reads the mood as an order comes in, and on the
+    way out says what it makes of things - from its curiosity, dreams and temperament - labelled (see ego.py, P18)."""
+    enabled: bool = True
+    express: bool = True                    # its remarks after answers (questions about itself are answered either way)
+    quiet_for: int = 1                      # answers it stays quiet after a remark
+    min_confidence: float = 0.5             # below this an answer counts as unsure (doubt)
+    fascinate: bool = True                  # what it says it is curious about becomes an area it wants to understand
+    fascination_weight: float = 0.35        # interest its ego adds to such an area (curiosity.py; the director's aims)
+    fascination_days: float = 7.0           # how long that lasts
+    keep_remarks: int = 60
+
+
+@dataclass
 class Directives:
     name: str = "NeuroMesh"
     mission: str = ""
@@ -535,6 +551,7 @@ class Directives:
     thinking: ThinkingPolicy = field(default_factory=ThinkingPolicy)
     curiosity: CuriosityPolicy = field(default_factory=CuriosityPolicy)
     avatar: AvatarPolicy = field(default_factory=AvatarPolicy)
+    ego: EgoPolicy = field(default_factory=EgoPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -565,6 +582,7 @@ class Directives:
             thinking=build(ThinkingPolicy, d.get("thinking")),
             curiosity=build(CuriosityPolicy, d.get("curiosity")),
             avatar=build(AvatarPolicy, d.get("avatar")),
+            ego=build(EgoPolicy, d.get("ego")),
         )
 
     @classmethod
