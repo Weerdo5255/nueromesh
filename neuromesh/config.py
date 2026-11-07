@@ -153,7 +153,7 @@ class TeacherPolicy:
     weights: dict = field(default_factory=lambda: {
         "human": 3.0, "challenge": 2.5, "tool-manifest": 2.0, "outcome": 2.0, "llm": 1.5, "ollama": 1.2,
         "heuristic": 1.0, "temperament": 1.0, "agency": 1.0, "director": 1.8,
-        "coder": 1.0, "experiment": 2.0, "approved": 2.5})
+        "coder": 1.0, "experiment": 2.0, "approved": 2.5, "planner": 1.0})
     models: dict = field(default_factory=dict)  # teacher name -> LLMConfig, from [teachers.<name>]
 
     @property
@@ -331,7 +331,9 @@ class AgencyPolicy:
     max_decisions_per_hour: int = 12      # its own budget (P4)
     max_self_tasks: int = 3               # tasks it has set itself at once
     explore: float = 0.1                  # chance of trying another possible mode, to learn what it is worth
-    modes: tuple = ("research", "practise", "examine", "improve", "consolidate", "build", "experiment", "rest")
+    modes: tuple = ("research", "practise", "examine", "improve", "consolidate", "build", "experiment", "pursue",
+                    "ruminate", "rest")
+    max_self_objectives: int = 2          # objectives it has set itself at once
     research_articles: int = 3            # a self-set learn task reads this many articles
     practice_items: int = 20
     max_task_runs: int = 5                # a self-set task is scored and retired after this many runs
@@ -421,6 +423,30 @@ class ToolsmithPolicy:
 
 
 @dataclass
+class ObjectivesPolicy:
+    """Objectives: long-term aims it plans for, pursues by asking itself, ruminates over and writes up
+    (see objectives.py, P16)."""
+    enabled: bool = True
+    max_objectives: int = 6                 # open at once (active or paused)
+    steps_per_hour: int = 120               # queries against itself, checks and readings, for all objectives (P4)
+    step_seconds: float = 2.0               # rest between two steps of one objective
+    max_questions: int = 24                 # questions one objective may have, follow-ups included
+    max_rounds: int = 4                     # rounds of rumination that may add follow-ups
+    checks_per_round: int = 4               # answers checked against a second source per round
+    follow_ups: int = 3                     # new questions a round may raise (explain objectives)
+    confirm: bool = True                    # check each answer against a second source
+    met_share: float = 1.0                  # share of core questions answered to call it met
+    ask_people: bool = True                 # ask a person what nothing it has could answer (one question at a time)
+    person_wait_seconds: float = 86400.0    # how long a question to a person stays open before it moves on
+    watch_every_seconds: float = 3600.0     # how often a watch objective's background task looks
+    llm_plan: bool = True                   # an LLM teacher may draft an objective's questions
+    llm_summary: bool = True                # an LLM teacher may write the summary of what it found
+    second_thoughts: int = 3                # recent answers it thinks over again in one go (agency mode ruminate)
+    doubt_confidence: float = 0.6           # answers less sure than this are worth second thoughts
+    second_thought_after_seconds: float = 120.0  # how long after an order before it thinks it over again
+
+
+@dataclass
 class Directives:
     name: str = "NeuroMesh"
     mission: str = ""
@@ -443,6 +469,7 @@ class Directives:
     dreams: DreamsPolicy = field(default_factory=DreamsPolicy)
     directors: DirectorsPolicy = field(default_factory=DirectorsPolicy)
     toolsmith: ToolsmithPolicy = field(default_factory=ToolsmithPolicy)
+    objectives: ObjectivesPolicy = field(default_factory=ObjectivesPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -469,6 +496,7 @@ class Directives:
             dreams=build(DreamsPolicy, d.get("dreams")),
             directors=build(DirectorsPolicy, d.get("directors")),
             toolsmith=build(ToolsmithPolicy, d.get("toolsmith")),
+            objectives=build(ObjectivesPolicy, d.get("objectives")),
         )
 
     @classmethod

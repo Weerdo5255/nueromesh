@@ -147,7 +147,7 @@ doask = ["check the build", "answer the question", "fix this", "tell me the tota
 [agency]
 answer = "In that situation I would {label} ({description})."
 description = "The mesh's own initiative: given its situation (skills below target, exams due, topics to read up on, memory nodes to check, its budgets), decide what to do next when no one has asked it for anything."
-labels = ["research", "practise", "examine", "improve", "consolidate", "build", "experiment", "rest"]
+labels = ["research", "practise", "examine", "improve", "consolidate", "build", "experiment", "pursue", "ruminate", "rest"]
 open_labels = false
 internal = true
 kind = "agency"
@@ -161,7 +161,27 @@ improve = "train its weakest skill towards its target"
 consolidate = "check its memory nodes against their tests"
 build = "write a tool for requests no tool could meet, and ask permission to use it"
 experiment = "try out a tool it wrote, and refine it if it falls short"
+pursue = "set itself a long-term objective: plan it, and work on it by asking itself"
+ruminate = "think again about recent answers it was unsure of, and what it would say now"
 rest = "do nothing for now"
+
+[planner]
+answer = "I would pursue that with the {label} strategy ({description})."
+description = "The planner node: given a long-term objective, choose how to pursue it. The plan's questions are then asked of the mesh itself, one at a time, checked, followed up and written up (P16)."
+labels = ["explain", "answer", "compare", "survey", "watch", "improve", "build"]
+open_labels = false
+internal = true
+kind = "planner"
+teachers = ["human", "planner"]   # people, and the strategies' cues
+
+[planner.label_descriptions]
+explain = "understand a subject: what it is, why it matters, where it comes from, and what those answers raise"
+answer = "find out particular things: each question asked of itself, checked, and settled"
+compare = "understand two things, then how they differ"
+survey = "find the members of a set, then look into each one"
+watch = "keep watching something: a background task asks it regularly and says when it changes"
+improve = "train a skill to a target: a background improve task"
+build = "be able to do something new: its toolsmith writes a tool for it (you approve it first)"
 
 [coder]
 answer = "To meet that I would write a tool from the {label} recipe ({description})."

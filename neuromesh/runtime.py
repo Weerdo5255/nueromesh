@@ -36,6 +36,7 @@ from .tasks import DIRECT, DISPATCH, CapabilitySpec, Inference, Order, Result
 from .teachers import HeuristicTeacher, HumanTeacher, LLMTeacher, TeacherPool
 from .temperament import Affect, TemperamentTeacher
 from .toolsmith import CoderTeacher, Toolsmith
+from .objectives import Objectives, PlannerTeacher, Ruminator
 from .tools import ACTIVE, APPROVED, QUARANTINED, RETIRED, Sandbox, Tool, ToolRegistry, ToolRun
 
 log = logging.getLogger("neuromesh")
@@ -83,6 +84,7 @@ class System:
         teachers["challenge"] = ChallengeTeacher(seed)  # benchmark suites: gold answers for practice items
         teachers["agency"] = AgencyTeacher(seed)        # specialist: the drive policy for the agency node
         teachers["coder"] = CoderTeacher(seed)          # specialist: the code library's cues, for the coder node
+        teachers["planner"] = PlannerTeacher(seed)      # specialist: the strategies' cues, for the planner node
         self.teachers = TeacherPool(teachers, tp.order, tp.weights)
         self.teachers.activity, self.teachers.bus = self.activity, self.bus
 
@@ -103,6 +105,8 @@ class System:
         self.dreams = DreamBank(self)       # sleep, dream nodes, and imagination
         self.toolsmith = Toolsmith(self)    # coder nodes write tools, ask permission, and experiment with them (P15)
         self.bus.listen(self.toolsmith.on_event)
+        self.objectives = Objectives(self)  # long-term objectives: plans, queries against itself, rumination (P16)
+        self.bus.listen(self.objectives.on_event)
 
         self.orders: asyncio.Queue = asyncio.Queue()
         self.inflight = 0
@@ -120,7 +124,7 @@ class System:
         self.director = Director(self)  # independent agency: the agency node chooses its mode
         self.agents = [self.directors, self.orchestrator, Architect(self), Trainer(self), Evaluator(self), Curator(self),
                        Explorer(self), self.researcher, self.investigator, TaskRunner(self), Compressor(self),
-                       self.director, Dreamer(self), Sentinel(self)]
+                       self.director, Dreamer(self), Ruminator(self), Sentinel(self)]
 
     # ------------------------------------------------------------- lifecycle
     async def start(self) -> "System":
@@ -609,6 +613,7 @@ class System:
             "agency": self.director.status(),
             "directors": self.directors.status(),
             "toolsmith": self.toolsmith.status(),
+            "objectives": self.objectives.status(),
             "dreams": self.dreams.status(),
             "scorecard": self.scorecard(),
             "agents": {a.name: dict(a.stats) for a in self.agents},

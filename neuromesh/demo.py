@@ -391,6 +391,45 @@ async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7,
             res = await system.submit(q)
             print(f"  > {q}  ->  {res.output if res.ok else res.note}  [{res.route}]")
 
+        demo.say("Phase 11 - objectives: long-term aims it plans, pursues by asking itself, thinks over and writes up")
+        book = system.objectives
+        book.pol.step_seconds, book.pol.second_thought_after_seconds = 0.2, 0
+        for text in ("objective: find out who wrote Pride and Prejudice and when it was published",
+                     "objective: understand the Berlin Wall"):
+            res = await system.submit(text)
+            print(f"  > {text}\n      {res.output}")
+        first, second = book.get("obj-1"), book.get("obj-2")
+        replies = {"published": "Pride and Prejudice was first published in 1813.",
+                   "berlin wall": "It was the guarded concrete barrier that divided Berlin from 1961 to 1989."}
+        deadline = time.time() + 60
+        while first is not None and second is not None and time.time() < deadline \
+                and (first.status == "active" or second.status == "active"):
+            for obj in (first, second):  # the operator answers what it asks (P1: a person's word stands)
+                for q in [q for q in obj.questions if q["status"] == "waiting"]:
+                    answer = next((a for k, a in replies.items() if k in q["ask"].lower()), "skip")
+                    print(f"  {obj.id} asks the operator ({q['inquiry']}): {q['ask']}\n  the operator replies: {answer}")
+                    await system.mind.reply(q["inquiry"], answer, by="demo-operator")
+            await asyncio.sleep(0.2)
+        for obj in (first, second):
+            if obj is None:
+                continue
+            shown = [t for t in obj.thoughts if t[1] in ("doubt", "confirm", "contradiction")][:4]
+            for t in shown:
+                print(f"  {obj.id} thought ({t[1]}): {t[2][:170]}")
+            print(f"  {obj.id}: {obj.note}")
+        if second is not None:
+            print(f"  the write-up of {second.id}, {book.report_path(second).relative_to(work)} (excerpt):")
+            for line in book.report(second).splitlines()[:18]:
+                if line.strip():
+                    print(f"    {line[:150]}")
+        res = await system.submit("What is the capital of Freedonia?")
+        print(f"  > What is the capital of Freedonia?\n      {res.summary()}")
+        system.memory.learn("What is the capital of Freedonia?", "Fredville is the capital of Freedonia.", "the demo operator",
+                            by="demo-operator", kind="people")
+        await demo.wait_for(lambda: all(not n.dirty for n in system.memory.nodes.values()), 30, "memory to learn it")
+        for t in await book.second_thoughts(by="demo-operator"):
+            print(f"  second thoughts ({t['verdict']}): {t['line'][:180]}")
+
         demo.say("Results")
         print(f"{'phase':<14} {'orders':>6} {'correct':>8} {'by nodes':>9} {'by teachers':>12} {'mixed':>6} {'avg ms':>7}")
         for row in demo.rows:

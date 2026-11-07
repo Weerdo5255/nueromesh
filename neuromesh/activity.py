@@ -67,7 +67,7 @@ class ActivityTracker:
 
 # --------------------------------------------------------------------- the log
 ROUTINE = {"node.trained", "node.evaluated", "lesson.label", "memory.rejected", "memory.merge_refused",
-           "dream.dreamt", "director.reviewed"}  # hidden by "/log important"
+           "dream.dreamt", "director.reviewed", "objective.step"}  # hidden by "/log important"
 
 
 @dataclass
@@ -126,7 +126,7 @@ def format_event(ev: Event) -> LogEntry | None:
              "forget": "warn", "research": "warn", "mood": "teacher", "temper": "lesson",
              "release": "good", "mind": "teacher", "ask": "warn", "propose": "good",
              "task": "good", "challenge": "good", "memory": "good", "director": "teacher", "sleep": "teacher",
-             "dream": "lesson", "code": "good"}.get(tag, "info")
+             "dream": "lesson", "code": "good", "objective": "good", "ruminate": "teacher"}.get(tag, "info")
     if t == "output.shaped" and d.get("action") in ("confirm", "defer", "block"):
         level = "warn"
     if tag == "tool" and ("REJECTED" in text or "quarantined" in text):
@@ -147,6 +147,10 @@ def format_event(ev: Event) -> LogEntry | None:
         level = "warn"
     if t == "tool.drafted":
         level = "teacher"
+    if t == "objective.step":
+        level = "work"
+    if t == "objective.contradiction" or (t == "objective.ended" and d.get("status") == "unmet") or t == "objective.asked":
+        level = "warn"
     return LogEntry(ev.ts, tag, text.strip(), level, t)
 
 

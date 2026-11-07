@@ -404,6 +404,25 @@ class LLMTeacher(Teacher):
         return {"name": name, "description": str(data.get("description", ""))[:200], "code": data["code"][:20000],
                 "examples": examples}
 
+    async def plan(self, objective: str, strategy: str, skills: list[str], tools: list[str]) -> dict | None:
+        """Draft the questions a long-term objective needs answered, each one it can ask itself."""
+        schema = {"type": "object", "required": ["questions"],
+                  "properties": {"questions": {"type": "array", "items": {"type": "object", "required": ["ask"],
+                                 "properties": {"ask": {"type": "string"}, "why": {"type": "string"},
+                                                "core": {"type": "boolean"}}}}}}
+        system = ("You plan research for a small multi-agent system that answers questions with its own tools, "
+                  "memory and reading. Reply with a single JSON object and nothing else.")
+        user = (f"Objective: {objective[:300]}\nStrategy: {strategy}\nIts skills: {', '.join(skills)}. Its tools: "
+                f"{', '.join(tools)}.\nList 3 to 8 short, self-contained questions that together meet the objective, "
+                "most important first. Each must make sense on its own (no 'it' or 'they'). Mark the ones the "
+                'objective cannot do without as core. JSON: {"questions": [{"ask": "...?", "why": "...", "core": true}]}')
+        data = _extract_json(await self._ask(system, user, schema) or "")
+        qs = [q for q in (data or {}).get("questions", []) if isinstance(q, dict) and str(q.get("ask", "")).strip()]
+        if not qs:
+            return None
+        return {"questions": [{"ask": str(q["ask"])[:240], "why": str(q.get("why", ""))[:160],
+                               "core": bool(q.get("core", True))} for q in qs[:10]]}
+
     async def propose(self, examples: list[str], known: list[str], hint: str = "") -> dict | None:
         """Draft one new capability from requests the mesh could not fulfil."""
         schema = {"type": "object", "required": ["kind", "name", "description"],
@@ -636,6 +655,17 @@ class TeacherPool:
     def has_llm(self) -> bool:
         """An LLM teacher is listed and available."""
         return any(isinstance(t, LLMTeacher) for t in self.ranked())
+
+    async def plan(self, objective: str, strategy: str, skills: list[str], tools: list[str]) -> tuple[dict, str] | None:
+        """Have the first available LLM teacher draft an objective's questions (None offline)."""
+        for teacher in self.ranked():
+            if not isinstance(teacher, LLMTeacher):
+                continue
+            with self._track(teacher, f"planning: {' '.join(objective.split())[:70]}"):
+                made = await teacher.plan(objective, strategy, skills, tools)
+            if made:
+                return made, teacher.name
+        return None
 
     async def write_tool(self, requests: list[str]) -> tuple[dict, str] | None:
         """Have the first available LLM teacher write a tool's code (None offline)."""

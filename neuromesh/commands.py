@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,12 +36,16 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /memory forget <question>       forget a fact (its tests go too)
   /memory merge [node node]       try merging two compressed memory nodes now (random pair if none given)
   /director                       its own initiative: mode, who chose it, the tasks it set itself, what paid off
-  /director mode <auto|research|practise|examine|improve|consolidate|build|experiment|rest>   pin a mode
+  /director mode <auto|research|...|build|experiment|pursue|ruminate|rest>   pin a mode
   /director now | on | off        take initiative now, or turn its initiative on or off
   /directors                      the director nodes at both ends of every order: who is doing what, the
                                   stance its mood gives them, recent reviews, what memory was not given
   /directors spawn | retire <id>  add a duplicate director now, or retire one (never director-0)
   /directors attempts <n>         how many ways a director tries an unanswered order before it gives up
+  /objectives                     long-term objectives: their plans, progress, what it found, second thoughts
+  /objective <what>               set one (also as an order: "objective: understand the Berlin Wall")
+  /objective show|report|pause|resume|remove|think <id>    a plan and its answers; the write-up; think it over now
+  /objective <id> ask <question>  add a question to an objective     /ruminate   think again about recent answers
   /toolsmith                      tools it wrote itself: the coder node, drafts waiting for approval, experiments
   /toolsmith build <what it should do>   have it write a tool now (it asks before the tool runs; P15)
   /toolsmith show <tool>          a made tool's code, tests and experiments    /toolsmith recipes   its code library
@@ -331,6 +336,46 @@ def directors_command(system, rest: str) -> list[str]:
             return [f"  usage: /directors attempts <1-10> (now {int(pool.pol.max_attempts)})"]
         return [f"  {pool.set_attempts(int(arg), by)}"]
     return pool.lines()
+
+
+async def objective_command(system, cmd: str, rest: str) -> list[str]:
+    book = system.objectives
+    by = os.environ.get("USER", "operator")
+    rest = rest.strip()
+    if cmd == "ruminate":
+        if rest:
+            obj = book.get(rest)
+            if obj is None:
+                return [f"  no objective {rest} (/objectives lists them)"]
+            return [f"  {await book.ruminate(obj, by)}"] + book.show(rest)[-6:]
+        got = await book.second_thoughts(by=by)
+        return [f"  {g['verdict']}: {g['line']}" for g in got] or ["  nothing to think over again right now: no recent "
+                                                                    "answers it was unsure of, or could not give"]
+    if cmd == "objectives" or not rest:
+        return book.lines()
+    sub, _, arg = rest.partition(" ")
+    arg = arg.strip()
+    if sub in ("show", "report", "pause", "resume", "remove", "think") and arg:
+        if sub == "show":
+            return book.show(arg)
+        obj = book.get(arg)
+        if obj is None:
+            return [f"  no objective {arg} (/objectives lists them)"]
+        if sub == "report":
+            return [f"  {book.write_report(obj)}", ""] + ["  " + ln for ln in book.report(obj).splitlines()]
+        if sub == "think":
+            return [f"  {await book.ruminate(obj, by)}"]
+        ok, msg = book.set_status(arg, {"pause": "paused", "resume": "active", "remove": "removed"}[sub], by)
+        return [f"  {msg}"]
+    if re.fullmatch(r"obj-\d+", sub) and arg.lower().startswith("ask "):
+        return [f"  {book.ask(sub, arg[4:].strip(), by)[1]}"]
+    try:
+        obj = await book.add(rest, by=by)
+    except ValueError as exc:
+        return [f"  {exc}"]
+    return [f"  set {obj.id}: {obj.text} ({obj.strategy} strategy, planned by {obj.planned_by})"] + \
+        [f"    {q['id']} [{q['kind']}] {q['ask']}" for q in obj.questions] + \
+        [f"  it works on it when idle; /objective show {obj.id}, or read {book.report_path(obj)}"]
 
 
 async def toolsmith_command(system, rest: str) -> list[str]:
@@ -641,6 +686,8 @@ async def execute(system, line: str) -> Output:
             out = directors_command(system, rest)
         elif cmd in ("toolsmith", "coder"):
             out = await toolsmith_command(system, rest)
+        elif cmd in ("objective", "objectives", "ruminate"):
+            out = await objective_command(system, cmd, rest)
         elif cmd in ("memorize", "memorise", "remember"):
             ask, sep, answer = rest.partition("::")
             if not sep or not ask.strip() or not answer.strip():

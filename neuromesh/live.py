@@ -208,7 +208,7 @@ def engine_lines(system, g: dict) -> list[Line]:
     if not a.enabled:
         return [("answers -> a director reviews -> user (temperament off)", "dim")]
     lines: list[Line] = [("answers", "title")]
-    engines = [c for c, spec in s.capabilities.items() if spec.internal and spec.kind not in ("agency", "coder")]
+    engines = [c for c, spec in s.capabilities.items() if spec.internal and spec.kind not in ("agency", "coder", "planner")]
     what = {"affect": "reads the tone", "disposition": "decides"}
     for cap in engines:
         champ = s.registry.champion(cap)
@@ -320,7 +320,24 @@ def teacher_goal_lines(system, g: dict) -> list[Line]:
             director_line(s, g),
             dreams_line(s, g),
             directors_line(s, g),
-            toolsmith_line(s, g)]
+            toolsmith_line(s, g),
+            objectives_line(s, g)]
+
+
+def objectives_line(system, g: dict) -> Line:
+    book = system.objectives
+    if not book.enabled:
+        return ("objectives: off", "dim")
+    live = [o for o in book.items.values() if o.status in ("active", "paused")]
+    parts = [f"{o.id} {o.progress()[0]}/{o.progress()[1]} {o.text[:28]}" + (" (paused)" if o.status == "paused" else "")
+             for o in live[:3]]
+    ended = [o for o in book.items.values() if o.status in ("met", "unmet")]
+    if ended:
+        parts.append(f"{sum(o.status == 'met' for o in ended)} met, {sum(o.status == 'unmet' for o in ended)} ended short")
+    second = list(book.second)
+    if second:
+        parts.append(f"last second thought: {second[-1]['verdict']}")
+    return ("objectives: " + (f" {g['dot']} ".join(parts) if parts else "none (objective: understand ...)"), "info" if live else "dim")
 
 
 def toolsmith_line(system, g: dict) -> Line:

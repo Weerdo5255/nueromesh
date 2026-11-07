@@ -16,6 +16,10 @@ picks a mode:
                  for permission to use it (toolsmith.py, P15)
     experiment   try out a tool it wrote that a person approved: the requests it was made for and
                  fresh probes; teach the router what works, refine what falls short (asking again)
+    pursue       set itself a long-term objective to understand something (an interest of yours, a goal
+                 of its own, a topic it has read up on), pursued by asking itself (objectives.py, P16)
+    ruminate     think again about recent answers it was unsure of or could not give: what would it
+                 say now? It notes what changed
     rest         nothing is worth the budget right now
 
 The Director is director-0, the primary director node (directors.py), and its mood shapes it: the
@@ -53,28 +57,32 @@ from .tasks import DIRECT
 from .teachers import Lesson, Teacher
 
 AGENCY = "agency"
-MODES = ("research", "practise", "examine", "improve", "consolidate", "build", "experiment", "rest")
+MODES = ("research", "practise", "examine", "improve", "consolidate", "build", "experiment", "pursue", "ruminate", "rest")
 TASK_MODES = ("research", "practise", "improve")
 FEATURES = ("skills", "gap", "topics", "research", "exams", "scores", "memory", "last", "streak", "budget",
-            "selftasks", "mood", "needs", "newtools")
+            "selftasks", "mood", "needs", "newtools", "aims", "doubts")
 MOODS = ("steady", "upbeat", "content", "alert", "tense", "subdued", "wary")  # the temperament's moods
 VALUES = {"skills": ("weak", "ok", "none"), "gap": ("none", "small", "large"), "topics": ("none", "some", "many"),
           "research": ("ready", "off", "spent"), "exams": ("due", "fresh", "none"), "scores": ("low", "high", "none"),
           "memory": ("failing", "unverified", "ok", "none"), "last": MODES + ("none",),
           "streak": ("one", "two", "many"), "budget": ("ok", "low"), "selftasks": ("none", "some", "full"),
-          "mood": MOODS, "needs": ("none", "some", "many"), "newtools": ("none", "fresh")}
+          "mood": MOODS, "needs": ("none", "some", "many"), "newtools": ("none", "fresh"), "aims": ("none", "some"),
+          "doubts": ("none", "some")}
 WHY = {"research": "there are topics to read up on", "improve": "a skill is below its target",
        "examine": "an exam is due", "practise": "its exam scores are low",
        "consolidate": "memory nodes need checking",
        "build": "requests no tool could meet need a tool it could write",
        "experiment": "a tool it wrote has not been tried out yet",
+       "pursue": "there is something it wants to understand properly",
+       "ruminate": "some of its recent answers deserve a second thought",
        "rest": "nothing is worth the budget right now"}
 # How the mood moves the drives (only of modes already worth something; rest always can).
-MOOD_DRIVES = {"upbeat": {"research": 0.15, "practise": 0.05, "build": 0.1}, "content": {"research": 0.08, "experiment": 0.05},
-               "alert": {"examine": 0.08, "consolidate": 0.05, "experiment": 0.05},
-               "tense": {"consolidate": 0.15, "examine": 0.1, "research": -0.1, "build": -0.1},
-               "subdued": {"rest": 0.3, "research": -0.1, "build": -0.1},
-               "wary": {"consolidate": 0.2, "research": -0.3, "build": -0.5}}
+MOOD_DRIVES = {"upbeat": {"research": 0.15, "practise": 0.05, "build": 0.1, "pursue": 0.1},
+               "content": {"research": 0.08, "experiment": 0.05, "pursue": 0.05},
+               "alert": {"examine": 0.08, "consolidate": 0.05, "experiment": 0.05, "ruminate": 0.05},
+               "tense": {"consolidate": 0.15, "examine": 0.1, "research": -0.1, "build": -0.1, "ruminate": 0.15},
+               "subdued": {"rest": 0.3, "research": -0.1, "build": -0.1, "ruminate": 0.1},
+               "wary": {"consolidate": 0.2, "research": -0.3, "build": -0.5, "pursue": -0.3, "ruminate": 0.1}}
 MOOD_WHY = {"upbeat": "it is in good spirits, so it reads up and practises",
             "content": "it is content, so it follows its curiosity",
             "alert": "it is alert, so it measures and checks itself",
@@ -123,6 +131,10 @@ def drives(f: dict) -> dict[str, float]:
         d["build"] = 0.5 + (0.15 if f.get("needs") == "many" else 0.0)
     if f.get("newtools") == "fresh":                                                         # try what it made
         d["experiment"] = 0.7
+    if f.get("aims") == "some":                                                              # understand properly
+        d["pursue"] = 0.45
+    if f.get("doubts") == "some":                                                            # think it over again
+        d["ruminate"] = 0.5
     last = f.get("last")
     if last in d and last != "rest":                                                         # variety
         d[last] -= {"one": 0.0, "two": 0.15, "many": 0.35}.get(f.get("streak"), 0.0)
@@ -167,6 +179,10 @@ def feasible(f: dict) -> set[str]:
         out.add("build")
     if f.get("newtools") == "fresh":
         out.add("experiment")
+    if f.get("aims") == "some":
+        out.add("pursue")
+    if f.get("doubts") == "some":
+        out.add("ruminate")
     return out
 
 
@@ -229,6 +245,7 @@ class Director(Agent):
         self.pinned: str = state.get("pinned", "auto")
         self.override: bool | None = state.get("enabled")      # a person turned it on or off
         self.self_tasks: dict[str, dict] = state.get("self_tasks", {})
+        self.self_objectives: dict[str, dict] = state.get("self_objectives", {})  # objectives it set itself
         self.values: dict[str, float] = state.get("values", {})
         self.counts: dict[str, int] = state.get("counts", {})
         self.history: deque = deque(state.get("history", []), maxlen=60)
@@ -253,7 +270,8 @@ class Director(Agent):
         return max(0.05, self.sys.directives.background.tick_seconds * 2)
 
     def save(self) -> None:
-        state = {"pinned": self.pinned, "enabled": self.override, "self_tasks": self.self_tasks, "values": self.values,
+        state = {"pinned": self.pinned, "enabled": self.override, "self_tasks": self.self_tasks,
+                 "self_objectives": self.self_objectives, "values": self.values,
                  "counts": self.counts, "history": list(self.history), "verified_at": self.verified_at,
                  "failed_topics": self.failed_topics[-50:], "recent": list(self.recent), "cooldown": self.cooldown}
         self.sys.store.set_kv("agency.state", json.dumps(state))
@@ -288,14 +306,16 @@ class Director(Agent):
                 "examine": "sits a benchmark exam", "improve": "trains its weakest skill",
                 "consolidate": "checks its memory nodes against their tests",
                 "build": "writes a tool for requests no tool could meet (and asks permission to use it)",
-                "experiment": "tries out a tool it wrote", "rest": "rests"}[mode]
+                "experiment": "tries out a tool it wrote",
+                "pursue": "sets itself a long-term objective and works on it by asking itself",
+                "ruminate": "thinks again about recent answers it was unsure of", "rest": "rests"}[mode]
 
     # ---------------------------------------------------------------- the loop
     async def step(self) -> None:
         s = self.sys
         if s.guardian.halted or s.guardian.paused:
             return
-        if self.self_tasks:
+        if self.self_tasks or self.self_objectives:
             self.review()
         if not self.enabled or time.time() < self.next_at:
             return
@@ -387,6 +407,11 @@ class Director(Agent):
             needs = []
         if smith.enabled and smith._budget(smith.trials, smith.pol.experiments_per_hour) <= 0:
             fresh = []
+        book = s.objectives  # what it wants to understand properly, and answers worth a second thought (P16)
+        mine = [o for o in self.self_objectives if (book.get(o) is not None and book.get(o).status in ("active", "paused"))]
+        aims = [a for a in self.aims() if not cool("pursue", a[0].lower())] \
+            if book.enabled and len(mine) < pol.max_self_objectives and book.budget_left() > 0 else []
+        doubts = book.doubts(5) if book.enabled and book.budget_left() > 0 else []
         flags = {
             "skills": "weak" if weak else ("ok" if any(s.registry.champion(c) for c in s.capabilities if c != AGENCY) else "none"),
             "gap": gap, "topics": "none" if not topics else ("many" if len(topics) >= 3 else "some"),
@@ -400,11 +425,13 @@ class Director(Agent):
             "mood": s.directors.stance().mood,  # the mood shapes what it chooses (directors.py)
             "needs": "none" if not needs else ("many" if sum(len(g["texts"]) for g in needs) >= 3 else "some"),
             "newtools": "fresh" if fresh else "none",
+            "aims": "some" if aims else "none",
+            "doubts": "some" if doubts and not cool("ruminate", "recent answers") else "none",
         }
         allowed = set(pol.modes) | {"rest"}
         return {"flags": flags, "text": situation_text(flags), "weak": weak, "topics": topics, "due": due,
                 "practice": practice, "feasible": feasible(flags) & allowed, "any_suite": any_suite,
-                "needs": needs, "fresh": fresh}
+                "needs": needs, "fresh": fresh, "aims": aims, "doubts": doubts}
 
     def topics(self) -> list[tuple[str, str]]:
         s = self.sys
@@ -529,6 +556,10 @@ class Director(Agent):
             return sit["needs"][0]["recipe"] if sit.get("needs") else None
         if mode == "experiment":
             return sit["fresh"][0] if sit.get("fresh") else None
+        if mode == "pursue":
+            return sit["aims"][0][0] if sit.get("aims") else None
+        if mode == "ruminate":
+            return "recent answers" if sit.get("doubts") else None
         pick = {"research": sit["topics"], "practise": sit["practice"], "improve": sit["weak"], "examine": sit["due"]}.get(mode)
         return pick[0][0] if pick else None
 
@@ -611,6 +642,31 @@ class Director(Agent):
             else:
                 record["summary"] = f"tried out {rep['line']}"
                 record["value"] = round(0.3 + 0.7 * rep["score"], 3)
+        elif mode == "pursue":
+            topic, why = sit["aims"][0]
+            record["target"] = topic
+            try:
+                obj = await s.objectives.add(f"understand {topic}", by=record["by"], self_set=True)
+            except ValueError as exc:
+                record["summary"] = f"could not set itself the objective: {exc}"
+                record["value"] = 0.0
+            else:
+                record["why"] = f"{record['why']}: '{topic}' ({why})" if not record["why"].startswith("exploring") else record["why"]
+                record["task"] = obj.id
+                record["summary"] = (f"set itself {obj.id}: {obj.text} ({obj.strategy}; "
+                                     f"{len([q for q in obj.questions if q['kind'] != 'research'])} questions to ask itself)")
+                self.self_objectives[obj.id] = {"mode": "pursue", "situation": record["situation"], "started": time.time(),
+                                                "what": obj.text, "target": topic}
+                s.guardian.audit(record["by"], "agency.objective", obj.id, what=obj.text)
+        elif mode == "ruminate":
+            record["target"] = "recent answers"
+            got = await s.objectives.second_thoughts(by=record["by"])
+            verdicts = [g["verdict"] for g in got]
+            moved = sum(v in ("now answers", "changed its mind") for v in verdicts)
+            still = sum(v == "still thinks" for v in verdicts)
+            record["summary"] = (f"thought again about {len(got)} recent answer{'s' if len(got) != 1 else ''}: "
+                                 + (", ".join(f"{verdicts.count(v)} {v}" for v in dict.fromkeys(verdicts)) or "nothing to rethink"))
+            record["value"] = round(min(1.0, 0.25 * still + 0.45 * moved), 3) if got else 0.0
         else:
             record["summary"] = "rests"
 
@@ -636,10 +692,50 @@ class Director(Agent):
                                     "baseline": baseline, "what": task.describe(), "target": target}
         s.guardian.audit("director", "agency.assigned", task.id, what=task.describe(), mode=record["mode"])
 
+    def aims(self) -> list[tuple[str, str]]:
+        """What it could set itself an objective to understand: what you said you are interested in,
+        goals of its own, and topics it has read up on (a learn task's first pass is done)."""
+        s = self.sys
+        out, seen = [], set()
+        taken = {o.text.lower() for o in s.objectives.items.values()}
+
+        def add(topic: str, why: str) -> None:
+            t = _clean_topic(topic)
+            if len(t) < 3 or t.lower() in seen or f"understand {t}".lower() in taken or is_question(t):
+                return
+            seen.add(t.lower())
+            out.append((t, why))
+        if s.mind.enabled:
+            for n in list(s.mind.notes.values()):
+                if n.kind == "fact" and n.subject == "user" and n.text.startswith("interested in "):
+                    add(n.text[len("interested in "):], "you said you are interested in it")
+            for g in list(s.mind.goals)[-10:]:
+                if g.kind in ("interest", "curiosity", "opinion"):
+                    add(g.text, f"a goal of its own ({g.reason})")
+        for t in s.tasks.tasks.values():
+            if t.kind == "learn" and t.met:
+                add(t.target, f"it has read up on it ({t.id})")
+        return out[:10]
+
     def review(self) -> None:
-        """Score the tasks it set itself once they have run their course, then retire them."""
+        """Score the tasks and objectives it set itself once they have run their course, then retire them."""
         s, pol = self.sys, self.pol
         changed = False
+        for oid, rec in list(self.self_objectives.items()):
+            obj = s.objectives.get(oid)
+            if obj is not None and obj.status not in ("met", "unmet"):
+                continue
+            del self.self_objectives[oid]
+            changed = True
+            if obj is None:
+                s.bus.publish("agency.outcome", task=oid, mode="pursue", what=rec["what"], value=None,
+                              summary="removed by a person before it finished", lesson="")
+                continue
+            done, total = obj.progress()
+            value = (0.6 + 0.4 * done / total) if obj.status == "met" and total else (0.5 * done / total if total else 0.0)
+            entry = next((h for h in reversed(self.history) if h.get("task") == oid), None) or \
+                {"mode": "pursue", "situation": rec["situation"], "task": oid, "target": rec["target"]}
+            self.outcome(entry, round(value, 3), f"{oid} ({obj.text}) {obj.status}: {done}/{total} answered", rec["target"])
         for tid, rec in list(self.self_tasks.items()):
             task = s.tasks.get(tid)
             if task is None:  # a person removed it
@@ -696,8 +792,9 @@ class Director(Agent):
         not pay off rest for a while."""
         s, pol = self.sys, self.pol
         mode = entry["mode"]
-        if target and mode in ("research", "practise", "improve", "examine", "build", "experiment") and value < pol.good_value:
-            key = f"{mode}:{target.lower() if mode == 'research' else target}"
+        if target and mode in ("research", "practise", "improve", "examine", "build", "experiment", "pursue", "ruminate") \
+                and value < pol.good_value:
+            key = f"{mode}:{target.lower() if mode in ('research', 'pursue') else target}"
             self.cooldown[key] = time.time() + pol.retry_after_seconds
         old = self.values.get(mode)
         self.values[mode] = round(value if old is None else 0.7 * old + 0.3 * value, 3)
@@ -739,6 +836,7 @@ class Director(Agent):
                 "next_in": max(0, round(self.next_at - time.time())) if self.enabled else None,
                 "decisions_last_hour": self.pol.max_decisions_per_hour - self._budget_left(),
                 "limit": self.pol.max_decisions_per_hour, "self_tasks": tasks, "values": dict(self.values),
+                "self_objectives": [{"id": k, "what": v["what"]} for k, v in self.self_objectives.items()],
                 "counts": dict(self.counts), "history": list(self.history)[-15:],
                 "node": ({"id": champ.id, "arch": champ.arch.describe(), "holdout": acc, "params": champ.param_count,
                           "serves": champ.metrics.get("serves", 0),

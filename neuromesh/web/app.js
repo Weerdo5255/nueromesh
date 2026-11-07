@@ -71,7 +71,7 @@
     dash: null, lastOrderTs: 0, failures: 0,
     view: "live", logsTab: "activity", mindTab: "questions", lineageCap: "", memNode: null, memDetail: null, memTests: null,
     filter: { q: "", levels: new Set(), routine: true },
-    extra: {}, extraAt: {},
+    extra: {}, extraAt: {}, open: new Set(), reports: {},
     haltArmed: 0, meshKey: "", layerKey: "", geometry: null,
     history: JSON.parse(store.get("history", "[]") || "[]"), histPos: -1,
   };
@@ -929,6 +929,78 @@
         proposals.length ? proposals : h("p", { class: "dim" }, "Nothing proposed. It proposes skills, labels and tools when it notices a need; nothing changes until you adopt it.")));
   }
 
+  // a <details> that stays open across the 1.5 s re-renders
+  function fold(key, summary, ...kids) {
+    return h("details", { open: S.open.has(key), ontoggle: e => {
+      if (e.target.open === S.open.has(key)) return;
+      if (e.target.open) S.open.add(key); else S.open.delete(key);
+      if (e.target.open && key.startsWith("report:")) refreshExtra(true);
+    } }, h("summary", {}, summary), kids);
+  }
+
+  function objectivesPanel(ob) {
+    if (!ob || !ob.enabled) return offPanel("Objectives", "Objectives are off. Turn them on with [objectives] enabled = true in directives.toml.");
+    const aim = h("input", { type: "text", placeholder: "understand the Berlin Wall, find out who wrote Pride and Prejudice and when, compare tea and coffee", "aria-label": "An objective" });
+    const set = h("form", { class: "row", onsubmit: e => {
+      e.preventDefault();
+      if (!aim.value.trim()) return;
+      act(e.target.querySelector("button"), async () => { const r = await api("/objectives", { text: aim.value.trim(), by: "web" }); aim.value = ""; return r; }, r => r.message);
+    } }, aim, h("button", { type: "submit", class: "primary" }, "Set objective"));
+    const tone = { active: "hit", met: "ok", unmet: "no", paused: "dim" };
+    const word = { active: "in progress", met: "met", unmet: "ended short", paused: "paused" };
+    const stand = q => ["alt", "retry", "settle"].includes(q.role);
+    const items = ob.objectives.slice().reverse().map(o => {
+      const [done, total] = o.progress;
+      const qs = o.questions.filter(q => q.kind !== "research" && !stand(q));
+      const reading = o.questions.filter(q => q.kind === "research");
+      const write = fold(`report:${o.id}`, "Read the write-up", h("pre", { class: "block report" }, S.reports[o.id] || "Loading the write-up…"),
+        h("p", { class: "small dim" }, `Also in ${o.report}`));
+      const check = q => q.status !== "answered" ? null
+        : q.confirmed === true ? h("span", { class: "ok" }, ` confirmed (${q.checked_by})`)
+        : q.confirmed === false ? h("span", { class: "no" }, ` disputed: ${q.checked_by} says “${cut(q.conflict, 80)}”`)
+        : q.confirmed === "single" ? h("span", { class: "dim" }, " one source") : h("span", { class: "dim" }, " not checked yet");
+      const rows = qs.map(q => h("li", { class: "ask" },
+        h("p", {}, h("b", {}, q.ask), q.core ? null : h("span", { class: "dim small" }, q.from === "rumination" ? " follow-up" : " extra")),
+        q.status === "answered" ? h("p", { class: "why" }, cut(q.answer, 220), " ", h("span", { class: "dim" }, `(${q.source}, ${pct(q.confidence)})`), check(q))
+          : h("p", { class: "why" }, { todo: "Not asked yet.", waiting: `Waiting for you (${q.inquiry}).`, "waiting-task": cut(q.answer, 160), "waiting-tool": cut(q.answer, 160),
+            retried: "Not answered yet; trying another way.", unknown: `Not found. Tried: ${q.tried.join("; ") || "nothing it has could answer it"}.`,
+            failed: "Not answered; it will think it over.", skipped: "Skipped." }[q.status] || q.status)));
+      const thoughts = o.thoughts.slice(-8).reverse().map(t => h("li", { style: "padding:3px 0" }, h("time", { class: "dim small", title: dateTime(t[0]) }, clock(t[0])), " ", h("b", {}, t[1]), ` ${t[2]}`));
+      const live = o.status === "active" || o.status === "paused";
+      return h("li", { class: "ask objective" },
+        h("div", { class: "row", style: "justify-content:space-between;align-items:baseline" },
+          h("span", {}, h("b", {}, o.text.charAt(0).toUpperCase() + o.text.slice(1)), " ", h("span", { class: tone[o.status] || "dim" }, word[o.status] || o.status),
+            o.self_set ? h("span", { class: "dim small" }, " set by its own initiative") : null),
+          live ? h("span", { class: "row" },
+            h("button", { type: "button", class: "small", onclick: e => act(e.target, () => api("/objectives", { id: o.id, action: "think", by: "web" }), r => cut(r.message, 200)) }, "Think it over now"),
+            h("button", { type: "button", class: "quiet small", onclick: e => act(e.target, () => api("/objectives", { id: o.id, action: o.status === "paused" ? "resume" : "pause", by: "web" }), r => r.message) }, o.status === "paused" ? "Resume" : "Pause"),
+            h("button", { type: "button", class: "quiet small", onclick: e => act(e.target, () => api("/objectives", { id: o.id, action: "remove", by: "web" }), r => r.message) }, "Remove")) : null),
+        h("div", { class: "progress", role: "img", "aria-label": `${done} of ${total} core questions answered` }, h("b", { style: `width:${total ? (done / total * 100).toFixed(0) : 0}%` })),
+        h("p", { class: "why" }, `${o.id}: ${done} of ${total} core questions answered; ${o.steps} steps, ${o.rounds} round${o.rounds === 1 ? "" : "s"} of thought; ${o.strategy} strategy, planned by ${o.planned_by}.` +
+          (reading.length ? ` Reading: ${reading.map(q => `${q.ask} (${q.status === "answered" ? "read" : q.note || q.status})`).join(", ")}.` : "")),
+        o.note ? h("p", { class: "why" }, o.note) : null,
+        o.summary ? h("p", {}, o.summary) : null,
+        fold(`questions:${o.id}`, `Questions (${qs.length})`, h("ul", { class: "rows" }, rows)),
+        thoughts.length ? fold(`thoughts:${o.id}`, "How it thought it over", h("ul", { class: "rows small" }, thoughts)) : null,
+        write);
+    });
+    const second = ob.second_thoughts.slice().reverse().map(t => h("li", { class: "ask" },
+      h("p", {}, h("time", { class: "dim small", title: dateTime(t.ts) }, clock(t.ts)), " ", h("span", { class: t.verdict === "changed its mind" ? "no" : t.verdict === "now answers" ? "ok" : "dim" }, t.verdict)),
+      h("p", { class: "why" }, t.line)));
+    return h("div", { class: "section" }, h("h2", {}, "Objectives"),
+      h("p", { class: "lede" }, "Long-term aims it works on in its spare time. Its planner node picks a strategy, and each question in the plan is asked of the mesh itself: the router, its tools, memory nodes, what it has read, and teachers, with a director at both ends. " +
+        "When the plan runs out it thinks things over: it checks each answer against a second source, tries what failed in other words or reads up on it, asks you what nothing it has can answer, and follows up what the answers raise. It writes up everything as it goes."),
+      set,
+      h("p", { class: "small dim" }, `${ob.steps_left} of ${ob.limit} steps left this hour. Also as an order: “objective: understand photosynthesis”.`),
+      h("div", { class: "cols", style: "margin-top:14px" },
+        h("div", {}, h("h3", {}, "Its objectives"), items.length ? h("ul", { class: "rows" }, items) : h("p", { class: "dim" }, "None yet. Set one above, or let its initiative set one about something you said you are interested in.")),
+        h("div", {},
+          h("h3", {}, "Second thoughts"),
+          h("p", { class: "small dim" }, `It thinks again about recent answers it was unsure of or could not give. ${ob.doubts ? `${ob.doubts} worth another look now.` : "Nothing waiting for a second look."}`),
+          h("button", { type: "button", disabled: !ob.doubts, onclick: e => act(e.target, () => api("/objectives", { ruminate: true, by: "web" }), r => cut(r.message, 240)) }, "Think again now"),
+          second.length ? h("ul", { class: "rows", style: "margin-top:10px" }, second) : null)));
+  }
+
   function temperamentPanel(tm) {
     if (!tm || !tm.enabled) return h("div", { class: "section" }, h("h2", {}, "Temperament"),
       h("p", { class: "dim" }, "The temperament is off, so answers go out unchanged. Turn it on with [temperament] enabled = true in directives.toml."));
@@ -977,7 +1049,7 @@
   function offPanel(title, text) { return h("div", { class: "section" }, h("h2", {}, title), h("p", { class: "dim" }, text)); }
 
   // the Mind view is divided into tabs; the open one is in the address (#mind/tools) and remembered
-  const MIND_TABS = ["questions", "directors", "initiative", "tools", "dreams", "temperament", "thoughts"];
+  const MIND_TABS = ["questions", "objectives", "directors", "initiative", "tools", "dreams", "temperament", "thoughts"];
   if (MIND_TABS.includes(store.get("mindTab", ""))) S.mindTab = store.get("mindTab", "");
 
   function mindBadges(st) {
@@ -988,6 +1060,8 @@
     $("#badge-mind-tools").textContent = waiting ? String(waiting) : "";
     $("#note-mind-dreams").textContent = dr?.enabled && dr.asleep ? "asleep" : "";
     $("#note-mind-temperament").textContent = tm?.enabled ? tm.mood : "";
+    const live = (st.objectives?.objectives || []).filter(o => o.status === "active").length;
+    $("#note-mind-objectives").textContent = live ? `${live} active` : "";
   }
 
   function renderMind(force) {
@@ -998,6 +1072,7 @@
     if (!force && busy(host)) return;
     const panel = {
       questions: () => questionsPanel(st.mind),
+      objectives: () => objectivesPanel(st.objectives),
       directors: () => directorsPanel(st.directors),
       initiative: () => initiative(st.agency) || offPanel("Initiative", "Its initiative is not available in this NeuroMesh."),
       tools: () => toolsmithPanel(st.toolsmith) || offPanel("Tools it writes", "The toolsmith is off. Turn it on with [toolsmith] enabled = true in directives.toml."),
@@ -1174,6 +1249,13 @@
     const due = (key, ms) => force || !S.extraAt[key] || now - S.extraAt[key] > ms;
     const get = async (key, path) => { S.extraAt[key] = now; try { S.extra[key] = await api(path); } catch { /* shown on the next poll */ } };
     const jobs = [];
+    if (S.view === "mind" && S.mindTab === "objectives") {
+      for (const key of S.open) {
+        if (!key.startsWith("report:")) continue;
+        const id = key.slice(7);
+        if (due(key, 4000)) jobs.push((async () => { S.extraAt[key] = now; try { S.reports[id] = (await api(`/objectives?id=${encodeURIComponent(id)}`)).report; } catch { /* next poll */ } })());
+      }
+    }
     if (S.view === "mind" && S.mindTab === "thoughts") {
       if (due("opinions", 5000)) jobs.push(get("opinions", "/opinions"));
       if (due("notes", 5000)) jobs.push(get("notes", "/notes"));

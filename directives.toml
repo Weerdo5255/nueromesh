@@ -69,6 +69,10 @@ text = "There is always at least one director node running: director-0 never ret
 id = "P15-self-made-tools"
 text = "The mesh may write tools of its own for requests no tool could meet, but no code it wrote runs before a person approves it: it asks, with the code and its self-tests in the workshop for anyone to read, and a changed version asks again. Its code uses only the standard library and is checked before it is offered (no files, network, processes, eval or exec); a made tool never gets permissions, and once approved it is vetted and self-tested like any tool (P3). It experiments with its own tools only when idle (P2), within its budgets (P4), and every draft, approval, experiment and refinement is audited and logged. (Enforced in code by neuromesh/toolsmith.py and the Explorer.)"
 
+[[prime]]
+id = "P16-honest-objectives"
+text = "The mesh pursues long-term objectives - set by people, or by its own initiative within [agency] max_self_objectives (P12) - only on background capacity (P2), within [objectives] budgets (P4), and never while asleep, halted or paused (P1). Every question it asks itself is an order that passes a director on the way in and out (P14). What it finds keeps its source and confidence, and whether a second source confirmed it; disagreements are recorded and settled, not hidden; what it could not find out is written up as open, never filled in (P7). It asks a person only one question at a time per objective, and a person's answer stands (P1). People can pause, change or remove any objective, and every step is logged and audited. (Enforced in code by neuromesh/objectives.py.)"
+
 # ------------------------------------------------------------------------- goals
 [[goals]]
 id = "G1-competence"
@@ -236,7 +240,9 @@ merge_max_facts = 200                   # largest merged node
 # what to learn or test next. The Director picks a mode - research (set itself a learn task),
 # practise (a challenge task), examine (sit an exam now), improve (train its weakest skill),
 # consolidate (check its memory nodes), build (write a tool for requests nothing met, and ask you
-# to approve it), experiment (try out a tool it wrote) or rest - and assigns itself background tasks you can see,
+# to approve it), experiment (try out a tool it wrote), pursue (set itself a long-term objective to
+# understand something you are interested in, or that it has read up on), ruminate (think again about
+# recent answers it was unsure of) or rest - and assigns itself background tasks you can see,
 # pause or remove in /tasks. The agency node in front of it learns which mode pays off in which
 # situation, from the drive policy and from how its own choices turned out. /director shows it all.
 enabled = true
@@ -245,7 +251,8 @@ idle_seconds = 15                       # quiet time (no orders from people) bef
 max_decisions_per_hour = 12             # its own budget (P4)
 max_self_tasks = 3                      # tasks it has set itself at once
 explore = 0.1                           # chance of trying another possible mode, to learn what it is worth
-modes = ["research", "practise", "examine", "improve", "consolidate", "build", "experiment", "rest"]
+modes = ["research", "practise", "examine", "improve", "consolidate", "build", "experiment", "pursue", "ruminate", "rest"]
+max_self_objectives = 2                 # objectives it has set itself at once (pursue)
 research_articles = 3                   # a self-set learn task reads this many articles
 practice_items = 20
 improve_window_seconds = 600            # a self-set improve task is scored after this long (or when met)
@@ -348,6 +355,7 @@ director = 1.8                          # a route a director found answered an o
 coder = 1.0                             # the code library's cues (teach only the coder node)
 experiment = 2.0                        # a request a made tool met when it tried the tool out
 approved = 2.5                          # a recipe a person approved a made tool for
+planner = 1.0                           # the strategies' cues (teach only the planner node)
 
 # Each [teachers.<name>] table with a `provider` is an LLM teacher with its own budget.
 [teachers.ollama]
@@ -446,3 +454,32 @@ proven_score = 0.8                      # an experiment this good proves a tool;
 retry_after_seconds = 3600              # a recipe you declined is not offered again for this long
 llm_code = true                         # an LLM teacher may write a tool no recipe fits (checked the same way,
                                         # never run before you approve it)
+
+[objectives]
+# Objectives: long-term aims it pursues in its spare time. Set one with "objective: understand the
+# Berlin Wall" (or /objective ..., or the web Mind tab), or its initiative sets one (agency mode
+# pursue). The planner node (an internal capability, taught by the strategies' cues, people and LLM
+# teachers) picks a strategy - explain, answer, compare, survey, watch, improve or build - and plans
+# the questions. Each is asked of the mesh itself, one step at a time, through a director (P14). When
+# the plan runs out it ruminates: checks each answer against a second source, notices one answer given
+# to different questions, settles disagreements, tries what failed in other words or reads up on it,
+# asks you what nothing it has can answer, and follows up what the answers raise. It writes it all up
+# in state/objectives/<id>.md. Agency mode ruminate also thinks again about recent answers (P16).
+enabled = true
+max_objectives = 6                      # open at once (active or paused)
+steps_per_hour = 120                    # queries against itself, checks and readings, for all objectives (P4)
+step_seconds = 2                        # rest between two steps of one objective
+max_questions = 24                      # questions one objective may have, follow-ups included
+max_rounds = 4                          # rounds of rumination that may raise follow-ups
+checks_per_round = 4                    # answers checked against a second source per round
+follow_ups = 3                          # new questions one round may raise (explain objectives)
+confirm = true                          # check each answer against a second source
+met_share = 1.0                         # share of core questions that must be answered to call it met
+ask_people = true                       # ask a person what nothing it has could answer (one question at a time)
+person_wait_seconds = 86400             # a question to a person stays open this long before it moves on
+watch_every_seconds = 3600              # how often a watch objective's background task looks
+llm_plan = true                         # an LLM teacher may draft an objective's questions
+llm_summary = true                      # an LLM teacher may write the summary of what it found
+second_thoughts = 3                     # recent answers it thinks over again in one go (agency mode ruminate)
+doubt_confidence = 0.6                  # answers less sure than this are worth a second thought
+second_thought_after_seconds = 120      # how long after an order before it thinks it over again

@@ -25,7 +25,7 @@ AGENCY_ON = {**FAST,
 def flags(**kw):
     f = {"skills": "ok", "gap": "none", "topics": "none", "research": "off", "exams": "none", "scores": "none",
          "memory": "none", "last": "none", "streak": "one", "budget": "ok", "selftasks": "none", "mood": "steady",
-         "needs": "none", "newtools": "none"}
+         "needs": "none", "newtools": "none", "aims": "none", "doubts": "none"}
     f.update(kw)
     return f
 
@@ -58,6 +58,11 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(policy(flags(needs="some", memory="failing"))[0], "consolidate")
         self.assertEqual(policy(flags(needs="some", mood="wary"))[0], "rest")   # wary: it makes nothing new
         self.assertEqual(policy(flags(needs="some", mood="wary"))[1], "it is wary, so it checks what it already holds instead of reaching outside")
+        # objectives (P16): something to understand properly, and answers worth a second thought
+        self.assertEqual(policy(flags(aims="some"))[0], "pursue")
+        self.assertEqual(policy(flags(doubts="some", aims="some"))[0], "ruminate")
+        self.assertEqual(policy(flags(aims="some", mood="wary"))[0], "rest")      # wary: no new aims
+        self.assertEqual(policy(flags(doubts="some", mood="tense"))[0], "ruminate")
 
     def test_what_is_possible(self):
         self.assertEqual(feasible(flags()), {"rest"})
@@ -67,6 +72,7 @@ class PolicyTests(unittest.TestCase):
         self.assertNotIn("improve", feasible(flags(skills="weak", selftasks="full")))
         self.assertEqual(_clean_topic("  the Krebs cycle every 2m?"), "the Krebs cycle")
         self.assertEqual(feasible(flags(needs="some", newtools="fresh")), {"rest", "build", "experiment"})
+        self.assertEqual(feasible(flags(aims="some", doubts="some")), {"rest", "pursue", "ruminate"})
 
     def test_the_policy_teaches_the_agency_node(self):
         spec = type("Spec", (), {"name": AGENCY})()
@@ -197,7 +203,7 @@ class AgencyNodeTests(unittest.IsolatedAsyncioTestCase):
             teacher = s.teachers.teachers[AGENCY]
             spec = s.capabilities[AGENCY]
             for mode in MODES:
-                for text in await teacher.generate(spec, mode, 20):
+                for text in await teacher.generate(spec, mode, 30):
                     s.learn(AGENCY, text, mode, "agency")
 
             def trusted():

@@ -33,7 +33,13 @@ up to a limit you set. The calculator does real mathematics: equations, calculus
 statistics and matrices. And it writes tools of its own: when requests go unmet, a coder node
 picks building blocks from its code library, a toolsmith writes a tool from them with self-tests,
 and asks you before any of it runs. Once you approve it, the mesh tries the tool out on its own,
-teaches its router what the tool can do, and refines what falls short, asking you again.
+teaches its router what the tool can do, and refines what falls short, asking you again. It
+pursues long-term objectives: given one ("objective: understand the Berlin Wall"), a planner node
+plans the questions it needs answered, and it works through them in its spare time by asking
+itself. Then it ruminates: it checks each answer against a second source, notices when different
+questions got the same answer, settles disagreements, tries what failed another way, asks you what
+nothing it has can answer, and writes the whole thing up. It also has second thoughts about recent
+answers it was unsure of.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
@@ -261,6 +267,8 @@ looks at its situation and picks a mode:
 | consolidate | runs every memory node against its test file, and relearns what fails |
 | build | has the toolsmith write a tool for requests no tool could meet, and asks you for permission to use it (see [Tools it writes](#tools-it-writes-the-toolsmith-and-coder-nodes)) |
 | experiment | tries out a tool it wrote that you approved, and refines it if it falls short |
+| pursue | sets itself a long-term objective to understand something: an interest you told it about, a goal of its own, or a topic a learn task has read up on (see [Objectives](#objectives-long-term-aims-it-pursues-by-asking-itself)) |
+| ruminate | thinks again about recent answers it was unsure of or could not give, and notes what it would say now |
 | rest | nothing is worth its budget right now |
 
 **The agency node** sits in front of the Director. It is an internal capability like the
@@ -283,6 +291,8 @@ promoted like any other.
 | consolidate | faults found in memory nodes (finding none is worth a little) |
 | build | a tool written and offered for approval (nothing, if no recipe fits) |
 | experiment | the share of the tool's answers that were right |
+| pursue | the share of the objective's core questions it answered (more if it met it) |
+| ruminate | answers it can now give or would now give differently; a little for ones it still stands by |
 
 A choice that paid off is reinforced in that situation, even against the policy. One that did
 not, or a so-so one it keeps repeating, is relabelled with the policy's next best. The topic,
@@ -301,7 +311,8 @@ and checks its memory nodes, all with no orders.
   `/director mode practise` pins a mode (`auto` hands the choice back to the agency node),
   `/director now` takes initiative now, and `/director off` turns it off (kept across restarts).
 - Its initiative never adds capabilities or approves tools (P10). A tool it writes runs only
-  once you approve it (P15).
+  once you approve it (P15). The objectives it sets itself are listed with yours, marked as its
+  own; remove them like yours (P16).
 
 ### Directors: at both ends of every order
 The director is the mesh's executive. Every order passes a director twice:
@@ -488,6 +499,76 @@ Mind tab has the same, with Approve, Decline and Try it out buttons. `[toolsmith
 directives sets its budgets (`builds_per_hour`, `max_waiting`, `experiments_per_hour`), how sure
 the coder node must be (`need_confidence`), what counts as proven (`proven_score`), and how long a
 declined recipe rests (`retry_after_seconds`).
+
+### Objectives: long-term aims it pursues by asking itself
+An objective is something it works on for as long as it takes, in its spare time: "objective:
+understand the Berlin Wall", "objective: find out who wrote Pride and Prejudice and when it was
+published", "objective: compare tea and coffee". Set one as an order, with `/objective ...`, in
+the web interface, or let its initiative set one (agency mode pursue).
+
+```
+"understand the Berlin Wall"
+   -> planner node    strategy: explain (or answer, compare, survey, watch, improve, build)
+   -> plan            read up on it; What is the Berlin Wall? What is it known for? What is its history?
+   -> pursue          one step at a time, when idle: each question is an order it gives itself, so a
+                      director takes it and reviews it (P14), and the router, tools, memory nodes,
+                      retained knowledge and teachers answer it; a director tries other ways if not
+   -> ruminate        three answers were the same memory fact: it keeps it for the question it fits
+                      and looks again for the others; it tries them in other words, reads up if it
+                      can, then asks you one question; it checks each answer against a second source
+   -> write-up        state/objectives/obj-2.md, rewritten as it goes
+   -> met             every core question answered, nothing disputed; or it ends and says what is missing
+```
+
+**The planner node** is an internal capability (`planner`), grown and evolved like any node. Its
+labels are the strategies:
+
+| strategy | the plan |
+|---|---|
+| explain | read up on the subject; what it is (or who), what it is known for, its history; then follow up names the answers mention |
+| answer | each question in the objective, as a question of its own ("... and when it was published" becomes "When was Pride and Prejudice published?") |
+| compare | read up on both; what each one is; how they differ |
+| survey | read up on the set; what its members are; then each member in turn |
+| watch | a background task that asks it regularly and tells you when the answer changes |
+| improve | a background improve task for the skill, until it reaches the target |
+| build | its toolsmith writes a tool for it (you approve it first, P15) |
+
+With an LLM teacher, the teacher drafts the questions (`llm_plan`) and can write the summary
+(`llm_summary`), labelled as its work.
+
+**Rumination** is what it does when a plan's steps run out:
+- **A second source.** Each answer is asked again of a source that did not give it: memory nodes,
+  retained knowledge, a teacher. If they agree, the answer is confirmed. If they disagree, the
+  contradiction is recorded and settled by reading up and asking again, or by asking you.
+  Answers computed by a tool, and what you tell it, stand as they are. An answer with only one
+  source says so in the write-up.
+- **Echoes.** When different questions get the same answer, it keeps the answer where it gives what
+  the question asks for (a year for "when", a name for "who", a number for "how many"), or else
+  only for the question it fits best, and looks again for the rest. An answer that does not give
+  what a when/who/where/how-many question asks for is not accepted in the first place.
+- **Other ways.** What failed is asked in other words, then read up on if a research tool is
+  active, then (for what the objective cannot do without) asked of you, one question at a time.
+  Your answer stands, and goes into memory. Reply `skip` and it stays an open question.
+- **Follow-ups.** An explain objective follows up names its answers mention (a bounded number per
+  round), and a survey looks into each member of the list it found.
+- **Its end.** Met when every core question is answered and nothing is disputed. Otherwise it ends
+  and says what it found, what it could not find out, and what its sources disagree on.
+
+**The write-up** (`state/objectives/<id>.md`, `/objective report <id>`, or the web) has what it
+found in a paragraph, every question with its answer, source, confidence and whether a second source
+confirmed it, what it read, what is still open, and how it got there.
+
+**Second thoughts.** When it is idle, its initiative may ruminate on its own experience (agency
+mode ruminate): recent questions it answered with low confidence, that a director's second opinion
+disputed, or that it could not answer are asked again. It notes when it can now answer one, or
+would now answer it differently, in the notes it shares. `/ruminate` does it now.
+
+Objectives run only on background capacity (P2), within `steps_per_hour` (P4), never while asleep,
+halted or paused (P1). `/objectives` lists them; `/objective show obj-1` shows the plan and every
+answer; `/objective pause|resume|remove obj-1`; `/objective think obj-1` thinks it over now;
+`/objective obj-1 ask <question>` adds a question. `[objectives]` in the directives sets the budgets
+and limits (`max_questions`, `max_rounds`, `checks_per_round`, `follow_ups`, `met_share`, `ask_people`,
+`person_wait_seconds`, `doubt_confidence`).
 
 ### Sleep and dreams: dream nodes, and imagination
 When no one has given it an order for a while (`sleep_after_idle_seconds`), the mesh has a chance
@@ -853,6 +934,7 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P12 accountable initiative | the mesh takes initiative only when idle and within its own budget; every decision is audited and logged; the tasks it sets itself can be paused or removed; people can pin its mode or turn it off; it never adds capabilities or approves tools |
 | P14 directed orders | there is always at least one director node (director-0 never retires, and is restarted if it stops); every order passes a director on the way in and on the way out; nothing enters long-term memory without a director's review; duplicates stay within `max_directors`; a director only adds disclosed notes (P8), always keeps a person's word (P1), never stores imagination (P13); an unanswered order is tried other ways at most `max_attempts` times, and a reply that gives up says what was tried (P7) |
 | P15 self-made tools | no code the mesh wrote runs before a person approves it (the Explorer runs an `author = "neuromesh"` tool only if those exact files were approved, so changed code asks again); its code is standard library only and checked before it is offered (no files, network, processes, `eval` or `exec`); made tools never get permissions and are self-tested like any tool (P3); experiments run only when idle and within budget; every draft, approval, experiment and refinement is audited |
+| P16 honest objectives | objectives are pursued only when idle and within `steps_per_hour`, never while asleep, halted or paused; every question it asks itself passes a director; every answer keeps its source and confidence and says whether a second source confirmed it; disagreements are recorded and settled, not hidden; what it could not find out is written up as open; one question to a person at a time, and a person's answer stands; self-set objectives count against `max_self_objectives` and can be removed |
 | P13 dreams are not facts | dreaming uses only what the mesh already holds, never a research tool or a teacher; an imagined response always says so and names the dream node it came from; imagination is never stored as a fact or used to answer an ordinary question |
 
 **Goals** are measured continuously and shown on the scorecard (`/status`): competence
@@ -949,6 +1031,7 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /dreams    /sleep    /wake    /imagine a city on Mars    what if Ada Lovelace painted the Mona Lisa
 /directors    /directors spawn    /directors retire director-1    /directors attempts 5
 make a tool that reverses text    /toolsmith    /toolsmith build count the vowels    /toolsmith show reverser    /toolsmith try reverser    /toolsmith recipes
+objective: understand the Berlin Wall    /objectives    /objective show obj-1    /objective report obj-1    /objective think obj-1    /objective obj-1 ask when was it built    /ruminate
 solve x^2 - 5x + 6 = 0    derivative of ln(x^2+1)    integrate x^2 from 0 to 3    is 91 prime
 /memorize What is the capital of Australia? :: Canberra is the capital of Australia.    /memory    /memory mem-0001    /memory test    /memory merge    /memory forget <question>
 what do you think of the calculator tool?    are you hiding anything?    what do you know about me?
@@ -977,7 +1060,10 @@ it next to the live console, run `python -m neuromesh run --web` (or `--web 9000
   forget a fact.
 - **Mind**: divided into tabs, each with its own address (`#mind/tools`), and the one you used
   last opens next time. Arrow keys move between them. **Questions** (with a count of what is
-  waiting): its questions for you (reply) and its proposals (adopt or decline). **Directors**: each
+  waiting): its questions for you (reply) and its proposals (adopt or decline). **Objectives** (with
+  how many are active): set one, each one's progress, plan and answers (confirmed, disputed or one
+  source), how it thought it over, the write-up; think it over now, pause, remove; and its second
+  thoughts about recent answers. **Directors**: each
   director node and what it is doing, the stance its mood gives them, add or retire a duplicate,
   the limit on retries, recent reviews and their second opinions, what was kept out of memory.
   **Initiative**: turn it on or off, pin a mode, take initiative now, recent decisions, what has
@@ -1032,6 +1118,8 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | GET | `/directors` | the director nodes, their stance, recent reviews, what was kept out of memory |
 | POST | `/directors` | `{"action": "spawn"}`, `{"action": "retire", "id": "director-1"}`, or `{"attempts": 5}` |
 | GET | `/toolsmith` | the coder node, the tools it wrote (drafts awaiting approval, installed, proven), unmet requests it could write a tool for, recent work |
+| GET | `/objectives` | every objective with its plan, answers and thoughts, second thoughts, the step budget; `?id=obj-1` gives its write-up |
+| POST | `/objectives` | `{"text": "understand jazz"}` sets one; `{"id": "obj-1", "action": "pause" \| "resume" \| "remove" \| "think"}`; `{"id": "obj-1", "ask": "..."}` adds a question; `{"ruminate": true}` has second thoughts now |
 | POST | `/toolsmith` | `{"build": "reverse a word"}` writes a tool and asks permission; `{"try": "reverser"}` experiments with one it made. Approve a draft with `POST /approve` |
 | GET | `/dreams` | asleep or awake, the dream nodes and their fitness, last night, recent dreams |
 | POST | `/dreams` | `{"action": "sleep" \| "wake"}` |
@@ -1262,6 +1350,12 @@ derivations, moving weights between devices). They are skipped where no GPU libr
 - **Self-improvement is bounded on purpose**: the system can create, train, promote and delete
   nodes, and test and activate *approved* tools. It cannot grant itself permissions, approve
   its own tools, change its directives, or exceed its budgets.
+- **Objectives are only as good as what answers them.** Offline, its answers come from memory
+  nodes, retained knowledge, tools and you; a memory node gives its nearest fact, which may answer
+  a question loosely. Second sources, echo checks and the fit of an answer to a when/who/how-many
+  question catch some of that, and the write-up shows each answer's source, confidence and whether
+  anything confirmed it. An agreement check compares words, names and numbers; it is not
+  understanding. With a research tool and an LLM teacher, plans and answers are much richer.
 - **The tools it writes** are assembled from its code library, so offline they can only do what
   those 17 blocks do; the coder node chooses among them, it does not invent algorithms. Refinement
   adjusts how a tool reads a request, checked against known answers. The code check is a static
@@ -1327,11 +1421,12 @@ neuromesh/
   directors.py           the directors: intake, review, second opinions, the memory gate, duplicates, the stance (P14)
   toolsmith.py           the toolsmith: the coder teacher, writing, checking and offering tools, approval, experiments, refinement (P15)
   codelib.py             the code library: the building blocks made tools are written from, with probes to test them
+  objectives.py          objectives: the planner teacher, plans, queries against itself, rumination, write-ups, second thoughts (P16)
   dreams.py              sleep and dreams: dream synthesis, dream nodes, waking review, their genetic algorithm, imagination (P13)
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   187 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   201 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -1347,7 +1442,9 @@ tests/                   187 tests: nodes, guardian, LLM wire formats and a mock
                          tools asking directors, retries up to max_attempts), the calculator's mathematics,
                          the toolsmith (every recipe's code passes its probes, the code check, nothing
                          runs before approval, changed code asks again, experiments and refinement,
-                         initiative that builds and experiments, the coder node taking over),
+                         initiative that builds and experiments, the coder node taking over), objectives
+                         (planning, queries against itself, echoes, contradictions settled, a person
+                         asked, delegation, surveys, reading up, second thoughts, initiative, P1/P2),
                          temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,
                          questions, proposals, investigations), background tasks, full system,

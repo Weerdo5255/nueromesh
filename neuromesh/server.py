@@ -69,6 +69,14 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, system.directors.status()
         if path == "/toolsmith":
             return 200, system.toolsmith.status()
+        if path == "/objectives":
+            if query.get("id"):
+                obj = system.objectives.get(query["id"])
+                if obj is None:
+                    return 404, {"error": "no such objective"}
+                return 200, {"id": obj.id, "report": system.objectives.report(obj),
+                             "path": str(system.objectives.report_path(obj))}
+            return 200, system.objectives.status()
         if path == "/memory":
             if query.get("node"):
                 node = web.memory_node(system, query["node"])
@@ -186,6 +194,34 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                     return 409, {"ok": False, "message": f"{body['try']} is not an active tool it made"}
                 return 200, {"ok": True, "message": rep["line"], "results": rep.get("results", [])}
             return 400, {"error": 'give "build": "<what the tool should do>" or "try": "<tool>"'}
+        if path == "/objectives":  # {"text": "..."} sets one; {"id", "action": pause|resume|remove|think}; {"id", "ask"}
+            book, by = system.objectives, body.get("by", "api")
+            if not book.enabled:
+                return 409, {"error": "objectives are off ([objectives] enabled)"}
+            if body.get("text"):
+                try:
+                    obj = await book.add(str(body["text"]), by=by)
+                except ValueError as exc:
+                    return 400, {"ok": False, "message": str(exc)}
+                return 200, {"ok": True, "message": f"set {obj.id}: {obj.text} ({obj.strategy})", "id": obj.id}
+            if body.get("ruminate"):
+                got = await book.second_thoughts(by=by)
+                return 200, {"ok": True, "message": "; ".join(g["line"] for g in got) or "nothing to think over again right now",
+                             "thoughts": got}
+            oid = str(body.get("id", ""))
+            if body.get("ask"):
+                ok, msg = book.ask(oid, str(body["ask"]), by)
+                return (200 if ok else 400), {"ok": ok, "message": msg}
+            action = body.get("action")
+            if action == "think":
+                obj = book.get(oid)
+                if obj is None:
+                    return 404, {"ok": False, "message": f"no objective {oid}"}
+                return 200, {"ok": True, "message": await book.ruminate(obj, by)}
+            if action in ("pause", "resume", "remove"):
+                ok, msg = book.set_status(oid, {"pause": "paused", "resume": "active", "remove": "removed"}[action], by)
+                return (200 if ok else 400), {"ok": ok, "message": msg}
+            return 400, {"error": 'give "text", or "id" with "action" (pause|resume|remove|think) or "ask", or "ruminate": true'}
         if path == "/imagine":  # {"prompt": "a city on Mars"}
             result = await system.submit(f"imagine {body.get('prompt', '')}", source=body.get("source", "api"))
             return 200, result.public_dict()

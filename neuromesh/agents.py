@@ -168,6 +168,10 @@ class Orchestrator(Agent):
                     res.ok, res.note = False, made[0]
                 res.trace.append(made[1])
                 return res
+        from .objectives import objective_request  # (objectives.py builds on this module)
+        aim = objective_request(order.text) if not order.background and s.objectives.enabled else None
+        if aim is not None:  # "objective: ...": a long-term objective, pursued in the background (P16)
+            return await self.set_objective(order, res, aim)
         asked = tool_request(order.text) if not order.background and s.toolsmith.enabled else None
         if asked is not None:  # "make a tool that ...": the toolsmith writes it, and asks before it runs (P15)
             return await self.make_tool(order, res, asked)
@@ -367,6 +371,24 @@ class Orchestrator(Agent):
         return res
 
     # ------------------------------------------------------------- imagining
+    async def set_objective(self, order, res: Result, aim: str) -> Result:
+        """A person set a long-term objective: the planner node plans it; it is pursued when idle."""
+        s = self.sys
+        res.route, res.confidence, res.served_by = "objectives", 1.0, "explicit"
+        try:
+            obj = await s.objectives.add(aim, by=order.source)
+        except ValueError as exc:
+            res.ok, res.note = False, f"I couldn't set that objective: {exc}"
+            res.trace.append("objective not set")
+            return res
+        asks = [q["ask"] for q in obj.questions if q["kind"] != "research"]
+        res.output = (f"Objective {obj.id} set: {obj.text}. I'll pursue it with the {obj.strategy} strategy, starting with "
+                      + "; ".join(asks[:4]) + ("; ..." if len(asks) > 4 else "") + ". I work on it when I'm idle, "
+                      f"check what I find, and write it up in {s.objectives.report_path(obj)} (/objective show {obj.id}).")
+        res.trace.append(f"set objective {obj.id}: {obj.strategy} strategy, planned by {obj.planned_by}; "
+                         f"{len(obj.questions)} steps")
+        return res
+
     async def make_tool(self, order, res: Result, asked: str) -> Result:
         """A person asked for a tool: the coder node picks a recipe from the code library (or an LLM
         teacher writes one), the toolsmith checks it and asks permission. Nothing it wrote runs yet."""

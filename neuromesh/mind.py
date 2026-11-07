@@ -85,7 +85,7 @@ class Note:
 @dataclass
 class Inquiry:
     id: str
-    kind: str                 # clarify | interests | labels | proposal | approval
+    kind: str                 # clarify | interests | labels | proposal | approval | objective
     question: str
     why: str = ""
     options: list = field(default_factory=list)
@@ -96,6 +96,7 @@ class Inquiry:
     answer: str = ""
     created_at: float = field(default_factory=time.time)
     answered_at: float = 0.0
+    about: str = ""           # objective: which objective and question ("obj-1:q3")
 
 
 @dataclass
@@ -350,7 +351,7 @@ class Mind:
         tone = next((st["label"] for st in res.steps if st.get("capability") == "affect"), None)
         if tone:
             self.tones.append(tone)
-        m = _SKILL_RE.match(order.text)
+        m = _SKILL_RE.match(order.text) if res.route not in ("objectives", "tasks", "toolsmith") else None
         if m:
             name = m.group(1).lower()
             if (name not in s.capabilities and name not in s.tools.tools and name != "tool"
@@ -458,14 +459,14 @@ class Mind:
         return [q for q in self.inquiries.values() if q.status == "open"]
 
     def ask(self, kind: str, question: str, why: str = "", *, options=(), order_id: str = "",
-            proposal_id: str = "", approval_id: str = "") -> Inquiry | None:
+            proposal_id: str = "", approval_id: str = "", about: str = "") -> Inquiry | None:
         """Ask the user something. Conversational questions (clarify, interests) are rate-limited so
         the mesh does not nag, and only the newest clarify question stays open; questions a human
         decision depends on (proposals, labels, approvals) are always asked."""
         if not self.enabled:
             return None
         for q in self.open_inquiries():
-            if q.kind == kind and (q.order_id, q.proposal_id, q.approval_id) == (order_id, proposal_id, approval_id):
+            if q.kind == kind and (q.order_id, q.proposal_id, q.approval_id, q.about) == (order_id, proposal_id, approval_id, about):
                 return q
         now = self.clock()
         if kind in ("clarify", "interests"):
@@ -478,7 +479,7 @@ class Mind:
                 for old in [q for q in self.open_inquiries() if q.kind == "clarify"]:
                     self._close(old, "dropped", "superseded by a newer question", "mind", quiet=True)
         q = Inquiry(f"inq-{next(self._inq_ids)}", kind, question, why, list(options), order_id, proposal_id,
-                    approval_id, created_at=now)
+                    approval_id, created_at=now, about=about)
         self.inquiries[q.id] = q
         self.sys.store.save_record("inquiries", q.id, q.status, asdict(q))
         self.sys.bus.publish("mind.inquiry", id=q.id, kind=kind, question=question)
@@ -556,6 +557,10 @@ class Mind:
             given = tail if head.strip().lower() in ("yes", "y", "ok", "sure") else ("" if low in ("yes", "y", "ok", "sure") else a)
             labels = [x.strip() for x in re.split(r"[,\s]+", given) if x.strip()] or None
             ok, msg = self.adopt(q.proposal_id, by, labels)
+            return ok, [f"  {msg}"]
+        if q.kind == "objective":  # a question an objective asked: its answer goes to the objective (and memory)
+            ok, msg = s.objectives.reply(q.about, a, q.id, by)
+            self._close(q, "answered", a, by)
             return ok, [f"  {msg}"]
         if q.kind == "approval":
             approve = low in ("yes", "y", "ok", "sure", "approve", "approved")

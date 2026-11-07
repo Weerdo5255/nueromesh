@@ -175,6 +175,26 @@ def describe_event(ev: Event) -> str | None:
         return f"[director] {d['director']} gave up on '{d['text'][:50]}' after {d['attempts']} attempts: {d['why'][:80]}"
     if t == "director.memory":
         return f"[director] {d['director']} did not store '{d['ask'][:60]}' in memory: {d['why']}"
+    if t == "objective.set":
+        own = " (its own initiative)" if d.get("self_set") else ""
+        return (f"[objective] {d['by']} set {d['id']}{own}: {d['text'][:80]} - {d['strategy']} strategy, "
+                f"{d['steps']} steps, planned by {d['planned_by']}")
+    if t == "objective.step":
+        return f"[objective] {d['id']} {d['question']}: {d['line'][:150]}"
+    if t == "objective.ruminated":
+        return f"[ruminate] {d['id']} {d['line'][:160]}"
+    if t == "objective.thought":
+        return f"[ruminate] {d['id']} {d['kind']}: {d['text'][:160]}"
+    if t == "objective.contradiction":
+        return f"[ruminate] {d['id']} '{d['ask'][:60]}': '{d['one'][:60]}' vs {d['by']}: '{d['other'][:60]}'"
+    if t == "objective.asked":
+        return f"[objective] {d['id']} asks you ({d['inquiry']}): {d['ask'][:100]}"
+    if t == "objective.ended":
+        return f"[objective] {d['id']} {d['status']}: {d['note'][:140]} (report: {d['report']})"
+    if t in ("objective.paused", "objective.active", "objective.removed"):
+        return f"[objective] {d['by']} {t.split('.')[1].replace('active', 'resumed')} {d['id']}: {d['text'][:80]}"
+    if t == "mind.second_thought":
+        return f"[ruminate] {d['verdict']}: {d['line'][:180]}"
     if t == "tool.drafted":
         return (f"[code]     {d['by']} wrote {d['tool']} v{d['version']} ({d['recipe']}) for '{d['need'][:60]}'; "
                 f"asked permission to use it ({d['approval']})")
@@ -302,6 +322,10 @@ def render_status(st: dict) -> str:
             lines.append(f"director: mode {ag['pinned']}, chosen by the {who}; last: "
                          + (f"{last['mode']} {last['target']}".strip() if last else "nothing yet")
                          + f"; {len(ag['self_tasks'])} self-set tasks; {ag['decisions_last_hour']}/{ag['limit']} decisions this hour")
+    ob = st.get("objectives")
+    if ob and ob["enabled"] and ob["objectives"]:
+        lines.append("objectives: " + "; ".join(f"{o['id']} {o['status']} {o['progress'][0]}/{o['progress'][1]} ({o['text'][:40]})"
+                                                for o in ob["objectives"][-5:]))
     ts = st.get("toolsmith")
     if ts and ts["enabled"] and (ts["drafts"] or ts["needs"]):
         waiting = [d for d in ts["drafts"] if d["status"] == "awaiting approval"]

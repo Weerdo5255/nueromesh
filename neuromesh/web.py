@@ -72,7 +72,7 @@ def mesh(system) -> dict:
         routes.append(item)
     waiting = [{"name": t.name, "state": t.state, "note": t.note, "route": t.manifest.route}
                for t in s.tools.tools.values() if t.manifest.route not in spec.labels]
-    engines = ([_family(s, c) for c, sp in s.capabilities.items() if sp.internal and sp.kind not in ("agency", "coder")]
+    engines = ([_family(s, c) for c, sp in s.capabilities.items() if sp.internal and sp.kind not in ("agency", "coder", "planner")]
                if s.affect.enabled else [])
     mem = s.memory
     memory = [{"id": n.id, "facts": len(n.facts()), "bytes": n.bytes, "first_bytes": n.first_bytes,

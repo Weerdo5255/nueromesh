@@ -241,6 +241,11 @@ pre.block { background: var(--panel); border: 1px solid var(--rule); border-radi
 .subnav { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
 .subnav button[aria-selected="true"] { background: var(--hema-soft); border-color: var(--hema); color: var(--hema); font-weight: 600; }
 .subnav .badge { margin-left: 2px; font-weight: 600; }
+.progress { height: 5px; background: var(--rule); border-radius: 3px; margin: 8px 0 6px; max-width: 420px; }
+.progress b { display: block; height: 100%; background: var(--hema); border-radius: 3px; }
+li.objective details { margin-top: 6px; }
+li.objective summary { cursor: pointer; color: var(--hema); font-size: 14px; }
+pre.report { white-space: pre-wrap; max-height: 60vh; margin-top: 8px; font-size: 12.5px; }
 .tab-note:empty { display: none; }
 .tab-note { font-size: 12.5px; font-weight: 400; color: var(--ink-3); margin-left: 2px; }
 .subnav button[aria-selected="true"] .tab-note { color: inherit; opacity: .75; }

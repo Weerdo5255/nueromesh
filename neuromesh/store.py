@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS inquiries(id TEXT PRIMARY KEY, status TEXT, data TEXT
 CREATE TABLE IF NOT EXISTS proposals(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
 CREATE TABLE IF NOT EXISTS bg_tasks(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
 CREATE TABLE IF NOT EXISTS challenge_runs(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
+CREATE TABLE IF NOT EXISTS objectives(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT, updated_at REAL);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, ts REAL, actor TEXT, kind TEXT, subject TEXT, detail TEXT);
 """
@@ -135,6 +136,17 @@ class Store:
         self.db.execute("INSERT OR REPLACE INTO orders(id, ts, text, result) VALUES(?,?,?,?)",
                         (order_id, time.time(), text, json.dumps(result, default=str)))
 
+    def recent_orders(self, n: int = 50) -> list[tuple[str, float, str, dict]]:
+        """The newest orders people gave: (id, time, text, result), newest first."""
+        rows = self.db.execute("SELECT id, ts, text, result FROM orders ORDER BY ts DESC LIMIT ?", (int(n),)).fetchall()
+        out = []
+        for oid, ts, text, result in rows:
+            try:
+                out.append((oid, ts, text, json.loads(result)))
+            except (TypeError, ValueError):
+                continue
+        return out
+
     def get_order(self, order_id: str) -> dict | None:
         row = self.db.execute("SELECT text, result, feedback FROM orders WHERE id=?",
                               (order_id,)).fetchone()
@@ -165,16 +177,16 @@ class Store:
         self.db.executemany("DELETE FROM notes WHERE id=?", [(i,) for i in ids])
 
     def save_record(self, table: str, rid: str, status: str, data: dict) -> None:
-        assert table in ("inquiries", "proposals", "bg_tasks", "challenge_runs")
+        assert table in ("inquiries", "proposals", "bg_tasks", "challenge_runs", "objectives")
         self.db.execute(f"INSERT OR REPLACE INTO {table}(id, status, data, created_at) VALUES(?,?,?,?)",
                         (rid, status, json.dumps(data, default=str), data.get("created_at", time.time())))
 
     def delete_record(self, table: str, rid: str) -> None:
-        assert table in ("inquiries", "proposals", "bg_tasks", "challenge_runs")
+        assert table in ("inquiries", "proposals", "bg_tasks", "challenge_runs", "objectives")
         self.db.execute(f"DELETE FROM {table} WHERE id=?", (rid,))
 
     def load_records(self, table: str) -> list[dict]:
-        assert table in ("inquiries", "proposals", "bg_tasks", "challenge_runs")
+        assert table in ("inquiries", "proposals", "bg_tasks", "challenge_runs", "objectives")
         return [json.loads(d) for (d,) in self.db.execute(f"SELECT data FROM {table} ORDER BY created_at")]
 
     # ------------------------------------------------------------ small state
