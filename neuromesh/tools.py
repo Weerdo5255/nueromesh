@@ -58,6 +58,7 @@ class ToolManifest:
     config: dict = field(default_factory=dict)  # passed to the tool on every run
     author: str = ""                            # "neuromesh": its own toolsmith wrote it (P15)
     persistent: bool = False                    # it can stay running (tool.py --serve): see Worker
+    secrets: tuple = ()                         # environment variables it is given (e.g. GITEA_TOKEN), shown on its approval
 
     @property
     def route(self) -> str:
@@ -74,7 +75,8 @@ class ToolManifest:
                    supersedes=m.get("supersedes") or None, provides=m.get("provides", ""),
                    examples=list(m.get("examples", [])), templates=list(m.get("templates", [])),
                    fillers=dict(m.get("fillers", {})), config=dict(m.get("config", {})),
-                   author=str(m.get("author", "")), persistent=bool(m.get("persistent", False)))
+                   author=str(m.get("author", "")), persistent=bool(m.get("persistent", False)),
+                   secrets=tuple(str(x) for x in m.get("secrets", []) if str(x).strip()))
 
 
 @dataclass
@@ -199,6 +201,7 @@ class Sandbox:
         self.memory_mb = memory_mb
         self.use_workers = workers                  # [tools] workers: persistent tools stay running
         self.gate = None                            # tool -> why it may not run (the tool switch), or None
+        self.withheld: set[str] = set()             # secrets no tool is ever given (its teachers' API keys)
         self.worker_cpu_seconds = worker_cpu_seconds
         self.worker_requests = worker_requests      # a worker is replaced after this many requests
         self.workers: dict[str, Worker] = {}
@@ -212,6 +215,9 @@ class Sandbox:
                "LANG": "C.UTF-8", "NEUROMESH_TOOL": m.name}
         if "network" in m.permissions:  # proxy/certificate settings only for approved network tools
             env.update({k: os.environ[k] for k in self.NETWORK_ENV if k in os.environ})
+        for k in m.secrets:  # only the secrets its manifest lists, which a person saw on its approval
+            if k in os.environ and k not in self.withheld:
+                env[k] = os.environ[k]
         return env
 
     async def _worker(self, tool: Tool) -> Worker:

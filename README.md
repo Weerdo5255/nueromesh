@@ -502,6 +502,8 @@ validator checks it and nothing runs until you approve exactly that code (P20).
 
 ```
 --gitea http://localhost:3000        (a read-only token in $GITEA_TOKEN for private repositories)
+   the gitea plugin (plugins/gitea), like Kiwix: you approve it once (it reads the network, and is
+   given $GITEA_TOKEN and nothing else); it stays running, with kept-alive connections
    when idle, a repository it hasn't studied (or not for [gitea] restudy_days):
      -> its file tree, and the source files that changed since it last read them
      -> every function taken apart: name, arguments, doc comment, code, what it calls, and what kind
@@ -521,8 +523,14 @@ validator checks it and nothing runs until you approve exactly that code (P20).
         limits and no keys in its environment; the output is kept with it
 ```
 
-Gitea is only read: nothing is written to it, and code from Gitea never runs. The token goes only to
-the Gitea it is configured for. Changing code in the scratch pad (Edit in the Code view, `POST /code
+**The gitea plugin.** Like Kiwix, the connection is a vetted tool: its manifest lists what it needs
+(the network, and the secret `$GITEA_TOKEN`), you see both on its approval, and its self-test checks
+that Gitea answers. It lists repositories (all it can see, or `[tools.config.gitea] repos`), reads a
+branch's file tree, and reads many files in one call. The tool switch applies to it: switched off, it
+studies nothing. Asked an order ("tool gitea: textkit", "what repositories are on gitea") it lists
+the repositories that match. Gitea is only read: nothing is written to it, and code from Gitea never
+runs. A tool is given only the secrets its manifest lists, never a teacher's API key, and a tool that
+lists a secret always needs your approval. Changing code in the scratch pad (Edit in the Code view, `POST /code
 {"id", "code"}`) withdraws its approval. Python and JavaScript (with Node.js) run once approved; other
 languages are checked only.
 
@@ -530,7 +538,8 @@ languages are checked only.
 without looking at theirs, checks it, and compares the two: does it check out, is it the same kind of
 code, how many names they share. Practice code never runs. The Code view shows how it is doing.
 
-`[gitea]` sets the url, token variable, repositories (empty: every one it can see), file types, how
+`[tools.config.gitea]` sets where Gitea is (`url`, or `--gitea URL`), which repositories it may read,
+and how many files it reads at once; `[gitea]` sets what it studies (file types, files per visit), how
 often it studies and practises; `[code]` sets what may run, the limits, and how many examples a
 teacher is given.
 
@@ -1932,7 +1941,7 @@ derivations, moving weights between devices). They are skipped where no GPU libr
 ```
 directives.toml          constitution: prime directives, goals, policy
 capabilities.toml        seed skills
-plugins/                 installed tools (calculator with mathsolver.py, word_stats, wikipedia, kiwix), and
+plugins/                 installed tools (calculator with mathsolver.py, word_stats, wikipedia, kiwix, gitea), and
                          tools it wrote once you approve them (drafts wait in state/workshop/)
 challenges/              challenge suites (small samples; fetched benchmarks go to state/challenges/)
 memory_tests.imported/   test files of earlier versions, once imported into state/memory.db
@@ -1984,7 +1993,7 @@ neuromesh/
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   271 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   272 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -2017,9 +2026,10 @@ tests/                   271 tests: nodes, guardian, LLM wire formats and a mock
                          live console (incl. a pseudo-terminal run), compute
                          backends (4 GPU parity tests run where PyTorch or CuPy is installed), the tool
                          switch (off refuses every run and counts nothing against a tool; one tool set
-                         apart; it decides from the gate policy), Gitea (a mock Gitea: functions taken
-                         apart in four languages, kinds of code, the token sent only there, only changed
-                         files read again), the scratch pad (the validator for six languages, nothing runs
+                         apart; it decides from the gate policy), Gitea (a mock Gitea read through the
+                         approved gitea plugin: functions taken apart in four languages, kinds of code,
+                         $GITEA_TOKEN given to it and no teacher's key to any tool, only changed files read
+                         again, switched off, Gitea down), the scratch pad (the validator for six languages, nothing runs
                          unapproved, changed code withdraws the approval, a teacher's code fixed once,
                          practice), images (PNG decoding by hand, a mock Ollama vision model, a person's
                          label standing, a glyph node that learns to read a note), lessons (a mock Ollama

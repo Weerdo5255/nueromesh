@@ -969,7 +969,8 @@ it decides whether to say something of its own after an answer, and what`))
       }
       out.push(h("div", { class: "ask" },
         h("p", {}, h("b", {}, `${a.kind} ${a.subject}`), " needs your approval"),
-        h("p", { class: "why" }, a.detail?.permissions ? `Asks for: ${a.detail.permissions.join(", ") || "no permissions"}` : JSON.stringify(a.detail)),
+        h("p", { class: "why" }, a.detail?.permissions ? `Asks for: ${a.detail.permissions.join(", ") || "no permissions"}` +
+          (a.detail.secrets?.length ? `; it is given ${a.detail.secrets.map(x => "$" + x).join(", ")} from the environment` : "") : JSON.stringify(a.detail)),
         h("div", { class: "row" },
           h("button", { type: "button", class: "primary", onclick: e => act(e.target, () => api("/approve", { id: a.id, approve: true, by: "web" }), `Approved ${a.subject}`) }, "Approve"),
           h("button", { type: "button", onclick: e => act(e.target, () => api("/approve", { id: a.id, approve: false, by: "web" }), `Denied ${a.subject}`) }, "Deny"))));
@@ -1982,8 +1983,9 @@ it decides whether to say something of its own after an answer, and what`))
         h("div", { class: "code-cols" }, h("div", {}, list), sel ? codeItem(sel, sp) : h("div", {}))),
       h("div", { class: "cols" },
         h("div", { class: "section" }, h("h2", {}, "What it studies in Gitea"),
-          h("p", { class: "lede" }, g.enabled ? `${g.detail}. It visits a repository it hasn't studied (or not for a while) when it is idle, reads the files that changed, and takes every function apart: what it is for, and what kind of code it is. Its code-kind node learns from that, and its coder node learns new wordings of its recipes.`
-            : `No Gitea yet. Start it with --gitea http://localhost:3000 (a token in $GITEA_TOKEN for private repositories), or set [gitea] url in directives.toml.`),
+          h("p", { class: "lede" }, `It reads your Gitea through the gitea tool (a plugin, like Kiwix: you approve it once, and the tool switch applies to it). ${g.detail}. ` +
+            (g.enabled ? "It visits a repository it hasn't studied (or not for a while) when it is idle, reads the files that changed, and takes every function apart: what it is for, and what kind of code it is. Its code-kind node learns from that, and its coder node learns new wordings of its recipes."
+              : "Point it at your Gitea with --gitea http://localhost:3000 or [tools.config.gitea] url (a read-only token in $GITEA_TOKEN for private repositories), and approve the gitea tool.")),
           g.enabled ? h("div", { class: "row" }, study, h("span", { class: "dim small" }, `${num(g.examples)} functions kept as examples` + (g.node ? `; code-kind node ${g.node.id} ${pct(g.node.accuracy)}` : ""))) : null,
           kinds.length ? h("p", { class: "small" }, kinds.map(([k, n]) => h("span", { class: "kind-chip code-kind" }, `${k} ${n}`))) : null,
           (g.repos || []).length ? h("div", { class: "scroll-x" }, h("table", { class: "tbl" },

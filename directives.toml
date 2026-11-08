@@ -19,7 +19,7 @@ text = "User orders take precedence over background self-improvement and backgro
 
 [[prime]]
 id = "P3-approved-tools-only"
-text = "Only active, vetted tools are executed. Tools needing elevated permissions require explicit human approval; forbidden permissions are always refused; a tool whose code changes is re-vetted. People can switch tools off - all of them or one - and then none runs, for anything; or let the mesh decide each time, when its tool-gate node weighs the tool's record, its mood and what else could answer, always runs a tool a person named, says in the trace what it decided and why, and never counts against a tool a run it did not make. (Enforced in code by neuromesh/toolgate.py and the sandbox.)"
+text = "Only active, vetted tools are executed. Tools needing elevated permissions require explicit human approval; forbidden permissions are always refused; a tool whose code changes is re-vetted. A tool is given only the secrets its manifest lists (such as the gitea plugin's GITEA_TOKEN), which a person sees on its approval - a tool that lists one always needs that approval - and never a teacher's API key. People can switch tools off - all of them or one - and then none runs, for anything; or let the mesh decide each time, when its tool-gate node weighs the tool's record, its mood and what else could answer, always runs a tool a person named, says in the trace what it decided and why, and never counts against a tool a run it did not make. (Enforced in code by neuromesh/toolgate.py and the sandbox.)"
 
 [[prime]]
 id = "P4-budgets"
@@ -523,7 +523,7 @@ self_test_pass_rate = 1.0
 sandbox_cpu_seconds = 5
 sandbox_memory_mb = 512
 default_timeout_s = 10
-workers = true                          # tools that can stay running do (persistent = true: the Kiwix tool): no
+workers = true                          # tools that can stay running do (persistent = true: Kiwix, Gitea): no
                                         # start-up per request, kept-alive connections, a cache - many times faster
 worker_cpu_seconds = 600                # a worker's CPU budget, for many requests (then a fresh one starts)
 worker_requests = 5000                  # a worker is replaced after this many requests
@@ -533,6 +533,10 @@ worker_requests = 5000                  # a worker is replaced after this many r
 # url = "http://localhost:8080"                     # your kiwix-serve (or start with --kiwix URL)
 # servers = ["http://nas:8081"]                     # more kiwix-serve servers to search too
 # books = ["wikipedia_en_all_maxi_2024-01"]         # which ZIMs to search, in order (default: all, Wikipedia first)
+# [tools.config.gitea]
+# url = "http://localhost:3000"                     # your Gitea (or start with --gitea URL)
+# repos = ["ann/textkit", "ann/webtools"]           # which repositories it may read (default: every one it can see)
+# token_env = "GITEA_TOKEN"                         # the tool is given $GITEA_TOKEN only (its manifest's secrets)
 # [tools.config.wikipedia]
 # language = "de"                                   # research German Wikipedia
 # user_agent = "MyMesh/1.0 (https://example.org; me@example.org)"   # Wikimedia asks for contact details
@@ -590,19 +594,19 @@ llm_code = true                         # an LLM teacher may write a tool no rec
                                         # never run before you approve it)
 
 [gitea]
-# A local Gitea its coder nodes learn to program from (gitea.py). When idle it visits a repository it hasn't
+# Studying a local Gitea, for its coder nodes (gitea.py). It reads Gitea through the gitea plugin
+# (plugins/gitea, like Kiwix): a vetted tool you approve once, given $GITEA_TOKEN and nothing else, which the
+# tool switch turns on and off like any tool. Where Gitea is and which repositories it may read are the
+# plugin's settings: [tools.config.gitea] above, or --gitea URL. When idle it visits a repository it hasn't
 # studied (or not for restudy_days), reads the source files that changed, and takes every function apart:
 # what it is for (name and doc comment) and what kind of code it is (from what the code does). Its code-kind
 # node learns from that, its coder node learns new wordings of its recipes, and the functions are kept as
 # examples for the scratch pad. Only read: nothing is written to Gitea and its code never runs (P20).
 #   python -m neuromesh run --gitea http://localhost:3000      /gitea   /gitea study [owner/repo]
-url = ""                                # e.g. "http://localhost:3000" (or --gitea, or NEUROMESH_GITEA_URL)
-token_env = "GITEA_TOKEN"               # a read-only access token, for private repositories
-repos = []                              # "owner/name" to study; empty = every repository it can see
+enabled = true
 extensions = [".py", ".js", ".mjs", ".ts", ".go", ".rs", ".sh", ".rb", ".java", ".c", ".cpp"]
 max_file_kb = 256
 files_per_visit = 40
-parallel = 4                            # files fetched at once
 study_every_seconds = 300
 restudy_days = 7
 max_examples = 20000

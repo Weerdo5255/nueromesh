@@ -31,7 +31,7 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /image show <img-id>            what it saw and read      /image is <img-id> <what it shows>   teach its sight node
   /image says <img-id> <text>     what the image's text says (teaches its reader)   /image practise   draw and learn glyphs
   /gitea                          what its coder nodes learned from Gitea     /gitea study [owner/repo]   study now
-  /gitea examples [words]         functions it studied                        /gitea url <url>   point it at a Gitea
+  /gitea examples [words]         functions it studied                        /gitea url <url>   point the gitea tool at a Gitea
   /teachers                       teacher status (Ollama, Claude, ...)
   /research <topic>               look it up on Wikipedia now and retain it
   /knowledge [question]           what the mesh has retained, or what it would recall for a question
@@ -746,8 +746,8 @@ async def gitea_lines(system, rest: str) -> list[str]:
     if sub == "url":
         if not arg:
             return [f"  Gitea: {cs.url or 'none'}"]
-        cs.set_url(arg)
-        return [f"  its coder nodes will study the Gitea at {arg} (token from ${system.directives.gitea.token_env}, if set)"]
+        state = cs.set_url(arg)
+        return [f"  the gitea tool reads the Gitea at {arg} now (it is {state.replace('_', ' ')}; [tools.config.gitea] url keeps it)"]
     if sub == "study":
         res = await cs.visit(by="console", repo=arg or None)
         return [f"  {res.get('line') or res.get('why')}"]

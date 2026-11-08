@@ -140,6 +140,16 @@ class Guardian:
         if forbidden:
             return self._deny("tool", manifest.name,
                               f"requests forbidden permissions {sorted(forbidden)}", "P3-approved-tools-only")
+        secrets = set(getattr(manifest, "secrets", ()) or ())
+        keys = {t.api_key_env for t in self.d.teachers.models.values() if getattr(t, "api_key_env", "")} | \
+            {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "NEUROMESH_TOKEN"}
+        if secrets & keys:
+            return self._deny("tool", manifest.name, f"asks for a key no tool is given: {sorted(secrets & keys)}",
+                              "P3-approved-tools-only")
+        if secrets:  # a tool given a secret always needs a person's approval, whatever its permissions
+            self.decisions["needs_approval"] += 1
+            return Decision(Verdict.NEEDS_APPROVAL, f"permissions {sorted(perms)} and secrets {sorted(secrets)} need human "
+                            "approval", "P3-approved-tools-only")
         if perms <= set(policy.auto_approve_permissions):
             self.decisions["allow"] += 1
             self.audit("guardian", "allow.tool", manifest.name, permissions=sorted(perms))

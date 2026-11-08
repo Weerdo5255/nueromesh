@@ -68,17 +68,30 @@ class CodeSystemTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.gitea = MockGitea()
         self.tmp = tempfile.TemporaryDirectory()
-        os.environ["NM_TEST_GITEA_TOKEN"] = "s3cret"
-        over = {**FAST, "gitea": {"url": self.gitea.url, "token_env": "NM_TEST_GITEA_TOKEN", "study_every_seconds": 3600,
-                                  "practice": False}}
-        self.system = System(make_root(Path(self.tmp.name)), overrides=over, seed=5)
+        self.token = os.environ.get("GITEA_TOKEN")
+        os.environ["GITEA_TOKEN"] = "s3cret"
+        os.environ["ANTHROPIC_API_KEY"] = os.environ.get("ANTHROPIC_API_KEY", "sk-test-not-for-tools")
+        over = {**FAST, "tools": {**FAST["tools"], "config": {"gitea": {"url": self.gitea.url}}},
+                "gitea": {"study_every_seconds": 3600, "practice": False}}
+        self.system = System(make_root(Path(self.tmp.name), gitea=True), overrides=over, seed=5)
         await self.system.start()
+        s = self.system
+        self.assertTrue(await wait_for(lambda: "gitea" in s.tools.tools and s.tools.tools["gitea"].state == "pending_approval", 20))
+        apv = next(a for a in s.guardian.pending_approvals() if a.subject == "gitea")
+        self.assertEqual(apv.detail["secrets"], ["GITEA_TOKEN"])            # the approval says what it is given
+        s.guardian.decide(apv.id, True, by="tester")                        # a person approves the plugin (P3)
+        self.assertTrue(await wait_for(lambda: s.tools.tools["gitea"].state == "active", 30), s.tools.tools["gitea"].note)
 
     async def asyncTearDown(self):
         if not self.system.stopping:
             await self.system.stop()
         self.gitea.stop()
-        os.environ.pop("NM_TEST_GITEA_TOKEN", None)
+        if self.token is None:
+            os.environ.pop("GITEA_TOKEN", None)
+        else:
+            os.environ["GITEA_TOKEN"] = self.token
+        if os.environ.get("ANTHROPIC_API_KEY") == "sk-test-not-for-tools":
+            os.environ.pop("ANTHROPIC_API_KEY", None)
         self.tmp.cleanup()
 
     async def test_it_studies_gitea_and_learns_from_it(self):
@@ -87,7 +100,7 @@ class CodeSystemTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res["ok"], res)
         self.assertEqual(res["repo"], "ann/textkit")
         self.assertEqual((res["files"], res["functions"]), (4, 8))  # the README is not code
-        self.assertIn("token s3cret", self.gitea.auth)                # its token goes only to its Gitea
+        self.assertIn("token s3cret", self.gitea.auth)                # the plugin is given $GITEA_TOKEN, for its Gitea
         kinds = {e["name"]: e["kind"] for e in s.code_study.examples(50)}
         self.assertEqual((kinds["mean"], kinds["shout"], kinds["load_settings"], kinds["test_slugify"]),
                          ("maths", "text", "files", "test"))
@@ -115,6 +128,36 @@ def median(numbers):
         self.assertTrue(any(e.topic == "gitea.studied" for e in s.bus.recent("gitea.*", 10)))
         status, body = await _route(s, "GET", "/code", {}, {})
         self.assertEqual(body["gitea"]["state"], "ready")
+        self.assertGreaterEqual(s.tools.tools["gitea"].runs, 6)           # it went through the tool, in its sandbox
+        res = await s.submit("tool gitea: textkit")                        # an order to the tool: the repositories that match
+        self.assertIn("ann/textkit", str(res.output))
+        s.tool_switch.set_tool("gitea", "off", "tester")                    # the tool switch applies to it
+        self.assertFalse(s.code_study.enabled)
+        res = await s.code_study.visit()
+        self.assertFalse(res["ok"])
+        self.assertIn("switched off", res["why"])
+        s.tool_switch.set_tool("gitea", "default", "tester")
+        state = s.code_study.set_url("http://127.0.0.1:9", "tester")         # nobody there: it says so
+        self.assertEqual(state, "active")
+        res = await s.code_study.visit()
+        self.assertFalse(res["ok"])
+        self.assertEqual(s.code_study.state, "unreachable")
+        self.assertEqual(s.tools.tools["gitea"].consecutive_failures, 0)  # Gitea being down is not a broken tool
+
+    async def test_a_tool_never_gets_a_teachers_key(self):
+        from neuromesh.guardian import Verdict
+        from neuromesh.tools import ToolManifest
+        s = self.system
+        m = ToolManifest.load(Path(self.tmp.name) / "plugins" / "gitea")
+        self.assertEqual(m.secrets, ("GITEA_TOKEN",))
+        env = s.sandbox._env(m)
+        self.assertEqual(env.get("GITEA_TOKEN"), "s3cret")
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+        greedy = ToolManifest(name="greedy", path=m.path, digest="x", permissions=("network",), secrets=("ANTHROPIC_API_KEY",))
+        self.assertEqual(s.guardian.authorize_tool(greedy).verdict, Verdict.DENY)
+        self.assertNotIn("ANTHROPIC_API_KEY", s.sandbox._env(greedy))      # and the sandbox withholds it anyway
+        quiet = ToolManifest(name="quiet", path=m.path, digest="y", permissions=(), secrets=("GITEA_TOKEN",))
+        self.assertEqual(s.guardian.authorize_tool(quiet).verdict, Verdict.NEEDS_APPROVAL)  # a secret always asks
 
     async def test_the_scratch_pad_runs_only_what_a_person_approved(self):
         s = self.system

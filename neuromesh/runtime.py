@@ -143,6 +143,8 @@ class System:
         self.journal = MindJournal(self)      # everything in its mind, by date and time (the Mind's archive)
         self.tool_switch = ToolSwitch(self)   # tools on, off, or it decides each time (toolgate.py)
         self.sandbox.gate = self.tool_switch.refuses
+        self.sandbox.withheld = {m.api_key_env for m in self.directives.teachers.models.values()
+                                 if getattr(m, "api_key_env", "")} | {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "NEUROMESH_TOKEN"}
         self.scratch = ScratchPad(self)       # code it writes; checked; it runs only once a person approves it (P20)
         self.tutor = Tutor(self)              # when idle, its Ollama teachers set it orders and mark them (P22)
         self.bus.listen(self.scratch.on_event)
@@ -532,7 +534,12 @@ class System:
 
     def tool_config(self, tool: Tool) -> dict:
         """manifest [config], overridden by directives [tools.config.<name>]."""
-        return {**tool.manifest.config, **self.directives.tools.config.get(tool.name, {})}
+        cfg = {**tool.manifest.config, **self.directives.tools.config.get(tool.name, {})}
+        if tool.name == "gitea" and "url" not in self.directives.tools.config.get("gitea", {}):
+            legacy = os.environ.get("NEUROMESH_GITEA_URL") or self.directives.gitea.url  # (earlier versions' settings)
+            if legacy:
+                cfg["url"] = legacy
+        return cfg
 
     def record_tool_run(self, tool: Tool, run: ToolRun, exploratory: bool = False) -> None:
         """exploratory: the mesh tried the tool on its own initiative. A failure then says more

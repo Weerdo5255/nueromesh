@@ -70,10 +70,9 @@ def _teacher_overrides(args, root: Path) -> dict | None:
     model, url = getattr(args, "ollama", None), getattr(args, "ollama_url", None)
     kiwix = getattr(args, "kiwix", None)
     gitea = getattr(args, "gitea", None)
-    extra: dict = {"gitea": {"url": gitea}} if gitea else {}
+    tool_config = {**({"kiwix": {"url": kiwix}} if kiwix else {}), **({"gitea": {"url": gitea}} if gitea else {})}
+    extra: dict = {"tools": {"config": tool_config}} if tool_config else {}
     if not model and not url:
-        if kiwix:
-            extra["tools"] = {"config": {"kiwix": {"url": kiwix}}}
         return extra or None
     from .config import Directives
     ollama = {"provider": "ollama", "enabled": True}
@@ -85,8 +84,6 @@ def _teacher_overrides(args, root: Path) -> dict | None:
     if "ollama" not in order:
         order.insert(order.index("human") + 1 if "human" in order else 0, "ollama")
     out: dict = {"teachers": {"order": order, "ollama": ollama}, **extra}
-    if kiwix:
-        out["tools"] = {"config": {"kiwix": {"url": kiwix}}}
     return out
 
 

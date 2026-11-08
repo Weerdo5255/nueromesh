@@ -542,19 +542,16 @@ class EgoPolicy:
 
 @dataclass
 class GiteaPolicy:
-    """A local Gitea its coder nodes learn to program from (gitea.py): it studies the code in its repositories."""
+    """Studying a local Gitea, for its coder nodes (gitea.py). It reads Gitea through the gitea plugin
+    (plugins/gitea): where Gitea is, its token and which repositories it may read are [tools.config.gitea]."""
     enabled: bool = True
-    url: str = ""                       # e.g. "http://localhost:3000" (or --gitea URL, or NEUROMESH_GITEA_URL); "" = none
-    token_env: str = "GITEA_TOKEN"      # an access token (read-only is enough) for private repositories
-    repos: tuple = ()                   # "owner/name" to study; empty = every repository it can see
+    url: str = ""                       # (earlier versions: now [tools.config.gitea] url; still read if set)
     extensions: tuple = (".py", ".js", ".mjs", ".ts", ".go", ".rs", ".sh", ".rb", ".java", ".c", ".cpp")
     max_file_kb: int = 256              # larger files are skipped
     files_per_visit: int = 40           # files it reads per visit to a repository
-    parallel: int = 4                   # files fetched at once
     study_every_seconds: float = 300.0  # how often it visits a repository (when idle)
     restudy_days: float = 7.0           # a repository it studied is visited again after this long
     max_examples: int = 20000           # functions it keeps as examples (the oldest go first)
-    timeout_s: float = 15.0
     practice: bool = True               # when idle, it practises: writes code for an example's purpose without
     practice_every_seconds: float = 600.0  # looking at it, checks it, and compares it with what a person wrote
 

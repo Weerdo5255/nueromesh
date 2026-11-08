@@ -1123,13 +1123,13 @@ class Explorer(Agent):
             # code the mesh wrote itself runs only once a person has approved exactly these files (P15)
             tool.state, tool.note = PENDING, "written by its own toolsmith: a person must approve these files first (P15)"
             approval = s.guardian.request_approval("tool", manifest.name, {
-                "permissions": list(manifest.permissions), "version": manifest.version,
+                "permissions": list(manifest.permissions), "secrets": list(manifest.secrets), "version": manifest.version,
                 "description": manifest.description, "author": "neuromesh"})
             tool.approval_id = approval.id
         elif decision.verdict == Verdict.NEEDS_APPROVAL:
             tool.state, tool.note = PENDING, decision.reason
             approval = s.guardian.request_approval("tool", manifest.name, {
-                "permissions": list(manifest.permissions), "version": manifest.version,
+                "permissions": list(manifest.permissions), "secrets": list(manifest.secrets), "version": manifest.version,
                 "description": manifest.description})
             tool.approval_id = approval.id
         else:
@@ -1142,7 +1142,7 @@ class Explorer(Agent):
         approval = s.guardian.approvals.get(tool.approval_id or "")
         if approval is None:  # e.g. after a restart: ask again
             approval = s.guardian.request_approval("tool", tool.name, {
-                "permissions": list(tool.manifest.permissions), "version": tool.manifest.version,
+                "permissions": list(tool.manifest.permissions), "secrets": list(tool.manifest.secrets), "version": tool.manifest.version,
                 "description": tool.manifest.description,
                 **({"author": "neuromesh"} if tool.manifest.author == "neuromesh" else {})})
             tool.approval_id = approval.id

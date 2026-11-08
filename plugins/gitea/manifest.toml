@@ -1,0 +1,33 @@
+name = "gitea"
+version = "1.0.0"
+description = "Reads code from a local Gitea, for the mesh's coder nodes to learn from (gitea.py): its repositories, their file trees and source files. Only reads: it never writes to Gitea. Asked an order (\"what repositories are on gitea\"), it lists the repositories that match."
+entrypoint = "tool.py"
+permissions = ["network"]      # HTTP to the Gitea server -> needs a human's approval once (P3)
+secrets = ["GITEA_TOKEN"]      # the only environment variable it is given: a read-only access token, for private
+                               # repositories (shown on the approval; a tool never gets a teacher's API key)
+provides = "code"              # what it reads is studied by the coder nodes, not kept as knowledge
+keywords = ["gitea", "repositories", "repository", "repos", "my code", "source code"]
+timeout_s = 60
+persistent = true              # it stays running (tool.py --serve): kept-alive connections, files read at once
+
+templates = ["what repositories are on gitea", "list my gitea repositories", "find {thing} on gitea",
+             "which repos on gitea have {thing}", "search gitea for {thing}"]
+
+[fillers]
+thing = ["parser", "utils", "website", "notes", "scripts", "api", "cli", "dotfiles", "game", "bot"]
+
+# Passed to the tool on every run; override in directives.toml [tools.config.gitea], or start NeuroMesh with
+# --gitea http://host:port.
+[config]
+url = "http://localhost:3000"  # where Gitea listens (a prefix such as http://host/git works too)
+token_env = "GITEA_TOKEN"      # which of its secrets holds the token (only those listed above are given to it)
+repos = []                     # "owner/name" it may read; empty: every repository the token (or anyone) can see
+use_proxy = false              # talk to Gitea directly, even if HTTP(S)_PROXY is set
+parallel = 6                   # files read at once
+max_file_kb = 256              # larger files are skipped
+
+# Self-test: Gitea answers, and says which version it is (no assumption about which repositories it has).
+[[examples]]
+input = "__selftest__"
+expect = "gitea ok"
+route = false                  # not a routing example for orders

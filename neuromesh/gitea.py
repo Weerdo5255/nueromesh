@@ -13,7 +13,11 @@
           teacher writing code, or adapts the closest one, and practice compares its own code with them
 
 It only reads: it never writes to Gitea, and code from Gitea is never run (only code a person approves in
-the scratch pad runs, P20). The token ([gitea] token_env) is sent only to the Gitea it is configured for.
+the scratch pad runs, P20).
+
+The connection is a plugin, like Kiwix: plugins/gitea (a vetted, persistent tool that needs a person's approval
+for the network, and is given $GITEA_TOKEN and nothing else). Its url and repositories are set in directives.toml
+[tools.config.gitea], or with --gitea URL; the tool switch applies to it like any tool.
 """
 from __future__ import annotations
 
@@ -25,9 +29,6 @@ import os
 import random
 import re
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from collections import Counter, deque
 
 import numpy as np
@@ -38,10 +39,10 @@ from .teachers import Lesson, Teacher
 log = logging.getLogger("neuromesh.gitea")
 
 CODEKIND = "codekind"
+TOOL = "gitea"  # the plugin it reads Gitea through (plugins/gitea)
 KINDS = ("text", "maths", "parse", "data", "files", "network", "dates", "test", "cli", "other")
 LANGS = {".py": "python", ".js": "javascript", ".mjs": "javascript", ".ts": "typescript", ".go": "go", ".rs": "rust",
          ".java": "java", ".c": "c", ".h": "c", ".cpp": "cpp", ".cc": "cpp", ".sh": "shell", ".rb": "ruby"}
-LOCAL = {"localhost", "127.0.0.1", "::1"}
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS code_repos(name TEXT PRIMARY KEY, branch TEXT, commit_sha TEXT, studied REAL, files INTEGER,
                                       functions INTEGER, description TEXT DEFAULT '');
@@ -254,71 +255,6 @@ def functions_in(source: str, lang: str) -> list[dict]:
     return python_functions(source) if lang == "python" else brace_functions(source, lang)
 
 
-# ============================================================================ the Gitea API
-class GiteaClient:
-    """Read-only calls to Gitea's API (/api/v1). A local Gitea is never reached through a proxy."""
-
-    def __init__(self, url: str, token: str = "", timeout: float = 15.0):
-        self.url = url.rstrip("/")
-        self.token = token
-        self.timeout = timeout
-        host = urllib.parse.urlsplit(self.url).hostname or ""
-        local = host in LOCAL or host.endswith(".local") or re.match(r"^(10|192\.168|172\.(1[6-9]|2\d|3[01]))\.", host)
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}) if local else urllib.request.ProxyHandler())
-
-    def _open(self, path: str, params: dict | None = None):
-        q = ("?" + urllib.parse.urlencode(params)) if params else ""
-        headers = {"accept": "application/json", "user-agent": "neuromesh-coder"}
-        if self.token:
-            headers["authorization"] = f"token {self.token}"
-        req = urllib.request.Request(f"{self.url}/api/v1{path}{q}", headers=headers)
-        return self._opener.open(req, timeout=self.timeout)
-
-    def get(self, path: str, params: dict | None = None):
-        with self._open(path, params) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-
-    def raw(self, repo: str, path: str, ref: str, limit: int) -> bytes:
-        with self._open(f"/repos/{repo}/raw/{urllib.parse.quote(path)}", {"ref": ref}) as resp:
-            return resp.read(limit + 1)
-
-    def version(self) -> str:
-        return str(self.get("/version").get("version", "?"))
-
-    def repos(self, limit: int = 200) -> list[dict]:
-        out, page = [], 1
-        while len(out) < limit:
-            data = self.get("/repos/search", {"limit": 50, "page": page})
-            batch = data.get("data") if isinstance(data, dict) else data
-            if not batch:
-                break
-            out += batch
-            if len(batch) < 50:
-                break
-            page += 1
-        return out[:limit]
-
-    def repo(self, name: str) -> dict:
-        return self.get(f"/repos/{name}")
-
-    def commit_of(self, name: str, branch: str) -> str:
-        try:
-            return str(self.get(f"/repos/{name}/branches/{urllib.parse.quote(branch)}")["commit"]["id"])
-        except Exception:
-            return branch
-
-    def tree(self, name: str, ref: str, limit: int = 20000) -> list[dict]:
-        out, page = [], 1
-        while len(out) < limit:
-            data = self.get(f"/repos/{name}/git/trees/{urllib.parse.quote(ref)}",
-                            {"recursive": "true", "per_page": 1000, "page": page})
-            out += [e for e in data.get("tree") or [] if e.get("type") == "blob"]
-            if not data.get("truncated"):
-                break
-            page += 1
-        return out[:limit]
-
-
 # ============================================================================ the teacher
 class CodeTeacher(Teacher):
     """What people's code shows: the kind of code each purpose needed. A specialist, for the code-kind node."""
@@ -359,24 +295,95 @@ class CodeStudy:
         st = json.loads(raw) if raw else {}
         self.stats: Counter = Counter(st.get("stats", {}))
         self.log: deque = deque(st.get("log", []), maxlen=60)
-        self.url = (os.environ.get("NEUROMESH_GITEA_URL") or self.pol.url or "").strip()
-        self.state, self.detail, self.version = ("off", "no Gitea configured ([gitea] url, or --gitea URL)", "")
-        if self.url and self.pol.enabled:
-            self.state, self.detail = "unknown", "not visited yet"
+        self.version = ""
+        self.reached: str | None = None  # what the last call to the tool said, if it failed
         self._vectors: tuple[int, np.ndarray, list[int]] | None = None
         self.busy = False
 
+    # ------------------------------------------------------------------ the gitea tool (plugins/gitea)
+    def tool(self):
+        return self.sys.tools.tools.get(TOOL)
+
+    @property
+    def url(self) -> str:
+        t = self.tool()
+        return str(self.sys.tool_config(t).get("url", "")) if t is not None else ""
+
     @property
     def enabled(self) -> bool:
-        return bool(self.pol.enabled and self.url)
+        """It studies when [gitea] enabled and the gitea tool is active and not switched off."""
+        t = self.tool()
+        return bool(self.pol.enabled and t is not None and t.state == "active" and not self.sys.tool_switch.refuses(t))
 
-    def set_url(self, url: str) -> None:
-        self.url = url.strip()
-        self.state, self.detail = ("unknown", "not visited yet") if self.url else ("off", "no Gitea configured")
+    @property
+    def state(self) -> str:
+        t = self.tool()
+        if not self.pol.enabled:
+            return "off"
+        if t is None:
+            return "no tool"
+        if self.sys.tool_switch.refuses(t):
+            return "switched off"
+        if t.state != "active":
+            return t.state
+        return "unreachable" if self.reached else "ready" if self.version else "unknown"
 
-    def client(self) -> GiteaClient:
-        token = os.environ.get(self.pol.token_env, "") if self.pol.token_env else ""
-        return GiteaClient(self.url, token, self.pol.timeout_s)
+    @property
+    def detail(self) -> str:
+        t = self.tool()
+        st = self.state
+        if st == "off":
+            return "studying Gitea is off ([gitea] enabled)"
+        if st == "no tool":
+            return "no gitea tool (plugins/gitea)"
+        if st == "switched off":
+            return "the gitea tool is switched off (the tool switch)"
+        if st in ("pending_approval", "discovered"):
+            return f"the gitea tool waits for your approval (it reads {self.url} over the network, with $GITEA_TOKEN)"
+        if st == "approved":
+            return "the gitea tool is approved; its self-test runs next"
+        if st in ("quarantined", "rejected"):
+            return f"the gitea tool is {st}: {t.note}" + (f" ({t.last_error[:160]})" if t.last_error else "")
+        if st == "unreachable":
+            return f"no Gitea at {self.url} ({self.reached})"
+        if st == "ready":
+            return f"Gitea {self.version} at {self.url}"
+        return f"the gitea tool is ready for {self.url}; not visited yet"
+
+    def set_url(self, url: str, by: str = "console") -> str:
+        """Point the gitea tool at another Gitea (for this run; [tools.config.gitea] url keeps it)."""
+        s = self.sys
+        s.directives.tools.config.setdefault(TOOL, {})["url"] = url.strip()
+        self.version, self.reached = "", None
+        t = self.tool()
+        if t is not None and t.state == "quarantined":  # it may have failed on the old address: test it again
+            t.state, t.note = "approved", f"its url changed to {url.strip()}: testing it again"
+            s.tools.persist(t)
+        s.guardian.audit(by, "gitea.url", TOOL, url=url.strip())
+        return t.state if t is not None else "no tool"
+
+    async def call(self, request: dict | str) -> tuple[dict | None, str]:
+        """One request to the gitea tool, in its sandbox: (its answer, or None and why)."""
+        s = self.sys
+        t = self.tool()
+        if t is None:
+            return None, "no gitea tool"
+        if t.state != "active":
+            return None, self.detail
+        decision = s.guardian.authorize_tool_run(t)
+        if not decision.allowed:
+            return None, decision.reason
+        run = await s.sandbox.run(t, request if isinstance(request, str) else json.dumps(request),
+                                  t.manifest.timeout_s or s.directives.tools.default_timeout_s, s.tool_config(t))
+        s.record_tool_run(t, run)
+        if run.refused:
+            return None, run.error
+        if not run.ok:
+            if run.transient:
+                self.reached = run.error[:200]
+            return None, run.error
+        self.reached = None
+        return {"output": run.output, **(run.extra or {})}, ""
 
     def save(self) -> None:
         self.sys.store.set_kv("gitea.state", json.dumps({"stats": dict(self.stats), "log": list(self.log)}))
@@ -457,17 +464,6 @@ class CodeStudy:
         old = sorted((r for r in repos if studied.get(r["full_name"], 0) < stale), key=lambda r: studied.get(r["full_name"], 0))
         return old[0] if old else None
 
-    def _list(self, c: GiteaClient) -> list[dict]:
-        if self.pol.repos:
-            out = []
-            for name in self.pol.repos:
-                try:
-                    out.append(c.repo(name))
-                except Exception as exc:
-                    self._note(f"could not open {name}: {exc}")
-            return out
-        return [r for r in c.repos() if not r.get("empty") and not r.get("archived")]
-
     async def visit(self, by: str = "its coder nodes", repo: str | None = None) -> dict:
         """Study one repository: read the source files that changed, take their functions apart, learn from them."""
         if not self.enabled:
@@ -481,38 +477,34 @@ class CodeStudy:
         self.busy = True
         s = self.sys
         try:
-            c = self.client()
-            try:
-                self.version = await asyncio.to_thread(c.version)
-                repos = await asyncio.to_thread(self._list, c)
-            except Exception as exc:
-                reason = getattr(exc, "reason", exc)
-                self.state, self.detail = "unreachable", f"no Gitea at {self.url} ({reason})"
-                self.stats["unreachable"] += 1
-                return {"ok": False, "why": self.detail}
-            self.state, self.detail = "ready", f"Gitea {self.version} at {self.url}: {len(repos)} repositories it can read"
+            listed, why = await self.call({"op": "repos"})
+            if listed is None:
+                self.stats["unreachable" if self.reached else "tool failed"] += 1
+                return {"ok": False, "why": why}
+            self.version = str(listed.get("version", ""))
+            repos = [r for r in listed.get("repos") or [] if not r.get("empty") and not r.get("archived")]
             target = next((r for r in repos if r["full_name"] == repo), None) if repo else self._pick(repos)
             if target is None:
                 return {"ok": False, "why": f"no repository called {repo}" if repo else "it has studied every repository lately"}
             name, branch = target["full_name"], target.get("default_branch") or "main"
             with s.activity.track("study", "coder", f"reading {name} on Gitea"):
-                commit = await asyncio.to_thread(c.commit_of, name, branch)
-                tree = await asyncio.to_thread(c.tree, name, commit)
+                got_tree, why = await self.call({"op": "tree", "repo": name, "branch": branch})
+                if got_tree is None:
+                    return {"ok": False, "why": why}
+                commit, tree = str(got_tree.get("commit", branch)), list(got_tree.get("files") or [])
                 known = {r[0]: r[1] for r in self.db.execute("SELECT path, sha FROM code_files WHERE repo = ?", (name,)).fetchall()}
                 exts = tuple(self.pol.extensions)
                 todo = [e for e in tree if e["path"].lower().endswith(exts) and int(e.get("size") or 0) <= self.pol.max_file_kb * 1024
                         and known.get(e["path"]) != e.get("sha") and not re.search(r"(^|/)(node_modules|vendor|dist|build|\.git)/", e["path"])]
                 todo = todo[: self.pol.files_per_visit]
-                sem = asyncio.Semaphore(max(1, self.pol.parallel))
-
-                async def read(e):
-                    async with sem:
-                        try:
-                            data = await asyncio.to_thread(c.raw, name, e["path"], commit, self.pol.max_file_kb * 1024)
-                            return e, data.decode("utf-8", errors="replace")
-                        except Exception as exc:
-                            return e, exc
-                got = await asyncio.gather(*(read(e) for e in todo))
+                got: list[tuple[dict, object]] = []
+                for i in range(0, len(todo), 20):  # twenty files a call; the tool reads them at once
+                    part = todo[i:i + 20]
+                    answer, why = await self.call({"op": "files", "repo": name, "ref": commit, "paths": [e["path"] for e in part]})
+                    texts = (answer or {}).get("files") or {}
+                    errors = (answer or {}).get("errors") or {}
+                    for e in part:
+                        got.append((e, texts[e["path"]] if e["path"] in texts else RuntimeError(errors.get(e["path"], why))))
             learned, kinds, functions = 0, Counter(), 0
             for e, text in got:
                 if isinstance(text, Exception):
