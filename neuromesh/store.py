@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS proposals(id TEXT PRIMARY KEY, status TEXT, data TEXT
 CREATE TABLE IF NOT EXISTS bg_tasks(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
 CREATE TABLE IF NOT EXISTS challenge_runs(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
 CREATE TABLE IF NOT EXISTS objectives(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
+CREATE TABLE IF NOT EXISTS scratch(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
+CREATE TABLE IF NOT EXISTS images(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
+CREATE TABLE IF NOT EXISTS lessons(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT, updated_at REAL);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, ts REAL, actor TEXT, kind TEXT, subject TEXT, detail TEXT);
 """
@@ -41,6 +44,9 @@ class Example:
     label: str
     weight: float
     source: str
+
+
+RECORD_TABLES = ("inquiries", "proposals", "bg_tasks", "challenge_runs", "objectives", "scratch", "images", "lessons")
 
 
 class Store:
@@ -177,16 +183,16 @@ class Store:
         self.db.executemany("DELETE FROM notes WHERE id=?", [(i,) for i in ids])
 
     def save_record(self, table: str, rid: str, status: str, data: dict) -> None:
-        assert table in ("inquiries", "proposals", "bg_tasks", "challenge_runs", "objectives")
+        assert table in RECORD_TABLES
         self.db.execute(f"INSERT OR REPLACE INTO {table}(id, status, data, created_at) VALUES(?,?,?,?)",
                         (rid, status, json.dumps(data, default=str), data.get("created_at", time.time())))
 
     def delete_record(self, table: str, rid: str) -> None:
-        assert table in ("inquiries", "proposals", "bg_tasks", "challenge_runs", "objectives")
+        assert table in RECORD_TABLES
         self.db.execute(f"DELETE FROM {table} WHERE id=?", (rid,))
 
     def load_records(self, table: str) -> list[dict]:
-        assert table in ("inquiries", "proposals", "bg_tasks", "challenge_runs", "objectives")
+        assert table in RECORD_TABLES
         return [json.loads(d) for (d,) in self.db.execute(f"SELECT data FROM {table} ORDER BY created_at")]
 
     # ------------------------------------------------------------ small state

@@ -187,6 +187,62 @@ trust-majority = "instances disagree: go with what most of them say"
 trust-confident = "instances disagree: go with the side with the most accuracy and confidence behind it"
 trust-memory = "instances disagree: go with what its memory says (how it settled this before)"
 
+[toolgate]
+answer = "In that situation I would {label} the tool ({description})."
+description = "The tool-gate node: while the tool switch says 'decide', given how an order asked for a tool, the tool's record, its mood, whether something else could answer and how slow the tool is, decide whether to use the tool for this order (toolgate.py)."
+labels = ["use", "skip"]
+open_labels = false
+internal = true
+kind = "toolgate"
+teachers = ["human", "toolgate"]  # people, and the gate policy
+
+[toolgate.label_descriptions]
+use = "run the tool for this order"
+skip = "answer another way: its memory, what it has read, or a teacher"
+
+[sight]
+answer = "That image shows {label}."
+description = "The sight node, its first optical node: given an image (its colours, edges and shapes), say what it mainly shows. Its labels grow as people, an LLM teacher that can see, and its own measures name what images show (vision.py)."
+labels = ["text", "blank"]
+open_labels = true
+internal = true
+kind = "vision"
+teachers = ["human", "vision", "sight"]   # people, an LLM teacher that can see, and its own measures
+
+[sight.label_descriptions]
+text = "mostly text: a page, a sign, a screenshot"
+blank = "almost nothing in it"
+
+[glyphs]
+answer = "That character is {label}."
+description = "The glyph node, the optical node its reader reads with: given one character's ink (scaled to 16 x 16) and where it sits on its line, say which character it is. It learns from glyphs it draws from its fonts, tesseract's character boxes, and what people say an image's text says (vision.py)."
+labels = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "dot", "comma", "colon", "semicolon", "exclamation", "question", "apostrophe", "quote", "hyphen", "open-paren", "close-paren", "ampersand", "slash", "percent", "at", "hash", "plus", "equals", "dollar"]
+open_labels = false
+internal = true
+kind = "vision"
+teachers = ["human", "glyphs"]            # people, and glyphs it drew or tesseract labelled
+
+[codekind]
+answer = "That needs {label} code ({description})."
+description = "The code-kind node: given what a piece of code is for (a function's name and doc comment, or a request), say what kind of code it needs. It learns from the code people wrote in a local Gitea (gitea.py), where what each function actually does decides its kind; the scratch pad uses it to find the closest examples."
+labels = ["text", "maths", "parse", "data", "files", "network", "dates", "test", "cli", "other"]
+open_labels = false
+internal = true
+kind = "codekind"
+teachers = ["human", "gitea"]     # people, and the code people wrote
+
+[codekind.label_descriptions]
+text = "changes or formats text"
+maths = "calculates"
+parse = "reads structure out of text: JSON, patterns, numbers"
+data = "sorts, groups, counts or reshapes collections"
+files = "reads or writes files"
+network = "talks to other machines"
+dates = "works with dates and times"
+test = "tests other code"
+cli = "a command line: arguments and output"
+other = "something else"
+
 [planner]
 answer = "I would pursue that with the {label} strategy ({description})."
 description = "The planner node: given a long-term objective, choose how to pursue it. The plan's questions are then asked of the mesh itself, one at a time, checked, followed up and written up (P16)."

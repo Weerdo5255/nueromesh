@@ -112,6 +112,7 @@ class ToolRun:
     transient: bool = False                     # e.g. network down: does not count towards quarantine
     not_found: bool = False                     # the tool works but has no answer (e.g. no such article)
     query: dict | None = None                   # the tool asks a director for context before it can answer
+    refused: bool = False                       # the tool switch is off for it: it never ran (toolgate.py)
 
 
 _LAUNCHER = """
@@ -197,6 +198,7 @@ class Sandbox:
         self.cpu_seconds = cpu_seconds
         self.memory_mb = memory_mb
         self.use_workers = workers                  # [tools] workers: persistent tools stay running
+        self.gate = None                            # tool -> why it may not run (the tool switch), or None
         self.worker_cpu_seconds = worker_cpu_seconds
         self.worker_requests = worker_requests      # a worker is replaced after this many requests
         self.workers: dict[str, Worker] = {}
@@ -245,6 +247,9 @@ class Sandbox:
     async def run(self, tool: Tool, text: str, timeout: float, config: dict | None = None,
                   context: list | None = None) -> ToolRun:
         m = tool.manifest
+        why = self.gate(tool) if self.gate is not None else None
+        if why:  # the tool switch is off for it: it does not run, for anything (toolgate.py)
+            return ToolRun(False, error=why, refused=True)
         entry = (m.path / m.entrypoint).resolve()
         if m.path.resolve() not in entry.parents:
             return ToolRun(False, error="entrypoint escapes the tool folder")

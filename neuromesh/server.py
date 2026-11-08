@@ -97,6 +97,30 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
         if path == "/traces":  # the paths recent orders took through the mesh, hop by hop
             from . import anatomy
             return 200, {"traces": anatomy.traces(system, min(50, int(query.get("n", 15))))}
+        if path == "/tools/switch":  # the tool switch: on, off, or it decides; per tool; what it decided lately
+            return 200, system.tool_switch.status()
+        if path == "/lessons":  # orders its teachers set it while it was idle, how it answered, how they marked it
+            return 200, system.tutor.status()
+        if path == "/images":  # what its optical nodes took in: what each image shows, the text it read
+            return 200, system.vision.status()
+        if path == "/images/file":  # ?id=img-3 or ?sha=...: the image itself
+            v = system.vision
+            img_id = str(query.get("id", ""))
+            if not img_id and query.get("sha"):
+                rec = v.by_sha(str(query["sha"]))
+                img_id = rec["id"] if rec else ""
+            got = v.file(img_id)
+            if got is None:
+                return 404, {"error": "no such image"}
+            return 200, Raw(*got)
+        if path == "/code":  # Gitea study, the scratch pad and its practice
+            return 200, {"gitea": system.code_study.status(), "scratch": system.scratch.status()}
+        if path == "/code/item":  # ?id=code-3
+            item = system.scratch.get(str(query.get("id", "")))
+            return (200, item) if item is not None else (404, {"error": "no such scratch pad item"})
+        if path == "/code/examples":  # ?q=&kind=&lang=&n=: functions it studied in Gitea
+            return 200, {"examples": system.code_study.examples(int(query.get("n", 40)), query.get("kind") or None,
+                                                                query.get("lang") or None, str(query.get("q", "")))}
         if path == "/toolsmith":
             return 200, system.toolsmith.status()
         if path == "/avatar":  # the avatar: its mind at a glance, and whether it has a voice
@@ -263,6 +287,71 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                 except (TypeError, ValueError):
                     return 400, {"error": "attempts is a whole number from 1 to 10"}
             return 400, {"error": 'action is "spawn" or "retire", or give "attempts"'}
+        if path == "/tools/switch":  # {"mode": "on"|"off"|"decide"} for all tools; {"tool": "calculator", "mode": ...|"default"}
+            by = str(body.get("by") or "web")
+            if body.get("tool"):
+                ok, msg = system.tool_switch.set_tool(str(body["tool"]), str(body.get("mode", "")), by)
+            else:
+                ok, msg = system.tool_switch.set_mode(str(body.get("mode", "")), by)
+            return (200 if ok else 400), {"ok": ok, "message": msg, **system.tool_switch.status()}
+        if path == "/images":  # {"name", "data": base64} or the image itself (content-type image/*; ?name=)
+            import base64
+            data = body.get("_bytes")
+            if data is None:
+                data = base64.b64decode(str(body.get("data", "")).split(",", 1)[-1], validate=False)
+            name = str(body.get("name") or query.get("name") or "")
+            try:
+                rec = await system.vision.take(data, name=name, by=str(body.get("by") or query.get("by") or "web"))
+            except ValueError as exc:
+                return 400, {"error": str(exc)}
+            return 200, rec
+        if path == "/lessons":  # {"kind": "question"|...}: a teacher sets it a lesson now
+            rec = await system.tutor.lesson(by=str(body.get("by") or "web"), kind=body.get("kind"))
+            if rec is None:
+                return 400, {"error": f"no lesson: {system.tutor.due() or 'the teacher set nothing it could use'}"}
+            return 200, rec
+        if path == "/images/correct":  # {"id": "img-3", "label": "cat"} and/or {"text": "what its text says"}
+            ok, msg = system.vision.correct(str(body.get("id", "")), str(body.get("by") or "web"),
+                                            label=str(body.get("label") or ""), text=body.get("text"))
+            return (200 if ok else 400), {"ok": ok, "message": msg, "image": system.vision.records.get(str(body.get("id", "")))}
+        if path == "/images/forget":
+            ok = system.vision.forget(str(body.get("id", "")))
+            return (200 if ok else 404), {"ok": ok}
+        if path == "/images/practice":  # draw and learn glyphs now
+            made = await system.vision.practice(int(body.get("n") or 0) or None)
+            return 200, {"glyphs": made, "message": f"it drew and learned {made} glyph(s)" if made else
+                         "it could not draw glyphs (it needs Pillow and fonts)"}
+        if path == "/code":  # {"write": "...", "language"} | {"add": code, "language", "title"} | {"id", "code"} |
+            #                  {"id", "action": ask|approve|decline|remove|check} | {"study": true, "repo"} | {"practice": true}
+            sp, by = system.scratch, str(body.get("by") or "web")
+            if body.get("write"):
+                item = await sp.write(str(body["write"]), by=by, lang=str(body.get("language") or ""))
+                return (200 if item.get("id") else 400), item
+            if "add" in body:
+                return 200, sp.add(str(body["add"]), str(body.get("language") or "python"), str(body.get("title") or ""), by)
+            if body.get("id") and "code" in body:
+                ok, msg = sp.edit(str(body["id"]), str(body["code"]), by)
+                return (200 if ok else 400), {"ok": ok, "message": msg, "item": sp.get(str(body["id"]))}
+            if body.get("id") and body.get("action"):
+                act, iid = str(body["action"]), str(body["id"])
+                if act == "check":
+                    item = sp.get(iid)
+                    if item is None:
+                        return 404, {"error": "no such scratch pad item"}
+                    sp.validate(item)
+                    return 200, {"ok": True, "message": f"{iid}: {sp.say_check(item)}", "item": item}
+                fn = {"ask": sp.ask, "approve": sp.approve, "decline": sp.decline, "remove": sp.remove}.get(act)
+                if fn is None:
+                    return 400, {"error": f"unknown action {act}"}
+                ok, msg = fn(iid, by)
+                return (200 if ok else 400), {"ok": ok, "message": msg, "item": sp.get(iid)}
+            if body.get("study"):
+                res = await system.code_study.visit(by=by, repo=str(body.get("repo") or "") or None)
+                return (200 if res.get("ok") else 400), {**res, "message": res.get("line") or res.get("why", "")}
+            if body.get("practice"):
+                rec = await sp.practice()
+                return (200 if rec else 400), rec or {"error": "nothing to practise on yet (it studies Gitea first)"}
+            return 400, {"error": "say what to do: write, add, id+code, id+action, study or practice"}
         if path == "/toolsmith":  # {"build": "reverse a word"} or {"try": "reverser"}: it asks before a tool runs (P15)
             smith, by = system.toolsmith, body.get("by", "api")
             if not smith.enabled:
@@ -430,8 +519,13 @@ async def serve_http(system, host: str = "127.0.0.1", port: int = 8765):
                 k, _, v = line.decode("latin-1").partition(":")
                 headers[k.strip().lower()] = v.strip()
             length = int(headers.get("content-length", "0") or 0)
+            if length > 64 * 1048576:
+                raise ValueError("the request is larger than 64 MB")
             raw = await reader.readexactly(length) if length else b""
-            body = json.loads(raw) if raw else {}
+            if headers.get("content-type", "").startswith(("image/", "application/octet-stream")):
+                body = {"_bytes": raw}  # an image sent as it is (POST /images)
+            else:
+                body = json.loads(raw) if raw else {}
             url = urlparse(target)
             query = {k: v[-1] for k, v in parse_qs(url.query).items()}
             page = web.static_file(url.path) if method.upper() in ("GET", "HEAD") else None

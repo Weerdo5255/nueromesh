@@ -59,6 +59,18 @@ class StaticFileTests(unittest.TestCase):
             self.assertRegex(script, rf"\n\s+{t}: \(\) =>", t)
         self.assertIn('role="tabpanel"', page)
 
+    def test_the_code_and_images_views_and_the_tool_switch(self):
+        page = (web.WEB_DIR / "index.html").read_text()
+        script = (web.WEB_DIR / "app.js").read_text()
+        for view in ("code", "images"):
+            self.assertIn(f'id="view-{view}"', page)
+            self.assertIn(f'data-view="{view}"', page)
+        self.assertIn('const VIEWS = ["live", "nodes", "memory", "mind", "code", "images", "logs", "status"]', script)
+        for part in ('api("/tools/switch"', 'get("code", "/code")', 'api("/code", { write:', 'action: "approve"',
+                     'get("images", "/images")', 'api("/images", { name: f.name, data', 'api("/images/correct"',
+                     'get("lessons", "/lessons")', "Approve and run", "Let it decide", "/images/file?sha="):
+            self.assertIn(part, script)
+
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_the_script_parses(self):
         out = subprocess.run(["node", "--check", str(web.WEB_DIR / "app.js")], capture_output=True, text=True)

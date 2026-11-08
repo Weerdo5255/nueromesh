@@ -142,6 +142,24 @@ def _http_error_detail(exc: urllib.error.HTTPError) -> str:
         return f"HTTP {exc.code}"
 
 
+VISION_MODELS = re.compile(r"llava|vision|[-_.]vl\b|vl:|moondream|bakllava|minicpm-v|gemma3|llama4|qwen2\.5vl|"
+                           r"qwen2-vl|granite3\.2-vision|mistral-small3|pixtral", re.I)
+
+
+def vision_model_of(models: list[dict], wanted: str) -> str:
+    """The installed Ollama model that can see: the one asked for, or (auto) the first that looks like it can."""
+    if wanted == "":
+        return ""
+    names = [str(m.get("name") or m.get("model")) for m in models]
+    if wanted not in ("auto",):
+        return wanted if wanted in names or f"{wanted}:latest" in names else ""
+    for m in models:
+        fam = [str(f).lower() for f in ((m.get("details") or {}).get("families") or [])]
+        if "clip" in fam or "mllama" in fam:
+            return str(m.get("name") or m.get("model"))
+    return next((n for n in names if VISION_MODELS.search(n)), "")
+
+
 class LLMTeacher(Teacher):
     """An external LLM as a teacher. Providers:
 
@@ -165,6 +183,8 @@ class LLMTeacher(Teacher):
         self.calls = 0
         self.errors = 0
         self.installed: list[str] = []
+        self.vision = ""                 # ollama: an installed model that can see images (vision.py)
+        self._models: list[dict] = []
         self._probed_at = 0.0
         if self.provider == "ollama":
             self.base_url = ollama_base_url(cfg.base_url)
@@ -220,6 +240,7 @@ class LLMTeacher(Teacher):
             reason = getattr(exc, "reason", exc)
             return "unreachable", f"no Ollama server at {self.base_url} ({reason}); start it with: ollama serve", [], None
         models = data.get("models") or []
+        self._models = models
         names = [str(m.get("name") or m.get("model")) for m in models]
         if self.cfg.model in ("", "auto"):
             chat = [m for m in models if _is_chat_model(m)]
@@ -244,6 +265,7 @@ class LLMTeacher(Teacher):
         self.installed = names
         if model:
             self.model = model
+        self.vision = vision_model_of(self._models, self.cfg.vision_model) if state == "ready" else ""
         self._set_state(state, detail)
 
     # ------------------------------------------------------------------- calls
@@ -403,6 +425,33 @@ class LLMTeacher(Teacher):
             return None
         return {"name": name, "description": str(data.get("description", ""))[:200], "code": data["code"][:20000],
                 "examples": examples}
+
+    async def write_code(self, request: str, language: str, examples: list[dict], previous: str = "",
+                         problems: list[str] | None = None) -> dict | None:
+        """Write code for its scratch pad, following code people wrote (from their Gitea) where it fits. Nothing it
+        writes runs before a person approves it."""
+        schema = {"type": "object", "required": ["code"],
+                  "properties": {"code": {"type": "string"}, "explanation": {"type": "string"}}}
+        system = ("You write small, clear, correct programs for a scratch pad. A person reads and approves the code "
+                  "before it runs. Reply with a single JSON object and nothing else.")
+        refs = "\n\n".join(f"Example {i + 1} - {ex.get('name')} from {ex.get('repo')}/{ex.get('path')}:\n{str(ex.get('source', ''))[:1500]}"
+                            for i, ex in enumerate(examples[:3]))
+        user = (f"Write {language} code that does this: {request[:600]}\n"
+                + (f"\nCode people wrote that is close to it, from their own Gitea - follow its style and approach "
+                   f"where it fits:\n{refs}\n" if refs else "")
+                + (f"\nYour previous attempt did not check out:\n{previous[:3000]}\nProblems: {'; '.join(problems or [])}\n"
+                   "Fix them.\n" if previous else "")
+                + "\nRules: one self-contained file; the standard library only; no network access and no files outside "
+                  "the folder it runs in unless the task needs them; when it is run directly it demonstrates itself by "
+                  'printing a result. JSON: {"code": "...", "explanation": "<one sentence>"}')
+        data = _extract_json(await self._ask(system, user, schema) or "")
+        if not data or not isinstance(data.get("code"), str) or not data["code"].strip():
+            return None
+        code = data["code"]
+        fence = re.match(r"^\s*```[\w+-]*\n(.*?)\n```\s*$", code, re.S)
+        if fence:
+            code = fence.group(1)
+        return {"code": code[:30000], "explanation": str(data.get("explanation", ""))[:300]}
 
     async def plan(self, objective: str, strategy: str, skills: list[str], tools: list[str]) -> dict | None:
         """Draft the questions a long-term objective needs answered, each one it can ask itself."""
@@ -695,6 +744,18 @@ class TeacherPool:
                 continue
             with self._track(teacher, f"writing a tool for {len(requests)} requests"):
                 made = await teacher.write_tool(requests)
+            if made:
+                return made, teacher.name
+        return None
+
+    async def write_code(self, request: str, language: str, examples: list[dict], previous: str = "",
+                         problems: list[str] | None = None) -> tuple[dict, str] | None:
+        """Have the first available LLM teacher write code for the scratch pad (None offline)."""
+        for teacher in self.ranked():
+            if not isinstance(teacher, LLMTeacher):
+                continue
+            with self._track(teacher, f"writing {language}: {' '.join(request.split())[:60]}"):
+                made = await teacher.write_code(request, language, examples, previous, problems)
             if made:
                 return made, teacher.name
         return None

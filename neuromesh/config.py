@@ -133,6 +133,7 @@ class LLMConfig:
     keep_alive: str = "10m"         # ollama: how long the model stays loaded between calls
     think: object = ""              # ollama: true/false or "low"/"medium"/"high" for reasoning models; "" = model default
     probe_seconds: float = 30.0     # ollama: how often to re-check the server and model
+    vision_model: str = "auto"      # ollama: a model that can see images ("auto": an installed one, e.g. llava; "": none)
 
     @classmethod
     def from_dict(cls, d: dict) -> "LLMConfig":
@@ -155,7 +156,8 @@ class TeacherPolicy:
     weights: dict = field(default_factory=lambda: {
         "human": 3.0, "challenge": 2.5, "tool-manifest": 2.0, "outcome": 2.0, "llm": 1.5, "ollama": 1.2,
         "heuristic": 1.0, "temperament": 1.0, "agency": 1.0, "director": 1.8,
-        "coder": 1.0, "experiment": 2.0, "approved": 2.5, "planner": 1.0, "ego": 1.0})
+        "coder": 1.0, "experiment": 2.0, "approved": 2.5, "planner": 1.0, "ego": 1.0, "toolgate": 1.0,
+        "gitea": 1.0, "vision": 1.3, "sight": 1.0, "glyphs": 1.0, "tesseract": 1.5, "tutor": 1.2})
     models: dict = field(default_factory=dict)  # teacher name -> LLMConfig, from [teachers.<name>]
 
     @property
@@ -175,6 +177,7 @@ class TeacherPolicy:
 
 @dataclass
 class ToolPolicy:
+    mode: str = "on"                  # the tool switch: "on", "off", or "decide" (it decides each time; toolgate.py)
     plugin_dirs: tuple = ("plugins",)
     auto_approve_permissions: tuple = ()
     allowed_permissions: tuple = ("network", "fs_read")
@@ -538,6 +541,72 @@ class EgoPolicy:
 
 
 @dataclass
+class GiteaPolicy:
+    """A local Gitea its coder nodes learn to program from (gitea.py): it studies the code in its repositories."""
+    enabled: bool = True
+    url: str = ""                       # e.g. "http://localhost:3000" (or --gitea URL, or NEUROMESH_GITEA_URL); "" = none
+    token_env: str = "GITEA_TOKEN"      # an access token (read-only is enough) for private repositories
+    repos: tuple = ()                   # "owner/name" to study; empty = every repository it can see
+    extensions: tuple = (".py", ".js", ".mjs", ".ts", ".go", ".rs", ".sh", ".rb", ".java", ".c", ".cpp")
+    max_file_kb: int = 256              # larger files are skipped
+    files_per_visit: int = 40           # files it reads per visit to a repository
+    parallel: int = 4                   # files fetched at once
+    study_every_seconds: float = 300.0  # how often it visits a repository (when idle)
+    restudy_days: float = 7.0           # a repository it studied is visited again after this long
+    max_examples: int = 20000           # functions it keeps as examples (the oldest go first)
+    timeout_s: float = 15.0
+    practice: bool = True               # when idle, it practises: writes code for an example's purpose without
+    practice_every_seconds: float = 600.0  # looking at it, checks it, and compares it with what a person wrote
+
+
+@dataclass
+class CodePolicy:
+    """The scratch pad (scratchpad.py): where it writes code, a validator checks it, and it runs only when a person
+    approves exactly that code (P20)."""
+    enabled: bool = True
+    run_languages: tuple = ("python", "javascript")  # what may run once approved (javascript needs Node.js)
+    run_timeout_s: float = 20.0
+    run_cpu_seconds: int = 10
+    run_memory_mb: int = 512
+    max_output_kb: int = 64
+    recipe_confidence: float = 0.6      # the coder node's recipe is used when it is at least this sure
+    examples: int = 3                   # Gitea examples given to a teacher (or adapted) for a request
+    teacher_fix: bool = True            # code that does not check out goes back to the teacher once, with the problems
+    keep_items: int = 200
+    keep_practice: int = 60
+
+
+@dataclass
+class VisionPolicy:
+    """Image nodes (vision.py): it takes in images, says what it sees, reads the text in them, and learns from both."""
+    enabled: bool = True
+    max_image_mb: float = 20.0
+    read_text: bool = True              # read text in images: its own glyph reader, taught as below
+    tesseract: str = "auto"             # "auto": use tesseract (if installed) as a teacher for reading; "": never; or a path
+    vision_teacher: bool = True         # ask an LLM teacher that can see (an Ollama vision model) what an image shows
+    learn_text: bool = True             # text it reads is kept as knowledge it can answer from (and its source)
+    glyph_practice: int = 600           # practice glyphs it renders from fonts per round (it knows what each one is)
+    fonts: tuple = ()                   # font files to render practice glyphs with ( empty: the system's fonts + its own)
+    min_glyph_confidence: float = 0.35  # below this a character reads as "?"
+    glyphs_per_label: int = 40          # it practises until it has drawn at least this many glyphs of each character
+    practice_after_idle_seconds: float = 60.0  # practice waits until no one has given it an order for this long
+    keep_images: int = 2000
+
+
+@dataclass
+class TutorPolicy:
+    """When it is idle, its Ollama teachers set it orders, judge its answers and teach it (tutor.py, P22)."""
+    enabled: bool = True
+    providers: tuple = ("ollama",)      # which teachers may set orders (by provider)
+    idle_seconds: float = 120.0         # no orders from people for this long first
+    every_seconds: float = 180.0        # between two teacher-set orders
+    max_per_hour: int = 20
+    kinds: tuple = ("question", "skill", "maths", "tool", "code")
+    learn: bool = True                  # what a teacher says is right is taught (as a teacher, never as a person)
+    keep: int = 200
+
+
+@dataclass
 class Directives:
     name: str = "NeuroMesh"
     mission: str = ""
@@ -565,6 +634,10 @@ class Directives:
     curiosity: CuriosityPolicy = field(default_factory=CuriosityPolicy)
     avatar: AvatarPolicy = field(default_factory=AvatarPolicy)
     ego: EgoPolicy = field(default_factory=EgoPolicy)
+    gitea: GiteaPolicy = field(default_factory=GiteaPolicy)
+    code: CodePolicy = field(default_factory=CodePolicy)
+    vision: VisionPolicy = field(default_factory=VisionPolicy)
+    tutor: TutorPolicy = field(default_factory=TutorPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -596,6 +669,10 @@ class Directives:
             curiosity=build(CuriosityPolicy, d.get("curiosity")),
             avatar=build(AvatarPolicy, d.get("avatar")),
             ego=build(EgoPolicy, d.get("ego")),
+            gitea=build(GiteaPolicy, d.get("gitea")),
+            code=build(CodePolicy, d.get("code")),
+            vision=build(VisionPolicy, d.get("vision")),
+            tutor=build(TutorPolicy, d.get("tutor")),
         )
 
     @classmethod

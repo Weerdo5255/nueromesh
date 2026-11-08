@@ -17,7 +17,21 @@ from .ego import a_mood
 HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely") or a command:
   /status                         overview + directive scorecard
   /lineage [capability]           family tree of every node ever built
-  /tools                          tools and their states
+  /tools                          tools and their states, and the tool switch
+  /tools on|off|decide            the tool switch: use tools, never run them, or let it decide each time
+  /tool <name> on|off|decide|default   set one tool apart from the switch (default: as the switch)
+  /code                           its scratch pad: code it wrote, checked, waiting for approval, and what ran
+  /code write <what it should do> have it write code (a recipe, a teacher with Gitea examples, or the closest example)
+  /code show|check|approve|decline|remove <id>   approve: it runs that exact code once (P20)
+  /code practice                  practise now: write code for a function's purpose without looking, and compare
+  /lessons                        orders its teachers set it when idle, its answers, and their marks
+  /lesson [kind]                  have a teacher set it a lesson now (question, skill, maths, tool, code)
+  /images                         images it took in: what each shows, the text it read, how well it reads
+  /image <path> [name]            take an image in (PNG, BMP, PPM; JPEG/GIF/WebP with Pillow)
+  /image show <img-id>            what it saw and read      /image is <img-id> <what it shows>   teach its sight node
+  /image says <img-id> <text>     what the image's text says (teaches its reader)   /image practise   draw and learn glyphs
+  /gitea                          what its coder nodes learned from Gitea     /gitea study [owner/repo]   study now
+  /gitea examples [words]         functions it studied                        /gitea url <url>   point it at a Gitea
   /teachers                       teacher status (Ollama, Claude, ...)
   /research <topic>               look it up on Wikipedia now and retain it
   /knowledge [question]           what the mesh has retained, or what it would recall for a question
@@ -641,6 +655,109 @@ def knowledge_lines(system, question: str = "") -> list[str]:
     return lines
 
 
+async def code_lines(system, rest: str) -> list[str]:
+    sp = system.scratch
+    sub, _, arg = rest.partition(" ")
+    arg = arg.strip()
+    if not sub:
+        return sp.lines()
+    if sub == "write":
+        if not arg:
+            return ["  usage: /code write <what the code should do>   e.g. /code write a python function that counts vowels"]
+        item = await sp.write(arg, by="console")
+        if not item.get("id"):
+            return [f"  it couldn't write that yet: {item.get('why', '')}"]
+        return ["  " + x for x in sp.lines(item["id"])] + ([f"  it runs only once you approve it: /code approve {item['id']}"]
+                                                            if sp.runnable(item["language"]) else [])
+    if sub == "practice":
+        rec = await sp.practice()
+        if rec is None:
+            return ["  nothing to practise on yet: it studies Gitea first (/gitea study)"]
+        return [f"  practised on {rec['name']} from {rec['repo']}: \"{rec['purpose'][:80]}\"",
+                f"  written {rec['how']}; " + ("it checks out" if rec["ok"] else "it does not check out" if rec["ok"] is False else "not checked")
+                + (f"; {'the same' if rec['same_kind'] else 'a different'} kind of code as theirs ({rec.get('my_kind')} vs {rec.get('kind')})"
+                   if rec.get("same_kind") is not None else "") + f"; they share {rec['shared']:.0%} of their names"]
+    if sub == "show":
+        return ["  " + x for x in sp.lines(arg)]
+    if sub == "check":
+        item = sp.get(arg)
+        if item is None:
+            return [f"  no scratch pad item {arg}"]
+        sp.validate(item)
+        return [f"  {arg}: {sp.say_check(item)}"]
+    fn = {"approve": sp.approve, "ask": sp.ask, "decline": sp.decline, "remove": sp.remove}.get(sub)
+    if fn is None:
+        return ["  usage: /code [write <what>|show <id>|check <id>|approve <id>|decline <id>|remove <id>|practice]"]
+    ok, msg = fn(arg, "console")
+    out = [f"  {msg}"]
+    if ok and sub == "approve":
+        for _ in range(int(system.directives.code.run_timeout_s * 10) + 20):
+            item = sp.get(arg)
+            if item is None or item["status"] not in ("approved", "running"):
+                break
+            await asyncio.sleep(0.1)
+        out += ["  " + x for x in sp.lines(arg)[-12:]]
+    return out
+
+
+async def image_lines(system, rest: str) -> list[str]:
+    v = system.vision
+    sub, _, arg = rest.partition(" ")
+    arg = arg.strip()
+    if not sub:
+        return v.lines()
+    if sub in ("practise", "practice"):
+        made = await v.practice()
+        return [f"  it drew and learned {made} glyph(s)" if made else "  it could not draw glyphs (it needs Pillow and fonts)"]
+    if sub == "show":
+        rec = v.records.get(arg)
+        if rec is None:
+            return [f"  no image {arg}"]
+        sees, t = rec.get("sees") or {}, rec.get("text") or {}
+        out = [f"  {rec['id']}  {rec['name']}  {rec['w']}x{rec['h']} {rec['ext']}, taken in by {rec['by']}",
+               f"  it sees: {sees.get('label') or '?'} ({sees.get('by', '')})"]
+        if t.get("text"):
+            out.append(f"  it read ({t.get('by')}" + (f", {t['agrees']:.0%} like the reference" if t.get("agrees") is not None else "") + "):")
+            out += ["    " + x for x in t["text"].splitlines()[:30]]
+        if rec.get("tesseract") and t.get("by", "").startswith("glyph"):
+            out.append("  tesseract read: " + " ".join(rec["tesseract"].split())[:200])
+        out += [f"  - {x}" for x in rec.get("learned", [])]
+        return out
+    if sub in ("is", "says"):
+        img_id, _, what = arg.partition(" ")
+        if not what.strip():
+            return [f"  usage: /image {sub} <img-id> <{'what it shows' if sub == 'is' else 'what its text says'}>"]
+        ok, msg = v.correct(img_id, "console", **({"label": what} if sub == "is" else {"text": what.replace("\\n", "\n")}))
+        return [f"  {msg}"]
+    path = Path(os.path.expanduser(sub))
+    if not path.is_file():
+        return [f"  no file {sub} (the path is on the machine the mesh runs on)"]
+    try:
+        rec = await v.take(path.read_bytes(), name=arg or path.name, by="console")
+    except ValueError as exc:
+        return [f"  {exc}"]
+    return await image_lines(system, f"show {rec['id']}")
+
+
+async def gitea_lines(system, rest: str) -> list[str]:
+    cs = system.code_study
+    sub, _, arg = rest.partition(" ")
+    arg = arg.strip()
+    if sub == "url":
+        if not arg:
+            return [f"  Gitea: {cs.url or 'none'}"]
+        cs.set_url(arg)
+        return [f"  its coder nodes will study the Gitea at {arg} (token from ${system.directives.gitea.token_env}, if set)"]
+    if sub == "study":
+        res = await cs.visit(by="console", repo=arg or None)
+        return [f"  {res.get('line') or res.get('why')}"]
+    if sub == "examples":
+        rows = cs.examples(15, q=arg)
+        return [f"  {e['id']:>5} {e['kind']:<8} {e['lang']:<10} {e['repo']}/{e['path']}: {e['name']} - {e['purpose'][:70]}"
+                for e in rows] or ["  no examples yet"]
+    return cs.lines()
+
+
 async def execute(system, line: str) -> Output:
     """Run one order or /command and return what to show."""
     line = line.strip()
@@ -670,10 +787,34 @@ async def execute(system, line: str) -> Output:
             out = render_status(system.status()).splitlines()
         elif cmd == "lineage":
             out = render_lineage(system.registry.lineage, rest or None).splitlines() or ["no nodes built yet"]
+        elif cmd == "tools" and rest:
+            ok, msg = system.tool_switch.set_mode(rest, "console")
+            out = [f"  {msg}"]
         elif cmd == "tools":
             for name, t in system.status()["tools"].items():
                 out.append(f"  {name:<14} {t['state']:<17} v{t['version']:<7} runs={t['runs']:<4} "
                            f"perms={t['permissions']}  {t['note']}")
+            out += ["", *system.tool_switch.lines()]
+        elif cmd == "code":
+            out = await code_lines(system, rest)
+        elif cmd == "lessons":
+            out = system.tutor.lines()
+        elif cmd == "lesson":
+            rec = await system.tutor.lesson(by="console", kind=rest or None)
+            out = ([f"  {rec['id']}: the {rec['teacher']} teacher set {rec['kind']}: \"{rec['order']}\"",
+                    f"  it answered: {rec['answer'][:200]}", f"  marked {rec['verdict']} ({rec['marked_by']}): {rec['mark_why']}"]
+                   + [f"  learns: {x}" for x in rec["learned"]]) if rec else [f"  no lesson: {system.tutor.due() or 'the teacher set nothing it could use'}"]
+        elif cmd in ("images", "image"):
+            out = await image_lines(system, rest if cmd == "image" else "")
+        elif cmd == "gitea":
+            out = await gitea_lines(system, rest)
+        elif cmd == "tool":
+            name, _, mode = rest.partition(" ")
+            if not name or not mode.strip():
+                out = ["  usage: /tool <name> on|off|decide|default"]
+            else:
+                ok, msg = system.tool_switch.set_tool(name.strip(), mode.strip(), "console")
+                out = [f"  {msg}"]
         elif cmd == "teachers":
             out = teacher_lines(system)
         elif cmd == "research":

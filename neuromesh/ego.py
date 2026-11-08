@@ -54,7 +54,7 @@ VALUES = {"mood": MOODS, "tone": ("neutral", "friendly", "frustrated", "hostile"
           "dreamt": ("no", "yes"), "view": ("none", "likes", "dislikes"), "spoke": ("not", "recent")}
 BRIGHT, LOW = ("upbeat", "content"), ("tense", "subdued", "wary")
 HELD = ("brief", "confirm", "defer", "block")
-SKIP_ROUTES = ("tasks", "objectives", "toolsmith", "ego", "mind", "thinking", "corrections")
+SKIP_ROUTES = ("tasks", "objectives", "toolsmith", "ego", "mind", "thinking", "corrections", "scratch", "vision")
 MOOD_SAY = {"upbeat": "I'm in good spirits", "content": "I'm content", "steady": "I'm steady", "alert": "I'm alert",
             "subdued": "I'm feeling a little low", "tense": "I'm a bit tense", "wary": "I'm feeling wary"}
 LABEL = "my ego"

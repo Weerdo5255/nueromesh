@@ -145,7 +145,7 @@ class Orchestrator(Agent):
             self.sys.inflight -= 1
             sem.release()
         result.latency_ms = round((time.perf_counter() - t0) * 1000, 1)
-        self.sys.record_order(result)
+        self.sys.record_order(result, source=order.source)
         self.stats["orders"] += 1
         if order.future is not None and not order.future.done():
             order.future.set_result(result)
@@ -191,9 +191,18 @@ class Orchestrator(Agent):
         asked = tool_request(order.text) if not order.background and s.toolsmith.enabled else None
         if asked is not None:  # "make a tool that ...": the toolsmith writes it, and asks before it runs (P15)
             return await self.make_tool(order, res, asked)
+        from .scratchpad import code_request  # (scratchpad.py builds on gitea.py, which builds on this module)
+        wanted = code_request(order.text) if not order.background and s.scratch.enabled else None
+        if wanted is not None:  # "write a python function that ...": into the scratch pad; it runs once approved (P20)
+            return await self.write_code(order, res, *wanted)
         prompt = imagine_prompt(order.text) if s.dreams.enabled else None
         if prompt is not None:  # "imagine ...": its dream nodes, labelled as imagination (P13)
             self.imagine(res, prompt)
+            return res
+        seen = s.vision.answer(order.text) if s.vision.enabled else None
+        if seen is not None:  # "what do you see in img-3?", "what does img-3 say?" (vision.py)
+            res.route, res.output, res.confidence, res.served_by = "vision", seen[0], 1.0, "nodes"
+            res.trace.append(f"answered from what its optical nodes took in: {seen[1]}")
             return res
         mine = s.ego.answer(order.text, order.id)  # questions about itself: its mood, dreams, likes, itself (P18)
         if mine is not None:
@@ -234,12 +243,47 @@ class Orchestrator(Agent):
                 payload = skill_payload(order.text)
         else:
             res.trace.append(f"explicit route {route}")
+            return await self._serve(order, res, route, payload, kinds, conf, explicit=True)
         return await self._serve(order, res, route, payload, kinds, conf)
 
-    async def _serve(self, order, res: Result, route: str, payload: str, kinds: list, conf: float) -> Result:
+    def gate_tool(self, res: Result, tool, payload: str, explicit: bool) -> str | None:
+        """The tool switch (toolgate.py): None to run the tool; "off" when it is switched off; otherwise why
+        it decided to answer another way."""
+        s = self.sys
+        sw = s.tool_switch
+        if tool is None or tool.state != ACTIVE:
+            return None  # the guardian refuses it, as before
+        mode = sw.mode_of(tool.name)
+        if mode == "on":
+            sw.note_used(tool)
+            return None
+        if mode == "off":
+            sw.note_refused(tool)
+            return "off"
+        use, why, by = sw.decide(tool, payload, "explicit" if explicit else "routed")
+        if use:
+            res.trace.append(f"tools: it decided to use {tool.name} - {why} ({by})")
+            return None
+        return f"tools: it decided not to use {tool.name} - {why} ({by}); it answers another way"
+
+    async def _serve(self, order, res: Result, route: str, payload: str, kinds: list, conf: float,
+                     explicit: bool = False, forced: bool = False) -> Result:
         """Run the chosen route: a tool, a skill node, or the direct answer (memory, knowledge, teachers)."""
         s = self.sys
         res.route = route
+        gated = None
+        if route.startswith("tool:") and not forced:
+            gated = self.gate_tool(res, s.tools.tools.get(route[5:]), payload, explicit)
+            if gated == "off" and explicit:
+                res.ok, res.note = False, f"tools are switched off, so {route[5:]} did not run (/tools on, or /tool {route[5:]} on)"
+                res.trace.append(f"the tool switch is off for {route[5:]}")
+                res.confidence, res.served_by = 1.0, "explicit"
+                return res
+            if gated is not None:
+                res.trace.append(f"the tool switch is off for {route[5:]}: it answers without it" if gated == "off" else gated)
+                held = (route, payload)
+                res.route = route = DIRECT
+                payload = order.text
         if route.startswith("tool:"):
             tool = s.tools.tools.get(route[5:])
             decision = s.guardian.authorize_tool_run(tool)
@@ -288,7 +332,7 @@ class Orchestrator(Agent):
                 conf *= remembered.confidence
             elif hits and confidence >= pol.recall_threshold:
                 await self.answer_from_retained(res, order.text, hits, confidence, learn=order.learn)
-            elif tool is not None and pol.research_questions and is_question(order.text):
+            elif tool is not None and pol.research_questions and is_question(order.text) and self._research_now(res, tool, order.text):
                 await self.knowledge_order(res, order.text, tool, background=order.background, learn=order.learn)
             else:
                 reply = await s.teachers.answer(order.text)
@@ -301,6 +345,13 @@ class Orchestrator(Agent):
                     if order.learn and is_question(order.text):  # into a memory node, if the director's review agrees
                         s.directors.remember(order.id, order.text, res.answer, f"the {reply[1]} teacher (a language model)",
                                              by=reply[1], kind="teachers")
+                elif gated is not None and gated != "off":  # nothing else could: the tool after all
+                    res.trace.append(f"nothing else could answer, so it uses {held[0][5:]} after all")
+                    return await self._serve(order, res, held[0], held[1], kinds, conf, forced=True)
+                elif gated is not None:
+                    res.ok = False
+                    res.note = ("tools are switched off, and nothing else could answer this" if gated == "off" else
+                                "it chose not to use the tool, and nothing else could answer this")
                 else:
                     res.ok = False
                     res.note = "no tool, skill or teacher can fulfil this yet; queued for a human teacher"
@@ -320,6 +371,17 @@ class Orchestrator(Agent):
             res.served_by = "mixed"
         return res
 
+
+    def _research_now(self, res: Result, tool, text: str) -> bool:
+        """Look a question up with the research tool? Always, unless the tool switch says it decides."""
+        sw = self.sys.tool_switch
+        if sw.mode_of(tool.name) != "decide":
+            if sw.mode_of(tool.name) == "on":
+                sw.note_used(tool)
+            return True
+        use, why, by = sw.decide(tool, text, "routed")
+        res.trace.append(f"tools: it decided {'to use' if use else 'not to use'} {tool.name} - {why} ({by})")
+        return use
 
     # ------------------------------------------------------------- tools
     async def run_tool(self, order, res: Result, tool: Tool, payload: str, timeout: float):
@@ -397,6 +459,33 @@ class Orchestrator(Agent):
                                      by=reply[1], kind="teachers")
             return res
         res.ok, res.note = False, f"unknown method {method}"
+        return res
+
+    async def write_code(self, order, res: Result, what: str, lang: str) -> Result:
+        """A person asked for code: it is written into the scratch pad and checked; it runs only once approved (P20)."""
+        s = self.sys
+        res.route, res.confidence, res.served_by = "scratch", 1.0, "explicit"
+        item = await s.scratch.write(what, by=order.source, lang=lang)
+        if item.get("id") is None:
+            res.ok, res.note = False, f"I couldn't write that yet: {item.get('why', '')}"
+            res.trace.append("scratch pad: nothing to write it from")
+            return res
+        o = item["origin"]
+        how = {"recipe": f"from the {o.get('recipe')} recipe in my code library",
+               "teacher": f"with the {o.get('teacher')} teacher" + (f", following {len(o['examples'])} example(s) from Gitea"
+                                                                   if o.get("examples") else ""),
+               "example": f"adapted from {o['examples'][0]['repo']}/{o['examples'][0]['path']} on Gitea" if o.get("examples") else ""
+               }.get(o.get("how"), o.get("how", ""))
+        runs = s.scratch.runnable(item["language"])
+        res.output = (f"I wrote it in my scratch pad as {item['id']} ({item['language']}, {how}). {s.scratch.say_check(item)[:1].upper()}"
+                      f"{s.scratch.say_check(item)[1:]}. "
+                      + (f"It runs only once you approve it: /code approve {item['id']}." if runs and item["check"]["ok"] is not False
+                         else "It cannot run here." if not runs else "Fix it before it can run: /code show " + item["id"] + ".")
+                      + "\n\n" + item["code"].rstrip())
+        res.trace.append(f"scratch pad {item['id']}: written {how}; validator: {item['check']['checker']} "
+                         f"({'ok' if item['check']['ok'] else 'problems' if item['check']['ok'] is False else 'not checked'})")
+        if o.get("kind"):
+            res.trace.append(f"its code-kind node expects {o['kind']} code ({o.get('kind_by')})")
         return res
 
     # ------------------------------------------------------------- imagining
@@ -991,12 +1080,14 @@ class Explorer(Agent):
         for tool in list(s.tools.tools.values()):
             if tool.state == PENDING:
                 self._check_approval(tool)
-        for tool in [t for t in s.tools.tools.values() if t.state == APPROVED]:
-            await self._self_test(tool)
+        for tool in [t for t in s.tools.tools.values() if t.state == APPROVED and not s.tool_switch.refuses(t)]:
+            await self._self_test(tool)  # (a tool switched off waits: it is vetted when it is switched on)
         interval = s.directives.background.health_check_seconds
         for tool in s.tools.active():
             if "network" in tool.manifest.permissions and not s.unlimited(tool):
                 continue  # no background traffic to outside services just to check health (your own server is fine)
+            if s.tool_switch.refuses(tool):
+                continue
             if time.time() - tool.last_health > interval and s.inflight == 0 and s.guardian.background_allowed():
                 await self._health_check(tool)
 

@@ -18,6 +18,12 @@ from .agency import AgencyTeacher, Director
 from .ego import Ego, EgoTeacher
 from .ensemble import NodePool, members as ensemble_members
 from .journal import MindJournal
+from .toolgate import ToolGateTeacher, ToolSwitch
+from .gitea import Apprentice, CodeStudy, CodeTeacher
+from .scratchpad import ScratchPad
+from .vision import GlyphTeacher, Looker, SightTeacher, VisionBank, VisionTeacher
+from .imaging import glyph_vector
+from .tutor import Schoolroom, Tutor
 from .anatomy import record as record_firing
 from .directors import DirectorPool
 from .dreams import DreamBank, Dreamer
@@ -87,6 +93,8 @@ class System:
         tools_pol = self.directives.tools
         self.sandbox = Sandbox(tools_pol.sandbox_cpu_seconds, tools_pol.sandbox_memory_mb, workers=tools_pol.workers,
                                worker_cpu_seconds=tools_pol.worker_cpu_seconds, worker_requests=tools_pol.worker_requests)
+        self.code_study = CodeStudy(self)  # what its coder nodes learn from a local Gitea (gitea.py)
+        self.vision = VisionBank(self)     # its optical nodes: what it sees in images, and the text it reads (vision.py)
         teachers: dict = {"human": HumanTeacher()}
         for name, cfg in tp.models.items():  # one teacher per [teachers.<name>] table
             teachers[name] = LLMTeacher(name, cfg, self.guardian, self.bus)
@@ -97,6 +105,11 @@ class System:
         teachers["coder"] = CoderTeacher(seed)          # specialist: the code library's cues, for the coder node
         teachers["planner"] = PlannerTeacher(seed)      # specialist: the strategies' cues, for the planner node
         teachers["ego"] = EgoTeacher(seed)              # specialist: the ego policy, for the ego node
+        teachers["toolgate"] = ToolGateTeacher(seed)    # specialist: the gate policy, for the tool-gate node
+        teachers["gitea"] = CodeTeacher(self.code_study, seed)  # specialist: people's code, for the code-kind node
+        teachers["vision"] = VisionTeacher(self.vision)  # specialist: an LLM teacher that can see, for the sight node
+        teachers["sight"] = SightTeacher(self.vision)    # specialist: its own measures (text, blank), for the sight node
+        teachers["glyphs"] = GlyphTeacher(self.vision)   # specialist: glyphs it draws or tesseract labels, for its reader
         self.teachers = TeacherPool(teachers, tp.order, tp.weights)
         self.teachers.activity, self.teachers.bus = self.activity, self.bus
 
@@ -128,6 +141,11 @@ class System:
         self.ego = Ego(self)                  # the outer layer: its mood on the way in, its own view on the way out (P18)
         self.bus.listen(self.ego.on_event)
         self.journal = MindJournal(self)      # everything in its mind, by date and time (the Mind's archive)
+        self.tool_switch = ToolSwitch(self)   # tools on, off, or it decides each time (toolgate.py)
+        self.sandbox.gate = self.tool_switch.refuses
+        self.scratch = ScratchPad(self)       # code it writes; checked; it runs only once a person approves it (P20)
+        self.tutor = Tutor(self)              # when idle, its Ollama teachers set it orders and mark them (P22)
+        self.bus.listen(self.scratch.on_event)
         self.bus.listen(self.journal.on_event)
         for cap in self.capabilities:  # what people taught, exactly as they put it, stands (P1)
             for ex in self.store.examples(cap):
@@ -153,7 +171,7 @@ class System:
         self.dreamer = Dreamer(self)    # idle: the coin flip (an objective, or sleep), and dreaming
         self.agents = [self.directors, self.orchestrator, Architect(self), Trainer(self), Evaluator(self), Curator(self),
                        Explorer(self), self.researcher, self.investigator, TaskRunner(self), Compressor(self),
-                       self.director, self.dreamer, Ruminator(self), Thinker(self), Reader(self), Sentinel(self)]
+                       self.director, self.dreamer, Ruminator(self), Thinker(self), Reader(self), Apprentice(self), Looker(self), Schoolroom(self), Sentinel(self)]
 
     # ------------------------------------------------------------- lifecycle
     async def start(self) -> "System":
@@ -211,9 +229,10 @@ class System:
         await self.orders.put(order)
         return await order.future
 
-    def record_order(self, result: Result) -> None:
+    def record_order(self, result: Result, source: str = "user") -> None:
         self.order_count += 1
-        self.last_order_at = time.time()
+        if not str(source).startswith("teacher:"):  # a teacher's test order (tutor.py) leaves it idle
+            self.last_order_at = time.time()
         self.served.append(result.served_by)
         self.store.save_order(result.order_id, result.text, result.to_dict())
         said = (result.answer or str(result.output)).split("\n", 1)[0]
@@ -223,6 +242,10 @@ class System:
 
     # -------------------------------------------------------------- encoding
     def encode(self, text: str) -> np.ndarray:
+        if text.startswith("image:"):  # an image its optical nodes take in (vision.py keeps these)
+            return self.vision.vector(text)
+        if text.startswith("glyph:"):  # one character's ink, for its reader
+            return glyph_vector(text, self.encoder.dim)
         with self._enc_lock:
             vec = self._enc_cache.get(text)
             if vec is not None:
@@ -514,6 +537,11 @@ class System:
     def record_tool_run(self, tool: Tool, run: ToolRun, exploratory: bool = False) -> None:
         """exploratory: the mesh tried the tool on its own initiative. A failure then says more
         about the attempt than the tool, so it never counts towards quarantine or the run tally."""
+        if run.refused:  # the tool switch is off for it: it never ran, so nothing counts
+            self.tool_switch.note_refused(tool)
+            return
+        if run.ok:
+            self.tool_switch.note_speed(tool, run.ms)
         if exploratory and not run.ok:
             tool.last_error = run.error[:300]
             return
@@ -543,7 +571,7 @@ class System:
         if not self.directives.research.enabled:
             return []
         prefer = {name: i for i, name in enumerate(self.directives.research.prefer)}
-        active = [t for t in self.tools.active() if t.manifest.provides == "knowledge"]
+        active = [t for t in self.tools.active() if t.manifest.provides == "knowledge" and not self.tool_switch.refuses(t)]
         return sorted(active, key=lambda t: (prefer.get(t.name, len(prefer)), t.name))
 
     def knowledge_tool(self) -> Tool | None:
@@ -666,8 +694,14 @@ class System:
                       "disposed": sum(1 for m in lineage if m["status"] == "disposed")},
             "capabilities": caps,
             "tools": {n: {"state": t.state, "version": t.manifest.version, "runs": t.runs,
-                          "permissions": list(t.manifest.permissions), "note": t.note}
+                          "permissions": list(t.manifest.permissions), "note": t.note,
+                          "switch": self.tool_switch.mode_of(n), "set_apart": n in self.tool_switch.per_tool}
                       for n, t in sorted(self.tools.tools.items())},
+            "tool_switch": {"mode": self.tool_switch.mode, "set_by": self.tool_switch.set_by},
+            "tutor": {"enabled": self.tutor.enabled, "count": self.tutor.stats.get("lessons", 0),
+                      "right": self.tutor.stats.get("right", 0), "teachers": len(self.tutor.teachers())},
+            "scratch": {"items": len(self.scratch.items), "gitea": self.code_study.state, "examples": self.code_study.count()},
+            "vision": {"images": len(self.vision.records), "glyphs": self.store.count("glyphs")},
             "approvals": [a.to_dict() for a in self.guardian.pending_approvals()],
             "questions": list(self.teachers.human.questions),
             "teachers": self.teachers.describe(), "llm_usage": self.guardian.llm_usage(),

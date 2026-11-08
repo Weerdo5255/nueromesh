@@ -69,8 +69,12 @@ def _teacher_overrides(args, root: Path) -> dict | None:
     in the teaching order (right after the human). --kiwix URL: where the local Kiwix server is."""
     model, url = getattr(args, "ollama", None), getattr(args, "ollama_url", None)
     kiwix = getattr(args, "kiwix", None)
+    gitea = getattr(args, "gitea", None)
+    extra: dict = {"gitea": {"url": gitea}} if gitea else {}
     if not model and not url:
-        return {"tools": {"config": {"kiwix": {"url": kiwix}}}} if kiwix else None
+        if kiwix:
+            extra["tools"] = {"config": {"kiwix": {"url": kiwix}}}
+        return extra or None
     from .config import Directives
     ollama = {"provider": "ollama", "enabled": True}
     if model:
@@ -80,7 +84,7 @@ def _teacher_overrides(args, root: Path) -> dict | None:
     order = list(Directives.load(root / "directives.toml").teachers.order)
     if "ollama" not in order:
         order.insert(order.index("human") + 1 if "human" in order else 0, "ollama")
-    out: dict = {"teachers": {"order": order, "ollama": ollama}}
+    out: dict = {"teachers": {"order": order, "ollama": ollama}, **extra}
     if kiwix:
         out["tools"] = {"config": {"kiwix": {"url": kiwix}}}
     return out
@@ -292,6 +296,8 @@ def main(argv: list[str] | None = None) -> None:
                        help="Ollama server (default: $OLLAMA_HOST or http://localhost:11434)")
         p.add_argument("--kiwix", metavar="URL", default=None,
                        help="local Kiwix server (kiwix-serve) to research with, e.g. http://localhost:8080")
+        p.add_argument("--gitea", metavar="URL", default=None,
+                       help="local Gitea its coder nodes learn from, e.g. http://localhost:3000 (token: $GITEA_TOKEN)")
     for p in (p_run, p_serve, p_demo, p_bench):
         p.add_argument("--device", default=None,
                        help="cpu | auto | cuda | cuda:N | mps (default: [compute] device in directives.toml, "

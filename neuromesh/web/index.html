@@ -38,6 +38,8 @@
   <a href="#nodes" data-view="nodes">Nodes</a>
   <a href="#memory" data-view="memory">Memory</a>
   <a href="#mind" data-view="mind">Mind <span class="badge" id="badge-mind"></span></a>
+  <a href="#code" data-view="code">Code <span class="badge" id="badge-code"></span></a>
+  <a href="#images" data-view="images">Images</a>
   <a href="#logs" data-view="logs">Logs</a>
   <a href="#status" data-view="status">Status <span class="badge" id="badge-status"></span></a>
 </nav>
@@ -94,9 +96,18 @@
       <button type="button" role="tab" id="mind-tab-tools" data-mind="tools" aria-controls="mind" aria-selected="false">Tools it writes <span class="badge" id="badge-mind-tools"></span></button>
       <button type="button" role="tab" id="mind-tab-dreams" data-mind="dreams" aria-controls="mind" aria-selected="false">Dreams <span class="tab-note" id="note-mind-dreams"></span></button>
       <button type="button" role="tab" id="mind-tab-temperament" data-mind="temperament" aria-controls="mind" aria-selected="false">Temperament <span class="tab-note" id="note-mind-temperament"></span></button>
+      <button type="button" role="tab" id="mind-tab-lessons" data-mind="lessons" aria-controls="mind" aria-selected="false">Lessons <span class="tab-note" id="note-mind-lessons"></span></button>
       <button type="button" role="tab" id="mind-tab-thoughts" data-mind="thoughts" aria-controls="mind" aria-selected="false">Opinions and notes</button>
     </div>
     <div id="mind" role="tabpanel" aria-labelledby="mind-tab-questions" tabindex="0"></div>
+  </section>
+
+  <section class="view" id="view-code" hidden>
+    <div id="code"></div>
+  </section>
+
+  <section class="view" id="view-images" hidden>
+    <div id="images"></div>
   </section>
 
   <section class="view" id="view-logs" hidden>

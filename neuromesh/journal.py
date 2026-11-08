@@ -24,13 +24,15 @@ CREATE INDEX IF NOT EXISTS mind_log_ts ON mind_log(ts);
 # the Mind tab each kind of event belongs to (the first prefix that matches)
 TABS = (("inquiry.", "questions"), ("mind.inquiry", "questions"), ("mind.proposal", "questions"),
         ("approval.", "questions"), ("ego.", "ego"), ("memory.own", "ego"), ("thinking.", "thinking"),
-        ("kiwix.", "curiosity"), ("objective.", "objectives"), ("director.", "directors"), ("agency.", "initiative"),
+        ("kiwix.", "curiosity"), ("objective.", "objectives"), ("director.", "directors"), ("agency.", "initiative"), ("tools.decided", "initiative"), ("tools.switch", "initiative"),
         ("tool.drafted", "tools"), ("tool.experimented", "tools"), ("tool.unsafe", "tools"), ("dream.", "dreams"),
-        ("temperament.", "temperament"), ("output.shaped", "temperament"), ("mind.", "thoughts"),
+        ("temperament.", "temperament"), ("output.shaped", "temperament"), ("gitea.", "code"), ("code.", "code"),
+        ("vision.", "sight"), ("tutor.", "lessons"), ("mind.", "thoughts"),
         ("answer.right", "thoughts"))
 NAMES = {"questions": "Questions", "ego": "Ego", "thinking": "Thinking", "curiosity": "Curiosity",
          "objectives": "Objectives", "directors": "Directors", "initiative": "Initiative", "tools": "Tools it writes",
-         "dreams": "Dreams", "temperament": "Temperament", "thoughts": "Opinions and notes"}
+         "dreams": "Dreams", "temperament": "Temperament", "thoughts": "Opinions and notes", "code": "Code",
+         "sight": "Images", "lessons": "Lessons"}
 DAY = 86400.0
 
 

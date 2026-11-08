@@ -47,7 +47,13 @@ Its curiosity tracks what it finds interesting and where what it knows runs out,
 sets itself objectives from there, saying why. To answer a question it searches every book on every
 Kiwix server it can reach, in other wordings, until an article answers it (or it has tried enough
 times, and asks you). An optional avatar in the web interface shows its mind at a glance, with a face
-that follows its mood, and speaks through your ComfyUI text-to-speech workflow.
+that follows its mood, and speaks through your ComfyUI text-to-speech workflow. Its coder nodes learn
+to program from the code in your own Gitea, and it writes code in a scratch pad where a validator
+checks it and nothing runs until you approve exactly that code. Its optical nodes take in images:
+a sight node says what an image shows, and a reader with its own glyph node reads the text in it,
+both learning from you, a teacher that can see, tesseract and glyphs it draws itself. When it is
+idle, its Ollama teachers set it orders and mark its answers, and it learns from the marks. A switch
+turns its tools on, off, or lets it decide each time whether a tool is worth using.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
@@ -61,7 +67,10 @@ python -m neuromesh memory test   # run every memory node against its tests (sta
 
 Requirements: Python 3.11+ and numpy. Optional: [Ollama](https://ollama.com) for a local
 teacher model (see [LLM teachers](#llm-teachers-local-models-ollama-and-claude)), and PyTorch
-or CuPy to run the nodes on a GPU (see [Running on a GPU](#running-on-a-gpu)).
+or CuPy to run the nodes on a GPU (see [Running on a GPU](#running-on-a-gpu)). For images: Pillow
+(JPEG, GIF and WebP, and glyphs to practise reading with), tesseract (a teacher for its reader), and
+a vision model on Ollama (`ollama pull llava`). For code: a Gitea (`--gitea URL`), and Node.js to
+check and run JavaScript.
 
 ---
 
@@ -466,6 +475,65 @@ A quantity it does not know ("the number of bones in the human body times 2") be
 for a director. Word problems ("Sam has 23 apples and gives away 9") are not its job: a director
 sends those to the direct answer, so a teacher that can read them answers them.
 
+### The tool switch: on, off, or it decides
+One switch for all its tools, in the web interface's Status view, with `/tools on|off|decide`, or with
+`[tools] mode` in the directives:
+
+- **On**: an order routed to a tool runs it.
+- **Off**: no tool runs at all, for anything: not for orders, research, experiments or self-tests. An
+  order it would have sent to a tool is answered another way (its memory, what it has read, a teacher),
+  or it says tools are off. Nothing counts against a tool while it is off; a tool that is switched off
+  is vetted when it is switched on.
+- **Let it decide** (the default): each time an order is routed to a tool, its **tool-gate node** decides
+  whether to use it, from how the order asked for it, the tool's record (new, good, mixed, poor), its
+  mood, whether something else could answer (its memory, what it has read, a teacher), and how slow
+  the tool is. A tool you name ("tool calculator: 3 + 4") always runs, and so does its own vetting of a
+  tool. When it decides against a tool and nothing else can answer, it uses the tool after all. The
+  trace says what it decided and why ("tools: it decided not to use calculator - the tool rarely works,
+  and a teacher can answer"), and so does the Initiative tab.
+
+Each tool can be set apart from the switch (`/tool kiwix on`, or the Use column in Status): on, off,
+let it decide, or "as all tools". The tool-gate node (`toolgate` in `capabilities.toml`) is taught by
+the gate policy (`neuromesh/toolgate.py`) and by people, and grown, evolved and promoted like any node.
+
+### Learning to program: Gitea and the scratch pad
+Its coder nodes learn from the code in your own Gitea, and it writes code in a scratch pad where a
+validator checks it and nothing runs until you approve exactly that code (P20).
+
+```
+--gitea http://localhost:3000        (a read-only token in $GITEA_TOKEN for private repositories)
+   when idle, a repository it hasn't studied (or not for [gitea] restudy_days):
+     -> its file tree, and the source files that changed since it last read them
+     -> every function taken apart: name, arguments, doc comment, code, what it calls, and what kind
+        of code it is (text, maths, parse, data, files, network, dates, test, cli, other), from what
+        the code actually does
+     -> its code-kind node learns what kind of code a purpose needs (from the name and doc comment);
+        its coder node learns new wordings of its recipes; the function is kept as an example
+"write a python function that averages a list of numbers"     (an order, /code write, the Code view)
+     -> a recipe from its code library, if its coder node is sure; otherwise
+     -> its code-kind node says what kind of code it needs, and the closest examples are found: an
+        LLM teacher writes it following them, or, with no teacher, it adapts the closest one
+     -> the validator: Python compiled, JavaScript by node --check, shell by bash -n, JSON and TOML
+        parsed; and what the code reaches for (files, network, other programs, eval)
+     -> code that does not check out goes back to the teacher once, with the problems
+     -> it waits in the scratch pad; you approve it (/code approve code-3, Approve and run, /approve);
+        it runs once, in a fresh folder under state/scratch/runs/, with [code] time, CPU and memory
+        limits and no keys in its environment; the output is kept with it
+```
+
+Gitea is only read: nothing is written to it, and code from Gitea never runs. The token goes only to
+the Gitea it is configured for. Changing code in the scratch pad (Edit in the Code view, `POST /code
+{"id", "code"}`) withdraws its approval. Python and JavaScript (with Node.js) run once approved; other
+languages are checked only.
+
+**Practice.** When it is idle it takes the purpose of a function people wrote, writes code for it
+without looking at theirs, checks it, and compares the two: does it check out, is it the same kind of
+code, how many names they share. Practice code never runs. The Code view shows how it is doing.
+
+`[gitea]` sets the url, token variable, repositories (empty: every one it can see), file types, how
+often it studies and practises; `[code]` sets what may run, the limits, and how many examples a
+teacher is given.
+
 ### Tools it writes: the toolsmith and coder nodes
 When requests go unmet, the mesh can write a tool for them. Nothing it writes runs until a person
 approves it (P15).
@@ -741,6 +809,30 @@ The arbitration is in the trace ("instances disagreed; the ego arbitrated: trust
 its instances agree"), in `/ego` and the Ego tab, and kept in memory as its own statement. The ego
 policy teaches the ego node these too, from every disagreement.
 
+### Seeing and reading: image nodes
+It takes in images (the Images view, `POST /images`, `/image <path>`), says what it sees, reads the
+text in them, and learns from both:
+
+- **Its sight node** (capability `sight`, open labels) says what an image mainly shows, from a grey
+  thumbnail, its colours and the directions of its edges. Until it is validated its teachers say,
+  and teach it: you ("it shows a colour swatch"), an LLM teacher that can see (an Ollama vision
+  model such as llava, picked automatically when installed, `vision_model`), and its own measures
+  ("text" when it reads lines of words, "blank" when there is nothing). What it can't name, it asks
+  you, with the image beside the question.
+- **Its reader** finds the lines and characters in the ink and reads each character with its **glyph
+  node** (capability `glyphs`: letters, digits and punctuation, from 16 x 16 ink and where the
+  character sits on its line). The glyph node learns from glyphs it draws itself from the fonts on
+  the machine (with Pillow), from tesseract's character boxes in real images (when tesseract is
+  installed), and from what you say an image's text says. Until it is validated, tesseract or a
+  teacher reads for it, and says so.
+- **What it reads is kept** as knowledge it can answer from, with the image as its source ("what does
+  img-3 say?"); what it sees is kept with the image. Its own reading is compared with tesseract's, a
+  teacher's or yours, so how well it reads is measured.
+- **When idle** it practises reading glyphs it draws, and reads images again once its reader improves.
+
+Pure numpy reads PNG, BMP and PPM; with Pillow it also reads JPEG, GIF and WebP. An image goes only to
+a teacher you configured. `[vision]` in the directives turns parts on and off.
+
 ### Many instances of each node, at once and in concert
 Several instances of each kind of node run at the same time, and answer together:
 
@@ -881,6 +973,26 @@ Nodes never learn from themselves. They learn from:
   data (see [Challenges](#challenges-open-source-llm-benchmarks-as-a-teacher)). Weighted just below
   a human.
 - **HeuristicTeacher**: an offline, lexicon-based stand-in so everything runs with no API key.
+
+### Lessons: its teachers set it orders when it is idle
+When no one has given it an order for `[tutor] idle_seconds`, one of its Ollama teachers sets it an
+order every `every_seconds` or so (at most `max_per_hour`), and marks the answer (P22):
+
+```
+the teacher sets   a factual question, a skill order ("sentiment: ..."), arithmetic, a request one of
+                   its tools meets, or code to write - with what it expects. It is told what the mesh
+                   can do and what it got wrong lately
+the mesh answers   like any order (source "teacher:ollama"): directors, nodes, tools, ego
+it is marked       a skill's label or a number against what the teacher expected; anything else by the
+                   teacher, who reads the answer (and the code, never running it): right, partly, wrong
+it learns          as a teacher's lesson, never as a person's: right reinforces the route, the label and
+                   (after a director's review) the answer; wrong teaches the teacher's label, and its
+                   answer goes to memory the same way. What a person taught stands (P1)
+```
+
+Teacher-set orders don't count as people's orders, so it stays idle (it may still sleep). The Mind's
+Lessons tab lists every lesson with its mark and what it learned, with a button to set one now;
+`/lessons` and `/lesson [kind]` do the same in the console.
 
 ### Was it right? Corrections and the next most likely answers
 Every answer (in the web interface, under the answer and in the closer look's orders) asks *Was
@@ -1275,6 +1387,10 @@ what do you think of the Berlin Wall?    in your own words, what is Australia?  
 /dreams    /sleep    /wake    /imagine a city on Mars    what if Ada Lovelace painted the Mona Lisa
 /directors    /directors spawn    /directors retire director-1    /directors attempts 5
 make a tool that reverses text    /toolsmith    /toolsmith build count the vowels    /toolsmith show reverser    /toolsmith try reverser    /toolsmith recipes
+/tools decide    /tools off    /tools on    /tool kiwix on    /tool calculator default
+write a python function that counts vowels    /code    /code show code-1    /code approve code-1    /code practice    /gitea    /gitea study ann/textkit
+/image ~/Pictures/sign.png    /images    /image show img-1    /image is img-1 street sign    /image says img-1 Harbour 2 km    what does img-1 say?
+/lessons    /lesson question    /lesson code
 /traces    /anatomy dispatch :: what is 12 * 7    /anatomy sentiment :: the hotel was lovely    /anatomy mem-0001 :: what is the capital of Australia?
 objective: understand the Berlin Wall    /objectives    /objective show obj-1    /objective report obj-1    /objective think obj-1    /objective obj-1 ask when was it built    /ruminate
 solve x^2 - 5x + 6 = 0    derivative of ln(x^2+1)    integrate x^2 from 0 to 3    is 91 prime
@@ -1374,16 +1490,28 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
   sleep" switch and its recent coin flips, imagine something, its dream
   nodes, last night, recent dreams. **Temperament** (with its mood): the five dimensions against
   their baseline, what it decided, the answers it is holding (release them), reset its mood.
+  **Lessons** (with how many it got right): the orders its teachers set it while it was idle, its
+  answers, their marks and what it learned; set a lesson now.
   **Opinions and notes**: investigate something, and the opinions and notes it shares.
   **Every tab shows the last day.** Anything older is archived: the bar at the top of each tab says
   how much, and looks it up by date and time (a moment, and within an hour, 6 hours, that day or
   that week; this tab or all of its mind), with the days that have entries as shortcuts. What is
   still open or active (a question waiting for you, an objective in progress) stays in the tab.
   Everything that happens in its mind is kept for this, by date and time (journal.py).
+- **Code** (with a count of code waiting for your approval): the scratch pad - ask it to write
+  code, each piece with how it was written, the validator's verdict and what it reaches for, edit
+  it, check it again, **Approve and run** it, and its output; what it studies in Gitea
+  (repositories, kinds of code, recent visits, Study now); and how its practice is going.
+- **Images**: give it images (choose or drop them), its reader (the glyph node's accuracy, how
+  well its readings agree with tesseract, a teacher or you, Practise reading) and sight node, its
+  teachers, and every image with what it sees and the text it read; teach it what an image shows
+  or what its text says. Its questions about an image show the image.
 - **Logs**: the activity log (search, filter by kind, hide routine work), the audit log, every
   event, and the family tree of every node ever built.
-- **Status**: directive goals, approvals, teachers, tools, background tasks (add, pause,
-  remove), challenges (practise, sit the exam), retained knowledge.
+- **Status**: directive goals, approvals (code to run shows what it reaches for, with a link to read
+  it first), teachers, tools with **the tool switch** (On, Off, Let it decide) and each tool's own
+  setting, background tasks (add, pause, remove), challenges (practise, sit the exam), retained
+  knowledge.
 - **Command bar**: any order or `/command`. The answer appears below it first, then its sources,
   its own thinking when a thinking node has something to add (marked as such, beside the answer),
   how it got there, and *Was this right?*: **Yes**, or **No** for its next most likely answers,
@@ -1457,6 +1585,18 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | GET | `/dashboard?after=<seq>` | everything the web interface's live view shows, in one request |
 | GET | `/log?after=<seq>&n=500&routine=0` | the activity log after a sequence number (`routine=0` hides routine work) |
 | GET | `/mesh`, `/memory?node=<id>` | the node network as a structure; one memory node's facts, history and tests |
+| GET | `/tools/switch` | the tool switch, each tool's setting, and what it decided lately |
+| POST | `/tools/switch` | `{"mode": "on" \| "off" \| "decide"}` for all tools; `{"tool": "kiwix", "mode": "on" \| "off" \| "decide" \| "default"}` for one |
+| GET | `/code` | Gitea (state, repositories, kinds of code, recent visits) and the scratch pad (items, checkers, practice) |
+| GET | `/code/item`, `/code/examples` | `?id=code-3`: one scratch pad item with its code, check and runs; `?q=&kind=&lang=`: functions it studied |
+| POST | `/code` | `{"write": "...", "language": "python"}` writes code; `{"add": "<code>", "language", "title"}` puts yours in; `{"id", "code"}` changes it; `{"id", "action": "ask" \| "approve" \| "decline" \| "remove" \| "check"}`; `{"study": true, "repo": "owner/name"}`; `{"practice": true}` |
+| GET | `/images` | what its optical nodes took in: each image, what it sees, the text it read, its reader and sight nodes, its teachers |
+| GET | `/images/file` | `?id=img-3` (or `?sha=`): the image itself |
+| POST | `/images` | `{"name", "data": "<base64 or a data: URL>"}`, or the image itself with `content-type: image/png` (`?name=`) |
+| POST | `/images/correct` | `{"id": "img-3", "label": "street sign"}` and/or `{"text": "what its text says"}`: it learns from you |
+| POST | `/images/practice`, `/images/forget` | draw and learn glyphs now; `{"id": "img-3"}` forgets an image |
+| GET | `/lessons` | orders its teachers set it while idle, its answers, their marks, and what it learned |
+| POST | `/lessons` | `{"kind": "question" \| "skill" \| "maths" \| "tool" \| "code"}`: a teacher sets it a lesson now |
 
 ```
 python -m neuromesh order "convert 10 km to miles"
@@ -1750,6 +1890,19 @@ derivations, moving weights between devices). They are skipped where no GPU libr
   allow-list, not a proof: the approval is the real safeguard, which is why nothing runs before it
   and why the code is written to be read. With an LLM teacher it can write other tools, and those
   deserve the same careful reading before you approve them.
+- **Code in the scratch pad runs only once you approve exactly that code**, in a fresh folder with
+  time, CPU and memory limits and no keys in its environment. That is not a sandbox against the
+  network or your files: the validator says what the code reaches for, and the approval is the real
+  safeguard. Read it first. Without an LLM teacher, code it "writes" for a request no recipe fits is
+  the closest function from your Gitea, adapted, and says so; its code-kind node learns what kind of
+  code a purpose needs, not how to write it.
+- **Its reader is a small classifier over 16 x 16 glyphs**: it reads clean printed text well and
+  handwriting, photos of text, tilted or tightly kerned text badly. Characters that touch are split
+  where the ink is thinnest, which is a guess. How well it reads is measured against tesseract, a
+  teacher or you, and an image's text says who read it. Its sight node starts knowing nothing but
+  "text" and "blank"; what it can name comes from you and a teacher that can see.
+- **A teacher's mark is a teacher's opinion.** Lessons teach as a teacher (weighted below a person),
+  facts a teacher gives go through a director's review, and what a person taught stands (P1).
 - **Research reaches the internet** only through the approved wikipedia tool, within hourly
   budgets, and background curiosity stays within `max_depth` of what users asked. The kiwix tool
   talks only to the server you configure; it is exempt from the budgets because that server is yours. Retained
@@ -1783,6 +1936,7 @@ plugins/                 installed tools (calculator with mathsolver.py, word_st
                          tools it wrote once you approve them (drafts wait in state/workshop/)
 challenges/              challenge suites (small samples; fetched benchmarks go to state/challenges/)
 memory_tests.imported/   test files of earlier versions, once imported into state/memory.db
+                         (state/images/: images it took in; state/scratch/runs/: approved code it ran)
 examples/incoming_plugins/  tools the demo installs at runtime
 neuromesh/
   runtime.py             System: wiring, cascade, learning, tool activation, status
@@ -1808,6 +1962,12 @@ neuromesh/
   memdb.py               the memory's own database: memory nodes' tests (with triggers), its own statements (untested)
   ensemble.py            many instances of each node at once ([nodes] max_running); the champion and its instances
   journal.py             the Mind's archive: everything in its mind by date and time
+  toolgate.py            the tool switch (on, off, it decides) and the tool-gate node's policy
+  gitea.py               what its coder nodes learn from a local Gitea: functions taken apart, kinds of code, the Apprentice
+  scratchpad.py          the scratch pad: writing code, the validator, approval, running it once approved (P20), practice
+  imaging.py             images without dependencies: PNG/BMP/PPM decoding, what the sight node sees, lines and glyphs
+  vision.py              its optical nodes: the sight node, the reader and its glyph node, their teachers, the Looker (P21)
+  tutor.py               lessons: its Ollama teachers set it orders when idle and mark them (P22)
   agency.py              independent agency: the Director, its modes, the drive policy and the agency node (P12)
   directors.py           the directors: intake, review, second opinions, the memory gate, duplicates, the stance (P14)
   toolsmith.py           the toolsmith: the coder teacher, writing, checking and offering tools, approval, experiments, refinement (P15)
@@ -1824,7 +1984,7 @@ neuromesh/
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   255 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   271 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -1855,7 +2015,15 @@ tests/                   255 tests: nodes, guardian, LLM wire formats and a mock
                          the honesty guard (incl. tampered templates), the mind (discretion,
                          questions, proposals, investigations), background tasks, full system,
                          live console (incl. a pseudo-terminal run), compute
-                         backends (4 GPU parity tests run where PyTorch or CuPy is installed)
+                         backends (4 GPU parity tests run where PyTorch or CuPy is installed), the tool
+                         switch (off refuses every run and counts nothing against a tool; one tool set
+                         apart; it decides from the gate policy), Gitea (a mock Gitea: functions taken
+                         apart in four languages, kinds of code, the token sent only there, only changed
+                         files read again), the scratch pad (the validator for six languages, nothing runs
+                         unapproved, changed code withdraws the approval, a teacher's code fixed once,
+                         practice), images (PNG decoding by hand, a mock Ollama vision model, a person's
+                         label standing, a glyph node that learns to read a note), lessons (a mock Ollama
+                         teacher sets orders and marks them; a teacher's fact is a teacher's, not a person's)
 ```
 
 State lives in `state/` (SQLite database, node weights, log). Delete it to start fresh.

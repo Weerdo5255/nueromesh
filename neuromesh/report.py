@@ -257,6 +257,39 @@ def describe_event(ev: Event) -> str | None:
     if t == "ego.spoke":
         from .ego import a_mood
         return f"[ego]      after {d['order']}, in {a_mood(d['mood'])} ({d['kind']}, {d['node']}): {_cut(d['text'], 140)}"
+    if t == "tutor.lesson":
+        return (f"[lesson]   the {d['teacher']} teacher set {d['kind']}: '{_cut(d['order'], 70)}' - {d['verdict']}"
+                f" ({_cut(d['why'], 80)})" + (f"; it learns: {_cut(d['learned'], 90)}" if d.get("learned") else ""))
+    if t == "vision.seen":
+        return (f"[eye]      took in {d['id']} ({_cut(d['name'], 40)}): it sees {d.get('label') or '?'} ({_cut(d.get('by', ''), 60)}); "
+                f"{d['words']} word(s) read" + (f" ({_cut(d['read_by'], 50)})" if d.get("read_by") else ""))
+    if t == "vision.corrected":
+        what = "; ".join(x for x in (f"it shows {d['label']}" if d.get("label") else "", f"it says '{_cut(d['text'], 60)}'" if d.get("text") else "") if x)
+        return f"[eye]      {d['by']} taught it about {d['id']}: {what}"
+    if t == "vision.reread":
+        return (f"[eye]      read {d['id']} again with glyph node {d['node']}" + (" (it reads it differently now)" if d.get("changed") else "")
+                + (f"; {d['agrees']:.0%} like the reference" if d.get("agrees") is not None else ""))
+    if t == "gitea.studied":
+        return (f"[gitea]    studied {d['repo']}: {d['files']} changed file(s), {d['functions']} function(s); its coder nodes "
+                f"learned {d['learned']} new wording(s)")
+    if t == "code.written":
+        ok = {True: "it checks out", False: "it does not check out", None: "not checked"}.get(d.get("ok"))
+        return f"[code]     {d['id']} ({d['language']}, written {'by ' + d['by'] if d['how'] == 'person' else 'from ' + str(d['how'])}): {_cut(d['title'], 70)}; {ok}"
+    if t == "code.asked":
+        return f"[code]     {d['id']} waits for approval {d['approval']} before it runs: {_cut(d['title'], 70)}"
+    if t == "code.ran":
+        how = "timed out" if d.get("timeout") else "ran" if d["ok"] else f"failed (exit {d['exit']})"
+        return f"[code]     {d['id']} {how} in {d['ms']:.0f} ms, approved by {d['by']}: {_cut(d.get('output', ''), 90)}"
+    if t == "code.practised":
+        ok = {True: "it checked out", False: "it did not check out", None: "it had nothing to write it from"}.get(d.get("ok"))
+        same = "" if d.get("same_kind") is None else f"; {'the same' if d['same_kind'] else 'a different'} kind of code as theirs"
+        return f"[code]     practised on {d['name']} ({d['repo']}): '{_cut(d['purpose'], 60)}': {ok}{same}"
+    if t == "tools.switch":
+        what = f"{d['tool']}" if d.get("tool") else "all tools"
+        return f"[tools]    {d['by']} set {what}: {d['mode']} (was {d['before']})"
+    if t == "tools.decided":
+        return (f"[tools]    it decided {'to use' if d['use'] else 'not to use'} {d['tool']} for '{_cut(d['text'], 60)}': "
+                f"{_cut(d['why'], 100)} ({d['by']})")
     if t == "ego.arbitrated":
         return (f"[ego]      its {d['kind']} instances disagreed ({d['sides']} answers) on '{_cut(d['text'], 60)}': it went with "
                 f"{_cut(d['label'], 60)} ({d['strategy']}, {d['by']}: {_cut(d['why'], 80)})")

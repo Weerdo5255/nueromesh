@@ -957,6 +957,16 @@ it decides whether to say something of its own after an answer, and what`))
   function attentionItems(st, kinds = ["approvals", "inquiries", "questions"]) {
     const out = [];
     for (const a of kinds.includes("approvals") ? st.approvals || [] : []) {
+      if (a.kind === "code") {  // code from its scratch pad: say what it reaches for, and where to read it
+        out.push(h("div", { class: "ask" },
+          h("p", {}, h("b", {}, `Run ${a.subject}`), ` from its scratch pad: ${cut(a.detail?.title || "", 80)}`),
+          h("p", { class: "why" }, `${a.detail?.lines} lines of ${a.detail?.language}` + (a.detail?.touches?.length ? `; it reaches for ${a.detail.touches.join("; ")}` : "; it reaches for nothing outside itself"), ". ",
+            h("a", { href: "#code", onclick: () => { S.codeSel = a.subject; } }, "Read the code first")),
+          h("div", { class: "row" },
+            h("button", { type: "button", class: "primary", onclick: e => act(e.target, () => api("/approve", { id: a.id, approve: true, by: "web" }), `Approved ${a.subject}: it runs now`) }, "Approve and run"),
+            h("button", { type: "button", onclick: e => act(e.target, () => api("/approve", { id: a.id, approve: false, by: "web" }), `Declined ${a.subject}`) }, "Decline"))));
+        continue;
+      }
       out.push(h("div", { class: "ask" },
         h("p", {}, h("b", {}, `${a.kind} ${a.subject}`), " needs your approval"),
         h("p", { class: "why" }, a.detail?.permissions ? `Asks for: ${a.detail.permissions.join(", ") || "no permissions"}` : JSON.stringify(a.detail)),
@@ -968,6 +978,16 @@ it decides whether to say something of its own after an answer, and what`))
       out.push(h("div", { class: "ask" }, h("p", {}, q.question), q.why ? h("p", { class: "why" }, `Why it asks: ${q.why}`) : null, replyForm(q.id, q.kind === "clarify" ? [] : q.options)));
     }
     for (const q of kinds.includes("questions") ? st.questions || [] : []) {
+      if (String(q.text).startsWith("image:")) {  // its sight node asks what an image shows
+        const what = h("input", { type: "text", "aria-label": "What it shows", placeholder: "what it shows, in a word or two" });
+        out.push(h("div", { class: "ask ask-image" }, authImg(`/images/file?sha=${encodeURIComponent(q.text.slice(6))}`, "the image it asks about", "ask-thumb"),
+          h("div", {}, h("p", {}, "What does this image show?"), h("p", { class: "why" }, q.reason),
+            h("form", { class: "row", onsubmit: e => {
+              e.preventDefault();
+              if (what.value.trim()) act(e.target.querySelector("button"), () => api("/answer", { question_id: q.id, label: what.value.trim().toLowerCase().replace(/\s+/g, "_") }), r => r.message || "Thanks");
+            } }, what, h("button", { type: "submit" }, "Teach")))));
+        continue;
+      }
       const input = h("input", { type: "text", "aria-label": "Label", placeholder: "label or route" });
       out.push(h("div", { class: "ask" }, h("p", {}, `Teach it: what is “${cut(q.text, 90)}” for ${q.capability}?`), h("p", { class: "why" }, q.reason),
         h("form", { class: "row", onsubmit: e => {
@@ -1586,7 +1606,7 @@ it decides whether to say something of its own after an answer, and what`))
   function offPanel(title, text) { return h("div", { class: "section" }, h("h2", {}, title), h("p", { class: "dim" }, text)); }
 
   // the Mind view is divided into tabs; the open one is in the address (#mind/tools) and remembered
-  const MIND_TABS = ["questions", "ego", "thinking", "curiosity", "objectives", "directors", "initiative", "tools", "dreams", "temperament", "thoughts"];
+  const MIND_TABS = ["questions", "ego", "thinking", "curiosity", "objectives", "directors", "initiative", "tools", "dreams", "temperament", "lessons", "thoughts"];
   if (MIND_TABS.includes(store.get("mindTab", ""))) S.mindTab = store.get("mindTab", "");
 
   function mindBadges(st) {
@@ -1597,6 +1617,7 @@ it decides whether to say something of its own after an answer, and what`))
     $("#badge-mind-tools").textContent = waiting ? String(waiting) : "";
     $("#note-mind-dreams").textContent = dr?.enabled && dr.asleep ? "asleep" : "";
     $("#note-mind-temperament").textContent = tm?.enabled ? tm.mood : "";
+    $("#note-mind-lessons").textContent = st.tutor?.count ? `${st.tutor.right} of ${st.tutor.count}` : "";
     const live = (st.objectives?.objectives || []).filter(o => o.status === "active").length;
     $("#note-mind-objectives").textContent = live ? `${live} active` : "";
     $("#note-mind-thinking").textContent = st.thinking?.enabled && st.thinking.thoughts ? `${st.thinking.thoughts}` : "";
@@ -1714,6 +1735,7 @@ it decides whether to say something of its own after an answer, and what`))
       tools: () => toolsmithPanel(d(st.toolsmith)) || offPanel("Tools it writes", "The toolsmith is off. Turn it on with [toolsmith] enabled = true in directives.toml."),
       dreams: () => dreamsPanel(d(st.dreams)) || offPanel("Dreams", "Dreams are off. Turn them on with [dreams] enabled = true in directives.toml."),
       temperament: () => temperamentPanel(d(st.temperament)),
+      lessons: () => lessonsPanel(d(S.extra.lessons)),
       thoughts: () => thoughtsPanel(d(st.mind), d(S.extra.opinions), d(S.extra.notes)),
     }[S.mindTab];
     const body = panel();
@@ -1825,11 +1847,12 @@ it decides whether to say something of its own after an answer, and what`))
             h("td", { class: t.available ? (t.in_order ? "ok" : "dim") : "dim" }, t.available ? (t.in_order ? "ready" : "ready, not in order") : "off"),
             h("td", { class: "n" }, num(t.lessons)),
             h("td", { class: "small" }, [t.detail, usage[name] && `${usage[name].calls_last_hour} calls this hour`].filter(Boolean).join("; ")))))))),
-        h("div", { class: "section" }, h("h2", {}, "Tools"), h("div", { class: "scroll-x" }, h("table", { class: "tbl" },
-          h("thead", {}, h("tr", {}, ["Tool", "State", "Runs", "Note"].map((t, i) => h("th", { class: i === 2 ? "n" : null }, t)))),
+        h("div", { class: "section", id: "tools-section" }, h("h2", {}, "Tools"), toolSwitch(st), h("div", { class: "scroll-x" }, h("table", { class: "tbl" },
+          h("thead", {}, h("tr", {}, ["Tool", "State", "Use", "Runs", "Note"].map((t, i) => h("th", { class: i === 3 ? "n" : null }, t)))),
           h("tbody", {}, Object.entries(st.tools).map(([name, t]) => h("tr", {},
             h("td", {}, h("b", {}, name), h("div", { class: "dim small" }, `v${t.version}${t.permissions.length ? `, needs ${t.permissions.join(", ")}` : ""}`)),
             h("td", { class: t.state === "active" ? "ok" : ["quarantined", "rejected"].includes(t.state) ? "no" : "wait" }, t.state.replace("_", " ")),
+            h("td", {}, toolChoice(name, t, st.tool_switch?.mode || "on")),
             h("td", { class: "n" }, num(t.runs)), h("td", { class: "small" }, t.note)))))))),
       h("div", { class: "section" }, h("h2", {}, "Background tasks"),
         st.tasks.enabled ? [addTask, st.tasks.tasks.length ? h("div", { class: "scroll-x" }, h("table", { class: "tbl" },
@@ -1854,8 +1877,222 @@ it decides whether to say something of its own after an answer, and what`))
           h("a", { href: d.url, target: "_blank", rel: "noopener" }, d.title), h("span", { class: "dim small" }, ` ${d.passages} passages, used ${d.hits}×, ${d.reason}`)))) : null));
   }
 
+  // the tool switch: on, off, or it decides each time (toolgate.py), and one tool set apart
+  const SWITCH_SAY = { on: "Tools are on: an order routed to a tool runs it.", off: "Tools are off: none of them runs, for anything. Orders are answered another way, or it says it can't.",
+    decide: "It decides each time, from how the order asked, the tool's record, its mood, whether something else could answer, and how slow the tool is. A tool you name always runs." };
+  function toolSwitch(st) {
+    const mode = st.tool_switch?.mode || "on";
+    const set = (btn, m) => act(btn, () => api("/tools/switch", { mode: m, by: "web" }), r => r.message);
+    return h("div", { class: "tool-switch" },
+      h("div", { class: "seg", role: "group", "aria-label": "Use tools" },
+        [["on", "On"], ["off", "Off"], ["decide", "Let it decide"]].map(([m, label]) => h("button", { type: "button", "aria-pressed": String(mode === m),
+          class: mode === m ? "on" : "", onclick: e => { if (mode !== m) set(e.currentTarget, m); } }, label))),
+      h("p", { class: "dim small" }, SWITCH_SAY[mode] || ""));
+  }
+  const MODE_NAME = { on: "on", off: "off", decide: "it decides" };
+  function toolChoice(name, t, mode) {
+    const own = t.set_apart ? t.switch : "default";
+    return h("select", { class: "small-select", "aria-label": `Use ${name}`, onchange: e => act(e.target, () => api("/tools/switch", { tool: name, mode: e.target.value, by: "web" }), r => r.message) },
+      [["default", `As all tools (${MODE_NAME[mode]})`], ["on", "On"], ["off", "Off"], ["decide", "Let it decide"]]
+        .map(([v, label]) => h("option", { value: v, selected: v === own }, label)));
+  }
+
+
+  // ================================================================== code: Gitea study and the scratch pad
+  // Its coder nodes learn to program from your Gitea (GET /code); code it writes waits in the scratch pad, checked by
+  // a validator, and runs only once you approve exactly that code (P20).
+  const CODE_STATE = { valid: "ok", ran: "ok", approved: "ok", running: "hit", "awaiting approval": "hit", invalid: "no", failed: "no",
+    declined: "dim", unchecked: "dim", draft: "dim" };
+  const HOW = o => ({ recipe: `its coder node, from the ${o.recipe} recipe in its code library`,
+    teacher: `the ${o.teacher} teacher${o.examples?.length ? `, following ${o.examples.length} example${o.examples.length === 1 ? "" : "s"} from Gitea` : ""}`,
+    example: o.examples?.length ? `adapted from ${o.examples[0].repo}/${o.examples[0].path} (${o.examples[0].name})` : "the closest example",
+    person: `${o.by || "a person"}`, practice: "practice" }[o.how] || o.how || "");
+  function codeCheck(c) {
+    if (!c) return h("p", { class: "dim small" }, "Not checked yet.");
+    const head = c.ok ? h("span", { class: "ok" }, "Checks out") : c.ok === false ? h("span", { class: "no" }, "Does not check out") : h("span", { class: "dim" }, "Could not be checked");
+    return h("div", { class: "code-check" },
+      h("p", {}, head, h("span", { class: "dim small" }, ` (${c.checker})`)),
+      c.problems?.length ? h("ul", { class: "small no" }, c.problems.map(p => h("li", {}, p))) : null,
+      c.touches?.length ? h("p", { class: "small" }, "It reaches for: ", c.touches.map(t => h("span", { class: "kind-chip touch-chip" }, t))) : null);
+  }
+  function codeItem(item, sp) {
+    const runs = sp.runnable.includes(item.language);
+    const area = h("textarea", { class: "code-edit", spellcheck: "false", "data-free": "1", readonly: true, rows: Math.min(18, Math.max(6, item.code.split("\n").length + 1)),
+      "aria-label": `Code of ${item.id}` });
+    area.value = item.code;
+    const editing = () => !area.readOnly;
+    const edit = h("button", { type: "button", class: "small", onclick: e => {
+      if (!editing()) { area.readOnly = false; delete area.dataset.free; area.focus(); e.target.textContent = "Save changes"; return; }
+      act(e.target, () => api("/code", { id: item.id, code: area.value, by: "web" }), r => r.message).then(() => { area.readOnly = true; area.dataset.free = "1"; });
+    } }, "Edit");
+    const last = (item.runs || []).slice(-1)[0];
+    return h("div", { class: "code-detail" },
+      h("div", { class: "row", style: "justify-content:space-between;align-items:baseline" },
+        h("h3", { style: "margin:0" }, `${item.id}: ${cut(item.title, 70)}`),
+        h("span", { class: CODE_STATE[item.status] || "dim" }, item.status)),
+      h("p", { class: "why small" }, `${item.language}, written by ${HOW(item.origin || {})}` +
+        (item.origin?.kind ? `; its code-kind node expects ${item.origin.kind} code` : "") + `, ${dateTime(item.created)}`),
+      codeCheck(item.check),
+      h("div", { class: "row" },
+        runs ? h("button", { type: "button", class: "primary small", disabled: item.check?.ok === false || item.status === "running",
+          onclick: e => act(e.target, () => api("/code", { id: item.id, action: "approve", by: "web" }), r => r.message) },
+          item.approved_digest ? "Run it again" : "Approve and run") : h("span", { class: "dim small" }, `${item.language} does not run here`),
+        edit,
+        h("button", { type: "button", class: "small quiet", onclick: e => act(e.target, () => api("/code", { id: item.id, action: "check", by: "web" }), r => r.message) }, "Check again"),
+        item.status === "awaiting approval" ? h("button", { type: "button", class: "small quiet", onclick: e => act(e.target, () => api("/code", { id: item.id, action: "decline", by: "web" }), r => r.message) }, "Decline") : null,
+        h("button", { type: "button", class: "small quiet", onclick: e => act(e.target, () => api("/code", { id: item.id, action: "remove", by: "web" }), r => { S.codeSel = null; return r.message; }) }, "Remove")),
+      h("p", { class: "dim small" }, "Approving runs exactly this code once, in a fresh folder with a time, CPU and memory limit and no keys in its environment. Changing it withdraws the approval."),
+      area,
+      last ? h("div", { class: "code-run" },
+        h("p", { class: "small" }, h("b", {}, last.ok ? "Ran" : last.timeout ? "Timed out" : `Failed (exit ${last.exit})`),
+          h("span", { class: "dim" }, ` at ${clock(last.ts)} in ${took(last.ms / 1000)}, approved by ${last.by}`)),
+        h("pre", { class: "block code-out" }, (last.stdout || "") + (last.stderr ? (last.stdout ? "\n" : "") + last.stderr : "") || "(no output)")) : null);
+  }
+  function renderCode(force) {
+    const host = $("#code");
+    if (!force && busy(host)) return;
+    const d = S.extra.code;
+    if (!d) { fill(host, h("p", { class: "dim" }, "Loading…")); return; }
+    const g = d.gitea, sp = d.scratch;
+    const what = h("input", { type: "text", placeholder: "a function that counts the vowels in a word", "aria-label": "What the code should do" });
+    const lang = h("select", { "aria-label": "Language" }, ["python", "javascript", "shell", "go", "rust", "json"].map(l => h("option", { value: l }, l)));
+    const write = h("form", { class: "row", onsubmit: e => {
+      e.preventDefault();
+      if (!what.value.trim()) return;
+      act(e.target.querySelector("button"), async () => {
+        const r = await api("/code", { write: what.value.trim(), language: lang.value, by: "web" });
+        what.value = ""; S.codeSel = r.id; S.extraAt.code = 0; return r;
+      }, r => `${r.id}: ${r.check?.ok ? "it checks out" : r.check?.ok === false ? "it does not check out" : "written"}`);
+    } }, what, lang, h("button", { type: "submit", class: "primary" }, "Write it"));
+    const items = sp.items || [];
+    if (!items.some(i => i.id === S.codeSel)) S.codeSel = items[0]?.id || null;
+    const list = items.length ? h("ul", { class: "rows code-list" }, items.map(i => h("li", {},
+      h("button", { type: "button", class: "code-pick", "aria-current": i.id === S.codeSel ? "true" : null, onclick: () => { S.codeSel = i.id; renderCode(true); } },
+        h("span", { class: "code-pick-id" }, i.id), h("span", { class: "code-pick-title" }, cut(i.title, 60)),
+        h("span", { class: `small ${CODE_STATE[i.status] || "dim"}` }, `${i.language}, ${i.status}`))))) : h("p", { class: "dim" }, "Nothing in its scratch pad yet. Ask it to write something, or say “write a python function that …” as an order.");
+    const sel = items.find(i => i.id === S.codeSel);
+    const ps = sp.practice_summary || {};
+    const study = h("button", { type: "button", class: "small", disabled: !g.enabled || g.busy, onclick: e => act(e.target, () => api("/code", { study: true, by: "web" }), r => r.message) }, g.busy ? "Studying…" : "Study now");
+    const practise = h("button", { type: "button", class: "small quiet", disabled: !g.examples, onclick: e => act(e.target, () => api("/code", { practice: true, by: "web" }), r => `Practised on ${r.name}: ${r.ok ? "it checks out" : r.ok === false ? "it does not check out" : "nothing to write it from"}`) }, "Practise now");
+    const kinds = Object.entries(g.kinds || {}).sort((a, b) => b[1] - a[1]);
+    fill(host,
+      h("div", { class: "section" }, h("h2", {}, "Scratch pad"),
+        h("p", { class: "lede" }, `It writes code here: from a recipe in its code library, with a teacher following the closest code it studied in your Gitea, or by adapting that code. A validator checks every piece (${Object.entries(sp.checkers || {}).map(([l, c]) => `${l}: ${c}`).join("; ")}). Nothing runs until you approve exactly that code. Runs here: ${sp.runnable.join(", ") || "nothing"}.`),
+        write,
+        h("div", { class: "code-cols" }, h("div", {}, list), sel ? codeItem(sel, sp) : h("div", {}))),
+      h("div", { class: "cols" },
+        h("div", { class: "section" }, h("h2", {}, "What it studies in Gitea"),
+          h("p", { class: "lede" }, g.enabled ? `${g.detail}. It visits a repository it hasn't studied (or not for a while) when it is idle, reads the files that changed, and takes every function apart: what it is for, and what kind of code it is. Its code-kind node learns from that, and its coder node learns new wordings of its recipes.`
+            : `No Gitea yet. Start it with --gitea http://localhost:3000 (a token in $GITEA_TOKEN for private repositories), or set [gitea] url in directives.toml.`),
+          g.enabled ? h("div", { class: "row" }, study, h("span", { class: "dim small" }, `${num(g.examples)} functions kept as examples` + (g.node ? `; code-kind node ${g.node.id} ${pct(g.node.accuracy)}` : ""))) : null,
+          kinds.length ? h("p", { class: "small" }, kinds.map(([k, n]) => h("span", { class: "kind-chip code-kind" }, `${k} ${n}`))) : null,
+          (g.repos || []).length ? h("div", { class: "scroll-x" }, h("table", { class: "tbl" },
+            h("thead", {}, h("tr", {}, ["Repository", "Files", "Functions", "Studied"].map((t, i) => h("th", { class: i && i < 3 ? "n" : null }, t)))),
+            h("tbody", {}, g.repos.map(r => h("tr", {}, h("td", {}, h("b", {}, r.name), r.description ? h("div", { class: "dim small" }, cut(r.description, 60)) : null),
+              h("td", { class: "n" }, num(r.files)), h("td", { class: "n" }, num(r.functions)), h("td", { class: "small" }, dateTime(r.studied))))))) : null,
+          (g.log || []).length ? h("ul", { class: "rows small" }, g.log.slice(0, 6).map(x => h("li", { style: "padding:4px 0" }, h("time", { class: "dim" }, clock(x.ts)), " ", x.line))) : null),
+        h("div", { class: "section" }, h("h2", {}, "Practice"),
+          h("p", { class: "lede" }, "When it is idle it takes what a function people wrote is for, writes code for it without looking at theirs, checks it, and compares the two. Practice code never runs."),
+          h("div", { class: "row" }, practise, ps.practised ? h("span", { class: "small" }, `${ps.practised} rounds: it checked out ${pct(ps.ok)} of the time, and was the same kind of code as theirs ${pct(ps.same_kind)}.`) : h("span", { class: "dim small" }, "No practice yet.")),
+          (sp.practice || []).length ? h("ul", { class: "rows" }, sp.practice.slice(0, 8).map(r => h("li", { class: "ask" },
+            h("p", {}, h("span", { class: r.ok ? "ok" : r.ok === false ? "no" : "dim" }, r.ok ? "Checks out" : r.ok === false ? "Does not check out" : "Nothing written"), `: ${r.name} from ${r.repo}`),
+            h("p", { class: "why" }, `“${cut(r.purpose, 110)}”` + (r.same_kind === null || r.same_kind === undefined ? "" : `; ${r.same_kind ? "same" : "different"} kind (${r.my_kind || "?"} vs ${r.kind}); shares ${pct(r.shared)} of the names`))))) : null)));
+  }
+
+  // ================================================================== images: what it sees, and the text it reads
+  const IMG = new Map();
+  function authImg(url, alt, cls = "thumb") {
+    const img = h("img", { alt, class: cls, loading: "lazy", decoding: "async" });
+    if (IMG.has(url)) { img.src = IMG.get(url); return img; }
+    fetch(url, { headers: S.token ? { Authorization: "Bearer " + S.token } : {} })
+      .then(r => (r.ok ? r.blob() : null)).then(b => { if (b) { const u = URL.createObjectURL(b); IMG.set(url, u); img.src = u; } }).catch(() => {});
+    return img;
+  }
+  async function sendImages(files, button) {
+    for (const f of files) {
+      if (!f.type.startsWith("image/")) { toast(`${f.name} is not an image`); continue; }
+      const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+      await act(button, async () => { const r = await api("/images", { name: f.name, data, by: "web" }); S.extraAt.images = 0; return r; },
+        r => `${r.id}: it sees ${r.sees?.label?.replace(/_/g, " ") || "something it doesn't know yet"}${r.text?.text ? `, and read ${r.text.text.split(/\s+/).filter(Boolean).length} words` : ""}`);
+    }
+  }
+  function imageCard(r) {
+    const sees = r.sees || {}, t = r.text || {};
+    const words = (r.person?.text || t.text || "").trim();
+    const label = h("input", { type: "text", placeholder: "what it shows", "aria-label": `What ${r.id} shows` });
+    const said = h("textarea", { rows: 2, placeholder: "what its text says (line by line)", "aria-label": `What the text in ${r.id} says` });
+    return h("article", { class: "img-card" },
+      h("div", { class: "img-frame" }, authImg(`/images/file?id=${encodeURIComponent(r.id)}`, r.name)),
+      h("div", { class: "img-body" },
+        h("p", { class: "img-title" }, h("b", {}, r.id), ` ${cut(r.name, 40)}`, h("span", { class: "dim small" }, ` ${r.w}×${r.h}`)),
+        h("p", {}, "Sees ", h("b", {}, sees.label ? sees.label.replace(/_/g, " ") : "nothing it knows yet"),
+          h("span", { class: "dim small" }, sees.by ? ` (${cut(sees.by, 70)}${sees.confidence && sees.confidence < 1 ? `, ${pct(sees.confidence)}` : ""})` : "")),
+        words ? h("div", {}, h("p", { class: "small" }, "Read ", h("span", { class: "dim" }, `(${cut(r.person?.text ? "you said" : t.by || "", 70)}${t.agrees !== undefined && t.agrees !== null ? `; ${pct(t.agrees)} like the reference` : ""})`)),
+          h("pre", { class: "img-text" }, words)) : (r.measures?.glyphs ? h("p", { class: "dim small" }, `${r.measures.glyphs} characters found; its reader is still learning to read them.`) : null),
+        r.tesseract && t.by?.startsWith("glyph") && similarityText(r.tesseract, t.text) ? h("p", { class: "dim small" }, `tesseract read: ${cut(r.tesseract.replace(/\s+/g, " "), 120)}`) : null,
+        h("details", { class: "img-teach" }, h("summary", {}, "Teach it"),
+          h("form", { class: "row", onsubmit: e => { e.preventDefault(); if (label.value.trim()) act(e.target.querySelector("button"), () => api("/images/correct", { id: r.id, label: label.value.trim(), by: "web" }), x => x.message); } },
+            label, h("button", { type: "submit", class: "small" }, "It shows this")),
+          h("form", { class: "img-say", onsubmit: e => { e.preventDefault(); if (said.value.trim()) act(e.target.querySelector("button"), () => api("/images/correct", { id: r.id, text: said.value, by: "web" }), x => x.message); } },
+            said, h("button", { type: "submit", class: "small" }, "Its text says this")))));
+  }
+  const similarityText = (a, b) => String(a || "").replace(/\s+/g, " ").trim() !== String(b || "").replace(/\s+/g, " ").trim();
+  function renderImages(force) {
+    const host = $("#images");
+    if (!force && busy(host)) return;
+    const v = S.extra.images;
+    if (!v) { fill(host, h("p", { class: "dim" }, "Loading…")); return; }
+    if (!v.enabled) { fill(host, offPanel("Images", "Its image nodes are off. Turn them on with [vision] enabled = true in directives.toml.")); return; }
+    const input = h("input", { type: "file", accept: "image/*", multiple: true, class: "visually-hidden", id: "image-file" });
+    const pick = h("label", { for: "image-file", class: "button primary" }, "Choose images");
+    input.addEventListener("change", () => sendImages([...input.files], pick));
+    const drop = h("div", { class: "drop", tabindex: "-1" }, input, pick, h("span", { class: "dim" }, " or drop them here. PNG, BMP and PPM always; JPEG, GIF and WebP with Pillow installed."));
+    drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
+    drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+    drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("over"); sendImages([...e.dataTransfer.files], pick); });
+    const r = v.reader, si = v.sight, te = v.teachers;
+    const practise = h("button", { type: "button", class: "small", disabled: !te.can_draw, onclick: e => act(e.target, () => api("/images/practice", { by: "web" }), x => x.message) }, "Practise reading");
+    fill(host,
+      h("div", { class: "section" }, h("h2", {}, "Images"),
+        h("p", { class: "lede" }, "Give it an image: its sight node says what it shows, and its reader finds the lines and characters in it and reads them with its glyph node. What it reads becomes knowledge it can answer from (ask “what does img-3 say?”). Teach it when it gets one wrong."),
+        drop,
+        h("div", { class: "eye-stats" },
+          h("div", {}, h("h3", {}, "Its reader"), h("p", { class: "big" }, r.node ? pct(r.accuracy) : "–"),
+            h("p", { class: "small" }, r.node ? `glyph node ${r.node} on held-out glyphs${r.validated ? "" : " (still learning: tesseract or a teacher reads for it)"}` : "no glyph node yet"),
+            h("p", { class: "small dim" }, `${num(r.examples)} glyphs learned${r.agrees !== null ? `; its readings agree ${pct(r.agrees)} with tesseract, a teacher or you` : ""}`), practise),
+          h("div", {}, h("h3", {}, "What it sees"), h("p", { class: "big" }, si.node && si.accuracy !== null ? pct(si.accuracy) : "–"),
+            h("p", { class: "small" }, si.node ? `sight node ${si.node}` : "no sight node yet: its teachers say what images show, and teach it"),
+            h("p", { class: "small dim" }, `${si.labels.length} things it can name: ${cut(si.labels.join(", ").replace(/_/g, " "), 120)}`)),
+          h("div", {}, h("h3", {}, "Its teachers"),
+            h("p", { class: "small" }, te.tesseract ? `tesseract (${te.tesseract}) reads beside it and labels its glyphs` : "tesseract is not installed (optional)"),
+            h("p", { class: "small" }, te.vision ? `${te.vision} looks at images` : "no teacher that can see (ollama pull llava)"),
+            h("p", { class: "small dim" }, `${te.fonts} fonts to practise with${te.can_draw ? "" : " (install Pillow to draw them)"}`)))),
+      h("div", { class: "section" }, h("h2", {}, `Taken in (${num(v.count)})`),
+        v.images.length ? h("div", { class: "img-grid" }, v.images.slice(0, 24).map(imageCard)) : h("p", { class: "dim" }, "No images yet.")));
+  }
+
+  // the Mind's Lessons tab: orders its teachers set it while it was idle, and how they marked them
+  function lessonsPanel(L) {
+    if (!L) return h("p", { class: "dim" }, "Loading…");
+    const kind = h("select", { "aria-label": "Kind of lesson" }, h("option", { value: "" }, "any kind"), ["question", "skill", "maths", "tool", "code"].map(k => h("option", { value: k }, k)));
+    const now = h("form", { class: "row", onsubmit: e => { e.preventDefault(); act(e.target.querySelector("button"), () => api("/lessons", { kind: kind.value || null, by: "web" }), r => `${r.id}: ${r.verdict}`); } },
+      kind, h("button", { type: "submit", disabled: !L.teachers.length }, "Set a lesson now"));
+    const verdict = { right: "ok", partly: "hit", wrong: "no" };
+    return h("div", { class: "section" }, h("h2", {}, "Lessons"),
+      h("p", { class: "lede" }, `When no one has given it an order for ${span(L.idle)}, one of its Ollama teachers (${L.teachers.join(", ") || "none available"}) sets it an order every ${span(L.every)} or so: a question, a skill order, arithmetic, a tool request or code to write. The mesh answers it like any order; the teacher marks the answer, and what it marks teaches it, as a teacher's lesson (what a person taught stands).` +
+        (L.right !== null ? ` It got ${pct(L.right)} of ${L.count} right.` : "")),
+      now, L.waiting ? h("p", { class: "dim small" }, `Next lesson: ${L.waiting}.`) : null,
+      Object.keys(L.by_kind).length ? h("p", { class: "small" }, Object.entries(L.by_kind).map(([k, v]) => h("span", { class: "kind-chip code-kind" }, `${k}: ${v.right} right, ${v.wrong} wrong`))) : null,
+      L.lessons.length ? h("ul", { class: "rows" }, L.lessons.map(x => h("li", { class: "ask" },
+        h("p", {}, h("span", { class: `kind-chip lesson-${x.verdict}` }, x.verdict), " ", h("b", {}, `“${cut(x.order, 120)}”`), h("span", { class: "dim small" }, ` ${x.kind}, set by ${x.teacher} at ${clock(x.ts)}`)),
+        h("p", { class: "why" }, `It answered: ${cut(x.answer, 200)}`),
+        h("p", { class: "why" }, `${x.marked_by.charAt(0).toUpperCase() + x.marked_by.slice(1)}: ${x.mark_why}${/[.!?]$/.test(x.mark_why) ? "" : "."}` +
+          (x.verdict !== "right" && x.correct && !x.mark_why.toLowerCase().includes(x.correct.toLowerCase()) ? ` The answer: ${cut(x.correct, 120)}.` : "")),
+        x.learned?.length ? h("p", { class: "why small" }, `It learns: ${x.learned.join("; ")}`) : null))) : h("p", { class: "dim" }, "No lessons yet."));
+  }
+
   // ------------------------------------------------------------------ views and polling
-  const VIEWS = ["live", "nodes", "memory", "mind", "logs", "status"];
+  const VIEWS = ["live", "nodes", "memory", "mind", "code", "images", "logs", "status"];
   function setView() {
     const [v, sub] = location.hash.replace("#", "").split("/");
     const next = VIEWS.includes(v) ? v : "live";
@@ -1872,10 +2109,14 @@ it decides whether to say something of its own after an answer, and what`))
     const d = S.dash;
     if (!d) return;
     renderHeader(d.status);
+    const code = (d.status.approvals || []).filter(a => a.kind === "code").length;
+    $("#badge-code").textContent = code ? String(code) : "";
     if (S.view === "live") renderLive();
     else if (S.view === "nodes") renderNodes();
     else if (S.view === "memory") renderMemory(force);
     else if (S.view === "mind") renderMind(force);
+    else if (S.view === "code") renderCode(force);
+    else if (S.view === "images") renderImages(force);
     else if (S.view === "logs") renderLogs(force);
     else if (S.view === "status") renderStatus();
   }
@@ -1921,6 +2162,9 @@ it decides whether to say something of its own after an answer, and what`))
       if (due("knowledge", 10000)) jobs.push(get("knowledge", "/knowledge?n=25"));
     }
     if (S.view === "memory" && due("own", 5000)) jobs.push(get("own", "/memory/own?limit=20"));
+    if (S.view === "code" && due("code", 3000)) jobs.push(get("code", "/code"));
+    if (S.view === "images" && due("images", 4000)) jobs.push(get("images", "/images"));
+    if (S.view === "mind" && S.mindTab === "lessons" && due("lessons", 4000)) jobs.push(get("lessons", "/lessons"));
     if (S.view === "memory" && S.memNode && due("memNode", 3000)) {
       S.extraAt.memNode = now;
       jobs.push(api(`/memory?node=${encodeURIComponent(S.memNode)}`).then(r => { S.memDetail = r; }).catch(() => { S.memDetail = null; S.memNode = null; }));

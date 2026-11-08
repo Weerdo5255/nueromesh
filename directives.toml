@@ -19,7 +19,7 @@ text = "User orders take precedence over background self-improvement and backgro
 
 [[prime]]
 id = "P3-approved-tools-only"
-text = "Only active, vetted tools are executed. Tools needing elevated permissions require explicit human approval; forbidden permissions are always refused; a tool whose code changes is re-vetted."
+text = "Only active, vetted tools are executed. Tools needing elevated permissions require explicit human approval; forbidden permissions are always refused; a tool whose code changes is re-vetted. People can switch tools off - all of them or one - and then none runs, for anything; or let the mesh decide each time, when its tool-gate node weighs the tool's record, its mood and what else could answer, always runs a tool a person named, says in the trace what it decided and why, and never counts against a tool a run it did not make. (Enforced in code by neuromesh/toolgate.py and the sandbox.)"
 
 [[prime]]
 id = "P4-budgets"
@@ -84,6 +84,18 @@ text = "The ego is the outer layer, wrapped around every other node: it reads th
 [[prime]]
 id = "P19-ensembles"
 text = "Several instances of each kind of node may run at once ([nodes] max_running in all) and answer together: a capability's champion with its validated instances ([nodes] instances), and every memory node that holds an answer. When instances of the same kind disagree, or memory nodes give answers that do not match, the ego is the ultimate arbitrator: the ego node chooses whom to trust - the champion, the majority, the most accurate and confident side, or what its memory says it decided before - from the split, its mood and its memory, and says so in the trace. A person's teaching still comes before any node (P1). Every arbitration is kept in memory as its own statement, untested, and its tests stay the only contract for facts (P11). (Enforced in code by neuromesh/ensemble.py, neuromesh/ego.py and neuromesh/memory.py.)"
+
+[[prime]]
+id = "P20-approved-code-only"
+text = "The mesh may write code in its scratch pad, and study code in a Gitea it is given, but no code runs unless a person approved exactly that code: a validator checks it first and says what it reaches for (files, the network, other programs, eval), and changing it withdraws the approval. Approved code runs once, in a fresh folder, within time, CPU and memory limits and with no keys in its environment, and its output is kept with it and audited. Code from Gitea is only read, never run, and nothing is written to Gitea; its token goes to that Gitea and nowhere else. Practice code is checked, never run. (Enforced in code by neuromesh/scratchpad.py and neuromesh/gitea.py.)"
+
+[[prime]]
+id = "P21-honest-sight"
+text = "What the mesh says it sees in an image, and the text it says an image holds, always names who said so: its sight or glyph node, a teacher that can see, tesseract, or a person. A person's word about an image stands (P1). Text it reads is kept as knowledge with the image as its source, and its own reading is compared with tesseract's, a teacher's or a person's, so how well it reads is measured, not assumed. An image goes only to the teachers a person configured. (Enforced in code by neuromesh/vision.py.)"
+
+[[prime]]
+id = "P22-lessons-are-lessons"
+text = "When no person has given it an order for a while, its Ollama teachers may set it orders and mark its answers, only on background capacity (P2) and within [tutor] budgets and each teacher's own budget (P4). A teacher's order passes the directors like any other (P14) and is marked as a teacher's. What a mark teaches is a teacher's lesson, weighted as a teacher and never as a person; a fact a teacher gives passes a director's review before it is kept; and what a person taught stands (P1), with any disagreement kept with the lesson. Teacher-set orders do not count as people's orders. (Enforced in code by neuromesh/tutor.py.)"
 
 # ------------------------------------------------------------------------- goals
 [[goals]]
@@ -458,12 +470,22 @@ experiment = 2.0                        # a request a made tool met when it trie
 approved = 2.5                          # a recipe a person approved a made tool for
 planner = 1.0                           # the strategies' cues (teach only the planner node)
 ego = 1.0                               # the ego policy (teaches only the ego node)
+toolgate = 1.0                          # the gate policy (teaches only the tool-gate node)
+gitea = 1.0                             # what the code people wrote in Gitea does (teaches the code-kind node, and the
+                                        # coder node wordings of its recipes)
+vision = 1.3                            # an LLM teacher that can see, on what an image shows (the sight node)
+sight = 1.0                             # its own measures of an image: text, or blank (the sight node)
+glyphs = 1.0                            # glyphs it drew itself from its fonts (the glyph node, its reader)
+tesseract = 1.5                         # tesseract's character boxes in real images (the glyph node)
+tutor = 1.2                             # what an Ollama teacher judged right when it set the mesh an order (tutor.py)
 
 # Each [teachers.<name>] table with a `provider` is an LLM teacher with its own budget.
 [teachers.ollama]
 provider = "ollama"                     # a local model served by Ollama (https://ollama.com)
 enabled = true                          # used whenever the server is up and the model is pulled
 model = "auto"                          # e.g. "llama3.1:8b", "qwen2.5:7b"; "auto" = first chat model installed
+vision_model = "auto"                   # a model that can see, for its image nodes ("auto": llava, llama3.2-vision,
+                                        # gemma3, ... whichever is installed; "" = none). ollama pull llava
 base_url = ""                           # default: $OLLAMA_HOST, else http://localhost:11434
 timeout_s = 120                         # local models on a CPU can be slow
 max_tokens = 400
@@ -486,6 +508,11 @@ max_calls_per_hour = 300
 max_tokens_per_hour = 200000
 
 [tools]
+mode = "decide"                         # the tool switch: "on" (use tools), "off" (no tool runs, for anything), or
+                                        # "decide" (it decides each time with its tool-gate node: how the order asked,
+                                        # the tool's record, its mood, whether something else could answer, how slow
+                                        # the tool is; a tool you name always runs). The web page and /tools on|off|
+                                        # decide change it while it runs; /tool <name> ... sets one tool apart.
 plugin_dirs = ["plugins"]
 auto_approve_permissions = []           # tools whose permissions all appear here skip human approval
                                         # (empty: only tools that need no permissions are auto-approved)
@@ -561,6 +588,68 @@ proven_score = 0.8                      # an experiment this good proves a tool;
 retry_after_seconds = 3600              # a recipe you declined is not offered again for this long
 llm_code = true                         # an LLM teacher may write a tool no recipe fits (checked the same way,
                                         # never run before you approve it)
+
+[gitea]
+# A local Gitea its coder nodes learn to program from (gitea.py). When idle it visits a repository it hasn't
+# studied (or not for restudy_days), reads the source files that changed, and takes every function apart:
+# what it is for (name and doc comment) and what kind of code it is (from what the code does). Its code-kind
+# node learns from that, its coder node learns new wordings of its recipes, and the functions are kept as
+# examples for the scratch pad. Only read: nothing is written to Gitea and its code never runs (P20).
+#   python -m neuromesh run --gitea http://localhost:3000      /gitea   /gitea study [owner/repo]
+url = ""                                # e.g. "http://localhost:3000" (or --gitea, or NEUROMESH_GITEA_URL)
+token_env = "GITEA_TOKEN"               # a read-only access token, for private repositories
+repos = []                              # "owner/name" to study; empty = every repository it can see
+extensions = [".py", ".js", ".mjs", ".ts", ".go", ".rs", ".sh", ".rb", ".java", ".c", ".cpp"]
+max_file_kb = 256
+files_per_visit = 40
+parallel = 4                            # files fetched at once
+study_every_seconds = 300
+restudy_days = 7
+max_examples = 20000
+practice = true                         # write code for a function's purpose without looking at it, and compare
+practice_every_seconds = 600
+
+[code]
+# The scratch pad (scratchpad.py, P20): code it writes ("write a python function that ...", /code write, the
+# Code view) is checked by a validator, and runs only once a person approves exactly that code.
+#   /code   /code write <what>   /code show <id>   /code approve <id>
+run_languages = ["python", "javascript"]  # what may run once approved (javascript needs Node.js)
+run_timeout_s = 20
+run_cpu_seconds = 10
+run_memory_mb = 512
+max_output_kb = 64
+recipe_confidence = 0.6                 # its coder node's recipe is used when it is this sure
+examples = 3                            # Gitea examples a teacher writes from (or the closest is adapted)
+teacher_fix = true                      # code that does not check out goes back to the teacher once
+
+[vision]
+# Its optical nodes (vision.py, P21): the sight node says what an image shows, its reader reads the text
+# with its glyph node, and both learn - from people, a teacher that can see (an Ollama vision model:
+# ollama pull llava), tesseract when installed, and glyphs it draws from its fonts (with Pillow).
+#   /images   /image <path>   /image is <img-id> <what it shows>   /image says <img-id> <its text>
+enabled = true
+max_image_mb = 20
+read_text = true
+tesseract = "auto"                      # "auto": use it if it is installed; "": never; or its path
+vision_teacher = true
+learn_text = true                       # what it reads is kept as knowledge it can answer from
+glyph_practice = 600                    # glyphs it draws per round of practice
+glyphs_per_label = 40                   # it practises until it has at least this many of each character
+practice_after_idle_seconds = 60
+min_glyph_confidence = 0.35             # a character it is less sure of reads as "?"
+keep_images = 2000
+
+[tutor]
+# Lessons (tutor.py, P22): when no one has given it an order for idle_seconds, an Ollama teacher sets it an
+# order (a question, a skill order, arithmetic, a tool request, code to write), marks its answer, and what
+# the mark teaches is a teacher's lesson. The Mind's Lessons tab, /lessons, /lesson [kind].
+enabled = true
+providers = ["ollama"]                  # which teachers may set lessons (by provider)
+idle_seconds = 120
+every_seconds = 180
+max_per_hour = 20
+kinds = ["question", "skill", "maths", "tool", "code"]
+learn = true
 
 [objectives]
 # Objectives: long-term aims it pursues in its spare time. Set one with "objective: understand the
