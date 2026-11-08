@@ -84,7 +84,7 @@ def _grads(B: Backend, params: list, X, y, w, weight_decay: float):
 
 
 class NeuralNode:
-    STATUSES = ("candidate", "champion", "retired", "disposed")
+    STATUSES = ("candidate", "champion", "instance", "retired", "disposed")
 
     def __init__(self, capability: str, labels: list[str], input_dim: int,
                  arch: Architecture | None = None, *, node_id: str | None = None,

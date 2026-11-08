@@ -1,9 +1,10 @@
-"""Memory nodes: learned facts compressed into small neural networks, external human-readable test
-files, and compression that only ever accepts a smaller node that passes every test (P11)."""
+"""Memory nodes: learned facts compressed into small neural networks, their tests in the memory's own
+database (not files), compression that only ever accepts a smaller node that passes every test (P11),
+and its own statements kept in memory without tests."""
 import random
 import shutil
+import sqlite3
 import tempfile
-import tomllib
 import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -104,11 +105,14 @@ class BankTests(unittest.TestCase):
     def test_learn_write_tests_then_compress_only_while_every_test_passes(self):
         b = self.bank
         node = self.node()
-        data = tomllib.loads(b.tests_path(node).read_text())  # external, human readable, valid TOML
-        self.assertEqual(data["passing"], "not checked yet")
-        asks = {t["ask"]: t["answer"] for t in data["test"]}
+        data = b.db.read(node.id)  # in the memory's own database, not a file
+        self.assertFalse((self.root / "memory_tests").exists())
+        self.assertTrue((self.root / "state" / "memory.db").exists())
+        self.assertEqual(data["summary"]["passing"], "not checked yet")
+        asks = {t["ask"]: t["answer"] for t in data["tests"]}
         self.assertEqual(asks["capital of France"], FACTS[0][1])
-        self.assertTrue(any(u["reason"].startswith("auto: a near miss") for u in data["unknown"]))
+        self.assertTrue(any(u["reason"].startswith("auto: a near miss") for u in data["unknowns"]))
+        self.assertIn('[[test]]\nask = "capital of France"', b.render_tests(node))  # readable for people
 
         def every_test_passes(n):
             r = b.run_tests(n)
@@ -121,7 +125,7 @@ class BankTests(unittest.TestCase):
         self.assertIn("memory.learned", events)
         self.assertIn("memory.compressed", events)
         self.assertIn("memory.smallest", events)
-        data = tomllib.loads(b.tests_path(node).read_text())
+        data = b.db.read(node.id)["summary"]
         self.assertTrue(data["passing"].startswith(f"{node.total}/{node.total}"))
         self.assertIn(f"{node.bytes:,} bytes", data["size"])
         self.assertTrue(any("compressed" in h for h in data["history"]))
@@ -153,33 +157,41 @@ class BankTests(unittest.TestCase):
         b = self.bank
         settle(b)
         node = self.node()
-        path = b.tests_path(node)
-        text = path.read_text().replace('answer = "Tokyo is the capital of Japan."', 'answer = "Tokyo (東京) is Japan\'s capital."')
-        text = text.replace("[[test]]\nask = \"How tall is the Eiffel Tower?\"", "[[test]]\nask = \"How tall is the Eiffel Tower?\"", 1)
-        path.write_text(text)
-        b.sync_files(force=True)
+        rev = node.rev
+        with sqlite3.connect(b.db_path) as db:  # a person, with any SQLite tool
+            db.execute("UPDATE tests SET answer = ? WHERE node = ? AND answer = ?",
+                       ("Tokyo (東京) is Japan's capital.", node.id, "Tokyo is the capital of Japan."))
+        self.assertGreater(b.db.rev(node.id), rev)  # the database's triggers note the change
+        b.sync_tests(force=True)
         self.assertTrue(node.dirty)
         self.assertIsNone(b.recall("capital of Japan"), "the old answer is not served once a person changed it")
         settle(b)
         self.assertEqual(b.recall("What is the capital of Japan?").answer, "Tokyo (東京) is Japan's capital.")
         # deleting a test forgets that fact
-        data = tomllib.loads(path.read_text())
-        kept = [t for t in data["test"] if "Eiffel" not in t["ask"]]
-        lines = ['node = "mem-0001"'] + [f'\n[[test]]\nask = "{t["ask"]}"\nanswer = "{t["answer"]}"' for t in kept]
-        path.write_text("\n".join(lines) + "\n")
-        b.sync_files(force=True)
+        with sqlite3.connect(b.db_path) as db:
+            db.execute("DELETE FROM tests WHERE node = ? AND ask LIKE '%Eiffel%' AND kind = 'test'", (node.id,))
+        b.sync_tests(force=True)
         settle(b)
         self.assertNotIn("The Eiffel Tower is 330 metres tall.", node.answers)
         self.assertIsNone(b.recall("How tall is the Eiffel Tower?"))
         self.assertEqual(b.recall("Who won the 1994 World Cup?").answer, "Brazil won the 1994 World Cup.")
-        # a test file a person writes is learned
-        (b.tests_dir / "my-facts.toml").write_text('[[test]]\nask = "What is the name of my dog?"\nanswer = "Your dog is called Rex."\n')
-        b.sync_files(force=True)
+        # tests a person adds for a new node are learned
+        with sqlite3.connect(b.db_path) as db:
+            db.execute("INSERT INTO tests(node, seq, ask, answer) VALUES ('my-facts', 0, ?, ?)",
+                       ("What is the name of my dog?", "Your dog is called Rex."))
+        b.sync_tests(force=True)
         settle(b)
         self.assertEqual(b.recall("What is the name of my dog?").answer, "Your dog is called Rex.")
-        # deleting a file forgets the node; its weights are kept aside, not destroyed
-        path.unlink()
-        b.sync_files(force=True)
+        # ... and through the bank (the API and /memory set use this)
+        rows = [{"ask": t.ask, "answer": t.answer} for t in b.nodes["my-facts"].facts()]
+        rows.append({"ask": "What colour is my dog?", "answer": "Your dog is brown."})
+        self.assertTrue(b.edit_tests("my-facts", rows, by="tester")["ok"])
+        settle(b)
+        self.assertEqual(b.recall("What colour is my dog?").answer, "Your dog is brown.")
+        # deleting the node's row forgets the node; its weights are kept aside, not destroyed
+        with sqlite3.connect(b.db_path) as db:
+            db.execute("DELETE FROM nodes WHERE id = 'mem-0001'")
+        b.sync_tests(force=True)
         self.assertNotIn("mem-0001", b.nodes)
         self.assertTrue(list((b.dir / "forgotten").glob("mem-0001-*.npz")))
         self.assertIsNone(b.recall("Who won the 1994 World Cup?"))
@@ -199,13 +211,55 @@ class BankTests(unittest.TestCase):
         lines = []
         self.assertEqual(check_files(self.root, out=lines.append), 0, lines)
         self.assertIn("pass", lines[0])
-        path = b.tests_path(node)
-        edited = path.read_text().replace('answer = "Paris."', 'answer = "Lyon."')
-        path.write_text(edited)
+        with sqlite3.connect(b.db_path) as db:
+            db.execute("UPDATE tests SET answer = 'Lyon.' WHERE answer = 'Paris.'")
+        rev = b.db.rev(node.id)
         lines = []
         self.assertGreater(check_files(self.root, out=lines.append), 0)
         self.assertTrue(any("wanted 'Lyon.'" in ln for ln in lines), lines)
-        self.assertEqual(path.read_text(), edited, "checking from outside changes nothing")
+        self.assertEqual(b.db.rev(node.id), rev, "checking from outside changes nothing")
+
+    def test_earlier_test_files_are_imported_once(self):
+        b = self.bank
+        settle(b, limit=1)
+        node = self.node()
+        legacy = self.root / "memory_tests"
+        legacy.mkdir()
+        (legacy / "old-facts.toml").write_text('[[test]]\nask = "What is my cat called?"\nanswer = "Your cat is called Tom."\n')
+        again = bank_at(self.root)
+        self.assertFalse(legacy.exists())
+        self.assertTrue((self.root / "memory_tests.imported" / "old-facts.toml").exists())  # moved aside, not deleted
+        self.assertIn("old-facts", again.nodes)
+        settle(again)
+        self.assertEqual(again.recall("What is my cat called?").answer, "Your cat is called Tom.")
+        self.assertIn(node.id, again.nodes)
+
+    def test_its_own_statements_are_kept_without_tests(self):
+        b = self.bank
+        settle(b)
+        before = {n.id: n.rev for n in b.fact_nodes()}
+        made = b.remember_own("opinion", "I find France fascinating: it keeps coming up.", about="France", mood="content",
+                              source="th-1")
+        b.remember_own("ego:curious", "I'm curious about Krakatoa.", about="Krakatoa", mood="upbeat", source="ord-1")
+        b.remember_own("ego:feeling", "I'm content right now.", mood="content")  # about nothing: kept, not learned
+        self.assertTrue(made["node"].startswith("own-"))
+        own = b.nodes[made["node"]]
+        settle(b)
+        self.assertEqual((own.status, own.failing), ("untested", []))
+        self.assertEqual(b.recall_own("What do you think about France?").answer, "I find France fascinating: it keeps coming up.")
+        self.assertIsNone(b.recall("What do you think about France?"), "its own views are never served as facts")
+        self.assertEqual({n.id: n.rev for n in b.fact_nodes()}, before, "no tests were written or changed for them")
+        self.assertIsNone(b.db.read(own.id), "no tests in the database for its own statements")
+        self.assertEqual(len(b.own_statements()), 3)
+        self.assertEqual([r["kind"] for r in b.own_statements(about="krakatoa")], ["ego:curious"])
+        self.assertEqual(b.status()["own"]["statements"], 3)
+        # a newer opinion about the same thing replaces the old one in the node; both stay in the database
+        b.remember_own("opinion", "France gets me down lately.", about="France", mood="subdued")
+        settle(b)
+        self.assertEqual(b.recall_own("What do you think about France?").answer, "France gets me down lately.")
+        self.assertEqual(len(b.own_statements(about="France")), 2)
+        again = bank_at(self.root)
+        self.assertEqual(again.recall_own("What do you think about France?").answer, "France gets me down lately.")
 
 
 MORE = [("Who painted the Mona Lisa?", "Leonardo da Vinci painted the Mona Lisa."),
@@ -262,12 +316,12 @@ class MergeTests(unittest.TestCase):
         for q, a in FACTS + MORE:
             self.assertEqual(b.recall(q).answer, a, q)
         self.assertIsNone(b.recall("What is the capital of Germany?"))
-        # the parents are gone: weights kept aside, test files folded into the merged node's
-        self.assertEqual([p.name for p in b.tests_dir.glob("*.toml")], [f"{node.id}.toml"])
+        # the parents are gone: weights kept aside, their tests folded into the merged node's
+        self.assertEqual(sorted(b.db.revs()), [node.id])
         self.assertEqual(len(list((b.dir / "merged").glob("*-into-*.npz"))), 4)
-        data = tomllib.loads(b.tests_path(node).read_text())
-        self.assertEqual(len([t for t in data["test"] if "variant_of" not in t]), 12)
-        self.assertTrue(any("merged" in h for h in data["history"]))
+        data = b.db.read(node.id)
+        self.assertEqual(len([t for t in data["tests"] if not t["variant_of"]]), 12)
+        self.assertTrue(any("merged" in h for h in data["summary"]["history"]))
         again = bank_at(self.root)
         self.assertEqual(again.nodes[node.id].parts, node.parts)  # persists
 
@@ -294,7 +348,7 @@ class MergeTests(unittest.TestCase):
         node = next(n for n in b.nodes.values() if n.merged_from)
         self.assertEqual((node.status, node.dirty, node.failing), ("failing", True, ["Who was Ada Lovelace?"]))
         self.assertIsNone(b.recall("Who was Ada Lovelace?"), "an answer whose test fails is not served")
-        self.assertIn("failing: Who was Ada Lovelace?", tomllib.loads(b.tests_path(node).read_text())["passing"])
+        self.assertIn("failing: Who was Ada Lovelace?", b.db.read(node.id)["summary"]["passing"])
         settle(b)
         self.assertEqual((node.passed, node.failing), (node.total, []))
         self.assertEqual(b.recall("Who was Ada Lovelace?").answer, FACTS[1][1])
@@ -314,7 +368,7 @@ class MemorySystemTests(unittest.IsolatedAsyncioTestCase):
 
     def settled(self):
         m = self.system.memory
-        return m.nodes and all(not n.dirty and n.status == "compressed" for n in m.nodes.values())
+        return m.fact_nodes() and all(not n.dirty and n.status == "compressed" for n in m.fact_nodes())
 
     async def test_memorize_compress_and_answer_from_the_node(self):
         s = self.system

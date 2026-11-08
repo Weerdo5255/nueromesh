@@ -385,7 +385,7 @@ class ThinkingBank:
     # ------------------------------------------------------------- forming
     def _facts(self) -> list[dict]:
         out = []
-        for n in self.sys.memory.nodes.values():
+        for n in self.sys.memory.fact_nodes():
             for t in n.facts():
                 if t.answer:
                     out.append({"ask": t.ask, "answer": t.answer, "node": n.id, "source": t.source or t.by or ""})

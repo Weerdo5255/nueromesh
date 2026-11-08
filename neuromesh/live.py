@@ -24,6 +24,7 @@ import time
 
 from .commands import HELP, LIVE_HELP, execute
 from .tasks import DIRECT, DISPATCH
+from .ego import a_mood
 
 UNICODE = dict(h="─", v="│", tee="├", end="└", pipe="│", arrow="─▶",
                dashed="╌▶", to="⇒", star="★", sub="↳", ok="✓", no="✗",
@@ -182,7 +183,7 @@ def ego_line(system, g: dict, end: str) -> Line | None:
     who = f"ego node {champ.id}" if champ is not None else "ego policy (its node is learning)"
     mood = s.affect.snapshot().get("mood", "steady")
     if end == "in":
-        return (f"ego {g['to']} the outer layer: takes every order in, in a {mood} mood ({who})", "title")
+        return (f"ego {g['to']} the outer layer: takes every order in, in {a_mood(mood)} ({who})", "title")
     last = ego.remarks[-1] if ego.remarks else None
     said = f"last said ({last['kind']}): {last['text'][:70]}" if last else "has said nothing of its own yet"
     return (f"ego {g['to']} on the way out it may add its own view, labelled; {said}", "dim")
@@ -197,14 +198,14 @@ def memory_lines(system, g: dict, limit: int = 5) -> list[Line]:
     mem = system.memory
     if not mem.enabled:
         return []
-    nodes = sorted(mem.nodes.values(), key=lambda n: n.created)
+    nodes = sorted(mem.fact_nodes(), key=lambda n: n.created)
     if not nodes:
         return [("memory nodes: none yet (learned facts are compressed into them; /memorize teaches one)", "dim")]
     facts = sum(len(n.facts()) for n in nodes)
     total, first = sum(n.bytes for n in nodes), sum(n.first_bytes for n in nodes)
     was = f" (from {_size(first)})" if first > total else ""
     lines: list[Line] = [(f"memory nodes {g['dot']} {facts} facts in {_size(total)}{was} {g['dot']} tests: "
-                          f"{mem.tests_dir.name}/", "title")]
+                          f"{mem.db_path.name}", "title")]
     shown = nodes[-limit:]
     for i, n in enumerate(shown):
         branch = g["end"] if i == len(shown) - 1 else g["tee"]

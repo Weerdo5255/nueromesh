@@ -299,7 +299,7 @@ def traces(system, n: int = 15) -> list[dict]:
         mood_in = next((m.group(1) for t in trace for m in [re.match(r"^ego \(the outer layer\): took it in an? (\w+) mood", str(t))]
                         if m), None)
         if mood_in:  # the ego is wrapped around everything: first in (ego.py)
-            hops.append({"stage": "ego", "node": None, "label": f"took it in a {mood_in} mood", "kind": "ego"})
+            hops.append({"stage": "ego", "node": None, "label": f"took it in {'an' if mood_in[:1] in 'aeiou' else 'a'} {mood_in} mood", "kind": "ego"})
         took = next((m.group(1) for t in trace for m in [re.match(r"^(director-\d+) took", str(t))] if m), None)
         hops.append({"stage": "director", "node": took or "director-0", "label": "took it", "kind": "director"})
         steps = res.get("steps") or []

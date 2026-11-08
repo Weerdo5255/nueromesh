@@ -3,21 +3,27 @@
 Every fact the mesh learns - a question and the answer it came to, from retained articles, a
 teacher, a person or a challenge's practice answers - is compressed into a memory node: a small
 MLP that maps the question, and other ways of asking it, to the answer. As it does this it writes
-an external, human-readable test file for the node (memory_tests/<node>.toml): every question with
-the answer the node must give, and questions it must not answer. Those tests are the contract.
+the node's tests into the memory's own database (state/memory.db, memdb.py - not files): every
+question with the answer the node must give, and questions it must not answer. Those tests are the
+contract.
 
 The Compressor agent then keeps trying to make each node smaller: fewer input features (folding
 the hashed features together), fewer neurons, fewer layers, fewer bits per weight. Each smaller
 candidate is fine-tuned and run against the tests; it is accepted, and used to store the
-knowledge, only if every answer still matches. People can read and edit the tests: change an
-answer and the node is retrained to match; delete a test and it forgets that fact; delete the
-file and it forgets the node; write a new file and it learns it.
+knowledge, only if every answer still matches. People can read and edit the tests (/memory tests,
+the API, or any SQLite tool - triggers note every change): change an answer and the node is
+retrained to match; delete a test and it forgets that fact; delete the node's row and it forgets
+the node; add tests for a new node and it learns them.
+
+Its own statements - its opinions, what its ego said, how its ego settled a disagreement - are kept
+in memory too, WITHOUT tests: in own-memory nodes (own-0001, ...) that learn them from the database's
+own table but are never checked, compressed, merged, or served as an answer about the world (P18).
 
 When nothing is left to compress, it goes back through its compressed memory nodes and tries to
 merge two of them, chosen at random, into one: both networks side by side in a single node (every
 answer exactly as its parent gave it), fine-tuned together. The combined node is tested against
 both nodes' tests; if it passes at least 90% of them it replaces both, the tests it still fails are
-listed in its file and never served, and it relearns until every test passes. Combined nodes are
+listed with it and never served, and it relearns until every test passes. Combined nodes are
 compressed further, and can be merged again with other combined nodes.
 """
 from __future__ import annotations
@@ -39,6 +45,7 @@ import numpy as np
 
 from .encoding import HashingEncoder
 from .evolution import insert_layer, prune_layer, remove_layer, widen_layer
+from .memdb import MemoryDB
 
 UNKNOWN = "(not something this node knows)"  # output 0 of every memory node
 
@@ -203,6 +210,38 @@ def _q(s) -> str:
 
 def file_hash(data: bytes) -> str:
     return hashlib.sha1(data).hexdigest()
+
+
+def parse_toml(raw: bytes) -> dict:
+    """A test file of earlier versions ([[test]] and [[unknown]] tables) as database rows."""
+    try:
+        data = tomllib.loads(raw.decode("utf-8"))
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+        return {"error": str(exc)}
+    keep = ("ask", "answer", "variant_of", "source", "learned", "by")
+    return {"tests": [{k: str(e.get(k, "")) for k in keep} for e in data.get("test", []) if isinstance(e, dict)],
+            "unknowns": [{"ask": str(e.get("ask", "")), "reason": str(e.get("reason", ""))} for e in data.get("unknown", [])
+                         if isinstance(e, dict)]}
+
+
+def own_ask(kind: str, about: str) -> str:
+    """The question an own statement answers, for its own-memory node ("" when it is about nothing in particular)."""
+    about = " ".join(str(about or "").split())[:120]
+    if not about:
+        return ""
+    if kind in ("opinion", "ego:opinion"):
+        return f"What do you think about {about}?"
+    if kind == "ego:curious":
+        return f"Are you curious about {about}?"
+    if kind == "ego:dream":
+        return f"Did you dream about {about}?"
+    if kind == "ego:doubt":
+        return f"Are you sure about {about}?"
+    if kind == "arbitration":
+        return f"How did you settle {about}?"
+    if kind == "desire":
+        return f"What do you want to know about {about}?"
+    return f"What did you say about {about}?"
 
 
 # ============================================================================ the net
@@ -430,6 +469,8 @@ class MemoryNode:
     mtime: float = 0.0
     parts: list = field(default_factory=list)        # the nodes it was merged from, all the way down
     merged_from: list = field(default_factory=list)  # the two nodes it was made of
+    rev: int = 0                    # its tests' revision in the memory database when last read or written
+    own: bool = False               # an own-memory node: its own statements, untested (see the docstring)
 
     @property
     def hidden(self) -> tuple:
@@ -475,6 +516,7 @@ class Recall:
     answer: str
     confidence: float
     source: str
+    how: str = ""                   # memory nodes that answered with it, or how the ego settled their disagreement
 
 
 # =============================================================================== jobs
@@ -635,11 +677,14 @@ class MemoryBank:
         self.pol = system.directives.memory
         self.dim = system.directives.nodes.input_dim
         self.dir = system.state_dir / "memory"
-        self.tests_dir = system.root / self.pol.tests_dir
+        self.tests_dir = system.root / self.pol.tests_dir   # earlier versions' test files (imported once)
+        self.db_path = system.root / self.pol.database
+        self.db = MemoryDB(self.db_path, readonly=readonly)
         self.nodes: dict[str, MemoryNode] = {}
         self.rng = np.random.default_rng(system.rng.randrange(1 << 30))
         self.stats: Counter = Counter()
         self._next_id = 1
+        self._next_own = 1
         self._last_sync = 0.0
         self._last_merge = time.time()  # the first merge waits a while after start
         self.tried_merges: set = set()  # pairs (as they were) that did not merge
@@ -653,40 +698,154 @@ class MemoryBank:
     def allows(self, kind: str) -> bool:
         return self.enabled and kind in self.pol.learn_from
 
+    def fact_nodes(self) -> list[MemoryNode]:
+        """The nodes holding facts (each checked by its tests): not its own statements."""
+        return [n for n in self.nodes.values() if not n.own]
+
+    def own_nodes(self) -> list[MemoryNode]:
+        return [n for n in self.nodes.values() if n.own]
+
+    # -------------------------------------------------------------- its own statements (untested)
+    def remember_own(self, kind: str, text: str, about: str = "", mood: str = "", source: str = "") -> dict | None:
+        """Keep one of its own statements - an opinion, what its ego said, how its ego settled a disagreement -
+        in memory, without tests. One about something is learned by an own-memory node (the newest statement
+        for the same question wins); every statement stays in the memory database's own table."""
+        if not self.enabled or not self.pol.own or self.readonly:
+            return None
+        text = " ".join(str(text or "").split())
+        if not text:
+            return None
+        ask = own_ask(kind, about)
+        node = self._own_node_for(ask) if ask else None
+        rid = self.db.add_own(kind, text, about=about, ask=ask, mood=mood, source=source, node=node.id if node else "")
+        if node is not None:
+            self._load_own(node)
+            node.version += 1
+            node.status = "learning"
+        self.stats["own_kept"] += 1
+        self.sys.bus.publish("memory.own", kind=kind, about=about[:80], node=node.id if node else "", text=text[:160])
+        return {"id": rid, "node": node.id if node else "", "ask": ask}
+
+    def _own_node_for(self, ask: str) -> MemoryNode:
+        k = _norm(ask)
+        for n in self.own_nodes():
+            if any(_norm(t.ask) == k for t in n.tests):
+                return n
+        open_ = [n for n in self.own_nodes() if len(n.tests) < self.pol.own_per_node]
+        if open_:
+            return max(open_, key=lambda n: n.created)
+        node = MemoryNode(f"own-{self._next_own:04d}", self.dim, own=True)
+        self._next_own += 1
+        self.nodes[node.id] = node
+        self.sys.bus.publish("memory.node", node=node.id, own=True)
+        return node
+
+    def _load_own(self, node: MemoryNode) -> None:
+        """An own-memory node's statements, from the database (the newest for each question)."""
+        node.tests = [Test(r["ask"], r["text"], f"its own {r['kind'].replace('ego:', 'ego, ')}",
+                           time.strftime("%Y-%m-%d %H:%M", time.localtime(r["ts"] or 0)), "", "itself")
+                      for r in self.db.own_asks(node.id)]
+        node.unknowns = []
+
+    def recall_own(self, text: str, threshold: float | None = None) -> Recall | None:
+        """What it said or thought before, from its own-memory nodes (never an answer about the world)."""
+        if not self.enabled or not self.pol.own:
+            return None
+        ready = [n for n in self.own_nodes() if n.params is not None]
+        if not ready:
+            return None
+        x = encode_many([text], self.dim)
+        best = None
+        for n in ready:
+            top, conf = n.predict(x)
+            i, c = int(top[0]), float(conf[0])
+            if i == 0 or i >= len(n.answers) or c < (self.pol.answer_threshold if threshold is None else threshold):
+                continue
+            if n.answers[i] not in n.expected_answers():
+                continue
+            if best is None or c > best.confidence:
+                best = Recall(n, n.answers[i], c, n.source_of(n.answers[i]))
+        return best
+
+    def own_statements(self, about: str | None = None, kind=None, limit: int = 20, since: float = 0.0,
+                       until: float | None = None) -> list[dict]:
+        return self.db.own(kind=kind, about=about, limit=limit, since=since, until=until) if self.enabled else []
+
     # -------------------------------------------------------------- persistence
-    def tests_path(self, node: MemoryNode) -> Path:
-        return self.tests_dir / f"{node.id}.toml"
+    def tests_ref(self, node: MemoryNode) -> str:
+        """Where its tests are, for people."""
+        return f"{self.db_path.name} ({'own statements, untested' if node.own else 'tests'} of {node.id})"
 
     def weights_path(self, node: MemoryNode) -> Path:
         return self.dir / f"{node.id}.npz"
 
     def load(self) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.tests_dir.mkdir(parents=True, exist_ok=True)
         for path in sorted(self.dir.glob("*.npz")):
             try:
                 node = self._load_weights(path)
             except Exception:
                 continue
             self.nodes[node.id] = node
+        if not self.readonly:
+            self._import_files()
         for node in list(self.nodes.values()):
-            tp = self.tests_path(node)
-            if not tp.exists() and self.readonly:
+            if node.own:
+                self._load_own(node)
                 continue
-            if not tp.exists():  # its tests were deleted while the mesh was off: forget it
-                self._forget_node(node, "its test file was deleted")
+            data = self.db.read(node.id)
+            if data is None and self.readonly:
+                legacy = self.tests_dir / f"{node.id}.toml"
+                data = parse_toml(legacy.read_bytes()) if legacy.exists() else None
+                if data is None or "error" in data:
+                    continue
+            if data is None:  # its tests were deleted while the mesh was off: forget it
+                self._forget_node(node, "its tests were deleted from the memory database")
                 continue
-            raw = tp.read_bytes()
-            self._read_tests(node, raw)
-            if file_hash(raw) != node.file_hash and not self.readonly:
+            self._read_rows(node, data)
+            if data.get("rev", node.rev) != node.rev and not self.readonly:  # changed while the mesh was off
                 node.version += 1
                 self._refresh_unknowns(node)
                 self.write_tests(node)
-            node.mtime = tp.stat().st_mtime
         if not self.readonly:
-            self._adopt_new_files()
+            self._adopt_new()
+            for nid in self.db.own_nodes():  # statements whose node's weights were lost: learn them again
+                if nid not in self.nodes:
+                    node = MemoryNode(nid, self.dim, own=True)
+                    self.nodes[nid] = node
+                    self._load_own(node)
         nums = [int(m.group(1)) for n in self.nodes for m in [re.match(r"mem-(\d+)$", n)] if m]
         self._next_id = max(nums, default=0) + 1
+        own = [int(m.group(1)) for n in self.nodes for m in [re.match(r"own-(\d+)$", n)] if m]
+        self._next_own = max(own, default=0) + 1
+
+    def _import_files(self) -> None:
+        """Test files from earlier versions (memory_tests/<node>.toml) go into the database once; the
+        folder is then moved aside (memory_tests.imported)."""
+        d = self.tests_dir
+        if not d.is_dir():
+            return
+        files = sorted(d.glob("*.toml"))
+        imported = 0
+        for path in files:
+            nid = path.stem
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", nid) or self.db.rev(nid) is not None:
+                continue
+            raw = path.read_bytes()
+            data = parse_toml(raw)
+            if "error" in data:
+                continue
+            rev = self.db.write(nid, data["tests"], data["unknowns"], {"imported_from": str(path)})
+            node = self.nodes.get(nid)
+            if node is not None and node.file_hash == file_hash(raw):
+                node.rev = rev  # unchanged since its weights were saved: nothing to relearn
+            imported += 1
+        if files:
+            dest = d.with_name(d.name + ".imported")
+            if dest.exists():
+                dest = d.with_name(f"{d.name}.imported-{int(time.time())}")
+            shutil.move(str(d), str(dest))
+            self.sys.bus.publish("memory.imported", files=len(files), imported=imported, moved_to=str(dest))
 
     def _load_weights(self, path: Path) -> MemoryNode:
         with np.load(path, allow_pickle=False) as z:
@@ -701,7 +860,8 @@ class MemoryBank:
                           meta["answers"], history=meta.get("history", []), created=meta.get("created", time.time()),
                           status=meta.get("status", "ready"), first_bytes=meta.get("first_bytes", 0),
                           file_hash=meta.get("file_hash", ""), served=meta.get("served", 0),
-                          parts=meta.get("parts", []), merged_from=meta.get("merged_from", []))
+                          parts=meta.get("parts", []), merged_from=meta.get("merged_from", []),
+                          rev=int(meta.get("rev", 0)), own=bool(meta.get("own", False)))
         node.passed, node.total, node.failing = meta.get("passed", 0), meta.get("total", 0), meta.get("failing", [])
         node.checked_version = node.version  # it passed its tests when saved
         if node.input_dim != self.dim:  # the encoder changed width: relearn from the tests
@@ -726,16 +886,14 @@ class MemoryBank:
                 "layers": len(node.params) // 2, "answers": node.answers, "history": node.history[-50:],
                 "created": node.created, "status": node.status, "first_bytes": node.first_bytes,
                 "file_hash": node.file_hash, "served": node.served, "passed": node.passed, "total": node.total,
-                "failing": node.failing, "parts": node.parts, "merged_from": node.merged_from}
+                "failing": node.failing, "parts": node.parts, "merged_from": node.merged_from, "rev": node.rev,
+                "own": node.own}
         self.dir.mkdir(parents=True, exist_ok=True)
         tmp = self.dir / f".{node.id}.tmp.npz"
         np.savez(tmp, meta=np.array(json.dumps(meta)), **arrays)
         tmp.replace(self.weights_path(node))
 
-    def write_tests(self, node: MemoryNode) -> None:
-        """The node's external, human-readable test file."""
-        self.tests_dir.mkdir(parents=True, exist_ok=True)
-        facts = node.facts()
+    def summary(self, node: MemoryNode) -> dict:
         if node.params is None:
             size = "not learned yet"
         else:
@@ -744,63 +902,50 @@ class MemoryBank:
                 size += f" (first {node.first_bytes:,} bytes)"
         passing = (f"{node.passed}/{node.total}" + (f"; failing: {', '.join(node.failing[:5])}" if node.failing else "")
                    if node.total and (not node.dirty or node.status == "failing") else "not checked yet")
-        lines = [
-            f"# Memory node {node.id}: what NeuroMesh has learned, compressed into a small neural network.",
-            "# These tests are the contract: the node must give exactly these answers, and must not answer",
-            "# the [[unknown]] questions. A smaller node replaces it only if it passes every test.",
-            "# Change an answer or add a [[test]] (ask + answer) and the node is retrained to match;",
-            "# delete a test to make it forget that fact; delete this file to make it forget the node.",
-            "# A test with variant_of is another way of asking that test; its answer follows that test.",
-            "",
-            f"node = {_q(node.id)}",
-            f"facts = {len(facts)}",
-            f"answers = {len(node.expected_answers())}",
-            f"size = {_q(size)}",
-            f"passing = {_q(passing)}",
-            "history = [",
-            *[f"  {_q(self._history_line(h))}," for h in node.history[-12:]],
-            "]",
-        ]
+        return {"node": node.id, "facts": len(node.facts()), "answers": len(node.expected_answers()), "size": size,
+                "passing": passing, "history": [self._history_line(h) for h in node.history[-12:]]}
+
+    def write_tests(self, node: MemoryNode) -> None:
+        """The node's tests, in the memory database (its own statements are not tests: they are not written)."""
+        if node.own or self.readonly:
+            return
+        tests = [{"ask": t.ask, "answer": t.answer, "variant_of": t.variant_of, "source": t.source, "learned": t.learned,
+                  "by": t.by} for t in node.tests]
+        unknowns = [{"ask": u.ask, "reason": u.reason} for u in node.unknowns]
+        node.rev = self.db.write(node.id, tests, unknowns, self.summary(node))
+
+    def render_tests(self, node: MemoryNode) -> str:
+        """Its tests as text, for people (the same layout earlier versions' test files had)."""
+        info = self.summary(node)
+        lines = [f"# Memory node {node.id}: " + ("its own statements, kept without tests (never served as facts)."
+                                                 if node.own else "the tests it must pass (in the memory database)."),
+                 f"node = {_q(node.id)}", f"facts = {info['facts']}", f"answers = {info['answers']}",
+                 f"size = {_q(info['size'])}", f"passing = {_q('untested' if node.own else info['passing'])}"]
         for t in node.tests:
-            lines += ["", "[[test]]", f"ask = {_q(t.ask)}", f"answer = {_q(t.answer)}"]
-            if t.variant_of:
-                lines.append(f"variant_of = {_q(t.variant_of)}")
-            if t.source:
-                lines.append(f"source = {_q(t.source)}")
-            if t.learned:
-                lines.append(f"learned = {_q(t.learned)}")
-            if t.by:
-                lines.append(f"by = {_q(t.by)}")
+            lines += ["", "[[test]]" if not node.own else "[[statement]]", f"ask = {_q(t.ask)}", f"answer = {_q(t.answer)}"]
+            for k in ("variant_of", "source", "learned", "by"):
+                if getattr(t, k):
+                    lines.append(f"{k} = {_q(getattr(t, k))}")
         for u in node.unknowns:
             lines += ["", "[[unknown]]", f"ask = {_q(u.ask)}", f"reason = {_q(u.reason)}"]
-        data = ("\n".join(lines) + "\n").encode("utf-8")
-        path = self.tests_path(node)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_bytes(data)
-        tmp.replace(path)
-        node.file_hash = file_hash(data)
-        node.mtime = path.stat().st_mtime
+        return "\n".join(lines) + "\n"
 
     @staticmethod
     def _history_line(h: dict) -> str:
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(h.get("ts", 0)))
         return f"{when} {h.get('event', '')}: {h.get('note', '')}".strip()
 
-    def _read_tests(self, node: MemoryNode, raw: bytes) -> dict:
-        """Load a test file into the node. Returns what changed."""
-        try:
-            data = tomllib.loads(raw.decode("utf-8"))
-        except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
-            return {"error": str(exc)}
+    def _read_rows(self, node: MemoryNode, data: dict) -> dict:
+        """Load its tests from the database's rows. Returns what changed."""
         old = {t.ask: t.answer for t in node.tests}
         tests, malformed = [], 0
-        for e in data.get("test", []):
+        for e in data.get("tests", []):
             ask, answer = e.get("ask"), e.get("answer")
             if not isinstance(ask, str) or not isinstance(answer, str) or not ask.strip() or not answer.strip():
                 malformed += 1
                 continue
-            tests.append(Test(" ".join(ask.split()), answer.strip(), str(e.get("source", "")), str(e.get("learned", "")),
-                              " ".join(str(e.get("variant_of", "")).split()), str(e.get("by", "")) or "a person"))
+            tests.append(Test(" ".join(ask.split()), answer.strip(), str(e.get("source") or ""), str(e.get("learned") or ""),
+                              " ".join(str(e.get("variant_of") or "").split()), str(e.get("by") or "") or "a person"))
         primaries = {t.ask: t for t in tests if not t.variant_of}
         kept = []
         for t in tests:
@@ -811,22 +956,22 @@ class MemoryBank:
                 t.answer = p.answer
             kept.append(t)
         node.tests = kept
-        node.unknowns = [Test(" ".join(str(e["ask"]).split()), reason=str(e.get("reason", "")) or "added by a person")
-                         for e in data.get("unknown", []) if isinstance(e.get("ask"), str) and e["ask"].strip()]
+        node.unknowns = [Test(" ".join(str(e["ask"]).split()), reason=str(e.get("reason") or "") or "added by a person")
+                         for e in data.get("unknowns", []) if isinstance(e.get("ask"), str) and e["ask"].strip()]
+        node.rev = int(data.get("rev", node.rev))
         new = {t.ask: t.answer for t in node.tests}
         return {"added": len(set(new) - set(old)), "removed": len(set(old) - set(new)),
                 "changed": sum(1 for a in set(new) & set(old) if new[a] != old[a]), "malformed": malformed}
 
-    def _adopt_new_files(self) -> list[MemoryNode]:
-        """A test file a person wrote (or one whose node was lost): learn it."""
+    def _adopt_new(self) -> list[MemoryNode]:
+        """Tests a person added for a node the mesh does not have (or one whose node was lost): learn them."""
         made = []
-        for path in sorted(self.tests_dir.glob("*.toml")):
-            nid = path.stem
-            if nid in self.nodes or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", nid):
+        for nid in sorted(self.db.revs()):
+            if nid in self.nodes or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", nid) or nid.startswith("own-"):
                 continue
+            data = self.db.read(nid)
             node = MemoryNode(nid, self.dim)
-            node.mtime = path.stat().st_mtime
-            self._read_tests(node, path.read_bytes())
+            self._read_rows(node, data or {})
             if not node.tests:
                 continue
             for t in node.tests:
@@ -838,6 +983,21 @@ class MemoryBank:
             self.sys.bus.publish("memory.edited", node=nid, added=len(node.facts()), removed=0, changed=0,
                                  malformed=0, new=True)
         return made
+
+    def edit_tests(self, node_id: str, tests: list[dict], unknowns: list[dict] | None = None, by: str = "a person") -> dict:
+        """A person rewrites a node's tests (the API, /memory): the database takes them, and the mesh relearns."""
+        node = self.nodes.get(node_id)
+        if node is not None and node.own:
+            return {"ok": False, "error": "own-memory nodes hold its own statements, not tests"}
+        if unknowns is None:
+            unknowns = [{"ask": u.ask, "reason": u.reason} for u in (node.unknowns if node else []) if not u.auto]
+        clean = [{"ask": str(t.get("ask", "")), "answer": str(t.get("answer", "")), "variant_of": str(t.get("variant_of", "")),
+                  "source": str(t.get("source", "")), "learned": str(t.get("learned", "")), "by": str(t.get("by", "") or by)}
+                 for t in tests if isinstance(t, dict)]
+        self.db.write(node_id, clean, [{"ask": str(u.get("ask", "")), "reason": str(u.get("reason", ""))}
+                                       for u in unknowns if isinstance(u, dict)], {"edited_by": by})
+        touched = self.sync_tests(force=True)
+        return {"ok": True, "node": node_id, "touched": touched}
 
     # ------------------------------------------------------------- learning
     def learn(self, ask: str, answer, source: str = "", by: str = "", kind: str = "people", reviewed: bool = False):
@@ -858,7 +1018,7 @@ class MemoryBank:
             return None
         now = time.strftime("%Y-%m-%d %H:%M")
         n_ask = _norm(ask)
-        for node in self.nodes.values():
+        for node in self.fact_nodes():
             same = {t.variant_of or t.ask for t in node.tests if _norm(t.ask) == n_ask}
             for t in node.facts():
                 if key(t.ask) != k and t.ask not in same:
@@ -916,7 +1076,7 @@ class MemoryBank:
 
     def forget(self, ask: str) -> str | None:
         k = key(ask)
-        for node in list(self.nodes.values()):
+        for node in self.fact_nodes():
             hit = [t for t in node.facts() if key(t.ask) == k or _norm(t.ask) == _norm(ask)]
             if not hit:
                 continue
@@ -953,7 +1113,9 @@ class MemoryBank:
                 self.write_tests(n)
 
     def _refresh_unknowns(self, node: MemoryNode, exclude: tuple = ()) -> bool:
-        keys = {key(t.ask) for n in self.nodes.values() for t in n.tests}
+        if node.own:  # its own statements have no tests
+            return False
+        keys = {key(t.ask) for n in self.fact_nodes() for t in n.tests}
         human = [u for u in node.unknowns if not u.auto]
         auto: list[Test] = []
         for p in PROBES:
@@ -961,8 +1123,9 @@ class MemoryBank:
                 break
             if key(p) not in keys:
                 auto.append(Test(p, reason="auto: belongs to a tool, a skill or small talk"))
-        others = [(zlib.crc32(t.ask.encode()), t.ask, n.id) for n in self.nodes.values()
-                  if n is not node and n.id not in exclude for t in n.facts()]
+        mine = {key(t.ask) for t in node.tests}  # a question it answers itself is never one it must not answer
+        others = [(zlib.crc32(t.ask.encode()), t.ask, n.id) for n in self.fact_nodes()
+                  if n is not node and n.id not in exclude for t in n.facts() if key(t.ask) not in mine]
         for _, ask, nid in sorted(others)[: self.pol.unknown_tests]:
             auto.append(Test(ask, reason=f"auto: {nid} knows this one"))
         for t in node.facts():
@@ -980,9 +1143,8 @@ class MemoryBank:
             gone = self.dir / "forgotten"
             gone.mkdir(parents=True, exist_ok=True)
             shutil.move(str(wp), str(gone / f"{node.id}-{int(time.time())}.npz"))
-        tp = self.tests_path(node)
-        if tp.exists():
-            tp.unlink()
+        if not node.own:
+            self.db.delete(node.id)
         self.sys.guardian.audit("memory", "memory.forgotten", node.id, why=why)
         self.sys.bus.publish("memory.forgotten", node=node.id, why=why)
         for n in self.nodes.values():
@@ -990,8 +1152,8 @@ class MemoryBank:
                 n.version += 1
                 self.write_tests(n)
 
-    def sync_files(self, force: bool = False) -> list[str]:
-        """Notice what people did to the test files: edits, deletions, new files."""
+    def sync_tests(self, force: bool = False) -> list[str]:
+        """Notice what people did to the tests in the memory database: edits, deletions, new nodes."""
         if not self.enabled:
             return []
         now = time.time()
@@ -999,34 +1161,31 @@ class MemoryBank:
             return []
         self._last_sync = now
         touched = []
+        revs = self.db.revs()
         for node in list(self.nodes.values()):
-            tp = self.tests_path(node)
-            if not tp.exists():
-                self._forget_node(node, "its test file was deleted")
+            if node.own:
+                continue
+            rev = revs.get(node.id)
+            if rev is None:
+                self._forget_node(node, "its tests were deleted from the memory database")
                 touched.append(node.id)
                 continue
-            mtime = tp.stat().st_mtime
-            if mtime == node.mtime:
+            if rev == node.rev:
                 continue
-            raw = tp.read_bytes()
-            node.mtime = mtime
-            if file_hash(raw) == node.file_hash:
-                continue
-            change = self._read_tests(node, raw)
-            if "error" in change:
-                node.file_hash = file_hash(raw)  # wait for the next save
-                self.sys.bus.publish("memory.unreadable", node=node.id, error=change["error"][:200])
-                continue
+            data = self.db.read(node.id) or {}
+            change = self._read_rows(node, data)
             if not node.facts():
-                self._forget_node(node, "every test was deleted from its file")
+                self._forget_node(node, "every test was deleted from the memory database")
                 touched.append(node.id)
                 continue
             self._changed(node)
             self.sys.guardian.audit("person", "memory.edited", node.id, **change)
             self.sys.bus.publish("memory.edited", node=node.id, **change)
             touched.append(node.id)
-        touched += [n.id for n in self._adopt_new_files()]
+        touched += [n.id for n in self._adopt_new()]
         return touched
+
+    sync_files = sync_tests  # (earlier name)
 
     # ------------------------------------------------------------- answering
     def known(self, ask: str):
@@ -1034,7 +1193,7 @@ class MemoryBank:
         k = key(" ".join(str(ask or "").split()))
         if not k:
             return None
-        for node in self.nodes.values():
+        for node in self.fact_nodes():
             for t in node.facts():
                 if key(t.ask) == k:
                     return t
@@ -1045,13 +1204,14 @@ class MemoryBank:
         may look at less certain answers (threshold) and is not counted as serving)."""
         if not self.enabled or not self.pol.serve:
             return None
-        ready = [n for n in self.nodes.values() if n.params is not None]
+        ready = [n for n in self.fact_nodes() if n.params is not None]
         if not ready:
             return None
         x = encode_many([text], self.dim)
-        best: Recall | None = None
-        for n in ready:
-            top, conf = n.predict(x)
+        pool = getattr(self.sys, "pool", None)  # every memory node at once (ensemble.py)
+        preds = pool.map("memory", lambda n: n.predict(x), ready) if pool is not None else [n.predict(x) for n in ready]
+        found: list[Recall] = []
+        for n, (top, conf) in zip(ready, preds):
             i, c = int(top[0]), float(conf[0])
             if hasattr(self.sys, "firings"):  # what each memory node fired on (anatomy.py)
                 from .anatomy import record
@@ -1063,8 +1223,23 @@ class MemoryBank:
                 continue
             if any(t.answer == answer and t.ask in n.failing for t in n.tests):
                 continue
-            if best is None or c > best.confidence:
-                best = Recall(n, answer, c, n.source_of(answer))
+            found.append(Recall(n, answer, c, n.source_of(answer)))
+        found.sort(key=lambda r: -r.confidence)
+        best = found[0] if found else None
+        if best is not None and len(found) > 1:
+            from .ensemble import similar
+            agree = [r for r in found if similar(r.answer, best.answer)]
+            if len(agree) == len(found):
+                best.how = f"{len(found)} memory nodes gave it"
+            elif not quiet and getattr(self.sys, "ego", None) is not None:  # they do not match: the ego decides
+                if pool is not None:
+                    pool.disagreed += 1
+                votes = [{"node": r.node, "label": r.answer, "conf": r.confidence,
+                          "acc": r.node.passed / r.node.total if r.node.total else 0.5, "champion": r is best} for r in found]
+                v = self.sys.ego.arbitrate("memory", text, votes, same=similar)
+                best = next((r for r in found if r.node.id == v["node"] and r.answer == v["label"]), best)
+                best.how = (f"memory nodes {', '.join(r.node.id for r in found)} disagreed; the ego arbitrated "
+                            f"({v['strategy']}: {v['why']})")
         if best is not None and getattr(self.sys, "firings", None):
             for f in reversed(self.sys.firings):
                 if f["node"] == best.node.id and f["text"] == str(text)[:300]:
@@ -1157,7 +1332,7 @@ class MemoryBank:
 
     def merge_candidates(self) -> list[tuple]:
         """Pairs of compressed memory nodes that pass all their tests and have not been tried as they are."""
-        nodes = sorted((n for n in self.nodes.values() if n.params is not None and not n.dirty and n.status == "compressed"
+        nodes = sorted((n for n in self.fact_nodes() if n.params is not None and not n.dirty and n.status == "compressed"
                         and n.total and n.passed == n.total), key=lambda n: n.id)
         return [(a, b) for i, a in enumerate(nodes) for b in nodes[i + 1:]
                 if len(a.facts()) + len(b.facts()) <= self.pol.merge_max_facts and self._pair(a, b) not in self.tried_merges]
@@ -1236,9 +1411,7 @@ class MemoryBank:
             gone = self.dir / "merged"
             gone.mkdir(parents=True, exist_ok=True)
             shutil.move(str(wp), str(gone / f"{node.id}-into-{into}.npz"))
-        tp = self.tests_path(node)
-        if tp.exists():
-            tp.unlink()
+        self.db.delete(node.id)
 
     def _base_job(self, node: MemoryNode, kind: str) -> Job:
         answers, texts, labels, weights, test_texts, expected = self._dataset(node)
@@ -1318,11 +1491,16 @@ class MemoryBank:
             if not node.first_bytes:
                 node.first_bytes = node.bytes
             node.status = "ready" if res["ok"] else "failing"
+            if node.own:  # its own statements: learned as well as it can, never checked
+                node.status, node.failing = "untested", []
             self.save_weights(node)
             self.write_tests(node)
             if res["note"] == "still passes every test" and res["ok"]:
                 return
             self.stats["learned"] += 1
+            if node.own:
+                self.sys.bus.publish("memory.own_learned", node=node.id, statements=len(node.tests), bytes=node.bytes)
+                return
             self.sys.bus.publish("memory.learned" if res["ok"] else "memory.failing", node=node.id,
                                  facts=len(node.facts()), bytes=node.bytes, spec=node.spec(), passed=res["passed"],
                                  total=res["total"], grew=res["note"], failing=node.failing[:3])
@@ -1373,23 +1551,28 @@ class MemoryBank:
     # ------------------------------------------------------------- status
     def status(self) -> dict:
         nodes = []
-        for n in sorted(self.nodes.values(), key=lambda n: n.id):
+        for n in sorted(self.fact_nodes(), key=lambda n: n.id):
             nodes.append({"id": n.id, "status": n.status if not n.dirty or n.params is None else "learning",
                           "facts": len(n.facts()), "answers": len(n.expected_answers()), "tests": len(n.tests) + len(n.unknowns),
                           "passed": n.passed, "total": n.total, "bytes": n.bytes, "first_bytes": n.first_bytes,
-                          "spec": n.spec(), "served": n.served, "file": str(self.tests_path(n)),
+                          "spec": n.spec(), "served": n.served, "file": self.tests_ref(n),
                           "failing": n.failing[:5], "parts": n.parts or [n.id], "merged_from": n.merged_from})
+        own = [{"id": n.id, "status": n.status if not n.dirty or n.params is None else "learning", "statements": len(n.tests),
+                "bytes": n.bytes, "spec": n.spec()} for n in sorted(self.own_nodes(), key=lambda n: n.id)]
+        counts = self.db.counts()
         return {"enabled": self.enabled, "nodes": nodes, "facts": sum(x["facts"] for x in nodes),
                 "bytes": sum(x["bytes"] for x in nodes), "first_bytes": sum(x["first_bytes"] for x in nodes),
                 "pending": sum(1 for n in self.nodes.values() if n.dirty and n.tests),
-                "tests_dir": str(self.tests_dir), "threshold": self.pol.answer_threshold,
+                "own": {"enabled": bool(self.pol.own), "nodes": own, "statements": counts["own"]},
+                "database": str(self.db_path), "tests_stored": counts["tests"] + counts["unknowns"],
+                "tests_dir": str(self.db_path), "threshold": self.pol.answer_threshold,
                 "merge": self.pol.merge, "merge_pass_rate": self.pol.merge_pass_rate, **dict(self.stats)}
 
 
 # ===================================================================== from outside
 def check_files(root: Path, out=print) -> int:
-    """`python -m neuromesh memory test`: run every memory node against its test file without
-    starting the mesh (nothing is changed). Returns the number of failing tests."""
+    """`python -m neuromesh memory test`: run every memory node against its tests (in the memory database)
+    without starting the mesh (nothing is changed). Returns the number of failing tests."""
     import random
     from types import SimpleNamespace
 
@@ -1405,15 +1588,15 @@ def check_files(root: Path, out=print) -> int:
         out(f"no memory nodes in {bank.dir}")
         return 0
     failed = 0
-    for node in sorted(bank.nodes.values(), key=lambda n: n.id):
-        if not bank.tests_path(node).exists():
-            out(f"{node.id}: no test file ({bank.tests_path(node)}) - the mesh will forget this node")
+    for node in sorted(bank.fact_nodes(), key=lambda n: n.id):
+        if not node.tests:
+            out(f"{node.id}: no tests in {bank.db_path} - the mesh will forget this node")
             continue
         r = bank.run_tests(node)
         bad = r["total"] - r["passed"]
         failed += bad
         out(f"{node.id}: {r['passed']}/{r['total']} {'pass' if not bad else 'FAIL'}  {node.bytes:,} bytes ({node.spec()})  "
-            f"{bank.tests_path(node)}")
+            f"{bank.tests_ref(node)}")
         for x in [x for x in r["results"] if not x["pass"]][:10]:
             out(f"  x {x['ask']!r}: wanted {x['want']!r}, got {x['got']!r} ({x['confidence']:.2f})")
     return failed

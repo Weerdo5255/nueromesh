@@ -79,7 +79,11 @@ text = "Thinking nodes put what the mesh holds into its own words, after the kno
 
 [[prime]]
 id = "P18-ego"
-text = "The ego is the outer layer, wrapped around every other node: it reads the mood an order is taken in, and on the way out its ego node may add a remark of its own - what it is curious about, a dream, its view, how it feels, or a doubt. The ego node only chooses the kind of remark; the words are built from what is so (its curiosity, its dreams and whether they checked out, its temperament and what moved it, what its thinking nodes and its record show), so a remark adds no fact (P8). A remark is always labelled as its ego's, shown after the answer and never in it, never stored as a fact or used as a source; it stays quiet when the answer was held back or the person is upset. Its ego is never about a person (P9). What its ego says it is curious about raises that area among the objectives the director may set itself, only within [agency] max_self_objectives and its budgets (P12, P16). People can turn the ego off. (Enforced in code by neuromesh/ego.py.)"
+text = "The ego is the outer layer, wrapped around every other node: it reads the mood an order is taken in, and on the way out its ego node may add a remark of its own - what it is curious about, a dream, its view, how it feels, or a doubt. The ego node only chooses the kind of remark; the words are built from what is so (its curiosity, its dreams and whether they checked out, its temperament and what moved it, what its thinking nodes and its record show), so a remark adds no fact (P8). A remark is always labelled as its ego's, shown after the answer and never in it; it is kept in memory as its own statement (untested), never as a fact or a source; it stays quiet when the answer was held back or the person is upset. Its ego is never about a person (P9). What its ego says it is curious about raises that area among the objectives the director may set itself, only within [agency] max_self_objectives and its budgets (P12, P16). People can turn the ego off. (Enforced in code by neuromesh/ego.py.)"
+
+[[prime]]
+id = "P19-ensembles"
+text = "Several instances of each kind of node may run at once ([nodes] max_running in all) and answer together: a capability's champion with its validated instances ([nodes] instances), and every memory node that holds an answer. When instances of the same kind disagree, or memory nodes give answers that do not match, the ego is the ultimate arbitrator: the ego node chooses whom to trust - the champion, the majority, the most accurate and confident side, or what its memory says it decided before - from the split, its mood and its memory, and says so in the trace. A person's teaching still comes before any node (P1). Every arbitration is kept in memory as its own statement, untested, and its tests stay the only contract for facts (P11). (Enforced in code by neuromesh/ensemble.py, neuromesh/ego.py and neuromesh/memory.py.)"
 
 # ------------------------------------------------------------------------- goals
 [[goals]]
@@ -137,6 +141,11 @@ kiwix_attempts = 5              # the Kiwix search: to answer a question it sear
                                 # server (other books, other wordings, title and full text) until an article
                                 # answers it, at most this many times; then it gives up and asks you
                                 # (1 = a single look-up). /kiwix shows its books and recent searches
+kiwix_parallel = 4                      # Kiwix searches run at once for one question (the first in the plan that answers wins)
+browse = true                           # now and then it reads a Kiwix book it has not opened in a long time
+browse_every_seconds = 300              # how often it may pick such a book (in the background, within budgets)
+browse_stale_days = 7                   # a book unopened this long counts as "not looked at in a long time"
+browse_articles = 2                     # random articles it reads from the book each time
 kiwix_coverage = 0.6            # how much of a question an article must cover to count as the answer
 
 [temperament]
@@ -218,17 +227,22 @@ archive_size = 40                       # genomes remembered per capability
 [memory]
 # Memory nodes: everything the mesh learns - facts from retained articles, teacher answers, what
 # people tell it, challenge practice answers - is compressed into small neural networks. As it
-# does this it writes an external, human-readable test file per node (tests_dir/<node>.toml): the
+# does this it writes each node's tests into the memory's own database (database, not files): the
 # questions with the answers the node must give, and questions it must not answer. The compressor
 # then keeps trying smaller nodes - fewer input features, neurons, layers and bits per weight -
-# and a smaller node replaces the current one only if every test still passes (P11). Edit a test
-# file and the node is retrained to match; delete a test or the file and it forgets.
+# and a smaller node replaces the current one only if every test still passes (P11). Change a test
+# (/memory set, PUT /memory/tests/<node>, or any SQLite tool) and the node is retrained to match;
+# delete a test or the node's row and it forgets. Its own statements - opinions, what its ego said,
+# how its ego settled disagreements - are kept in memory too, without tests (own-memory nodes).
 enabled = true
 learn_from = ["knowledge", "teachers", "people", "challenges"]
 serve = true                            # answer questions from memory nodes before anything else
 answer_threshold = 0.6                  # confidence a node needs to answer
 test_margin = 0.1                       # a test passes only with a margin: answers at >= 0.7, unknowns below 0.5
-tests_dir = "memory_tests"              # relative to the root
+database = "state/memory.db"            # the memory's own database (its tests, its own statements), from the root
+tests_dir = "memory_tests"              # test files of earlier versions: imported into the database once, then moved aside
+own = true                              # keep its opinions and its ego's statements in memory too (untested)
+own_per_node = 40                       # statements an own-memory node holds
 facts_per_node = 40
 start_hidden = [64]                     # the shape a node first learns in; then it is compressed
 max_hidden = 256                        # how far a node may grow when it cannot hold its facts
@@ -236,13 +250,13 @@ compress = true
 min_fold = 32                           # fewest hashed input features a node may fold down to
 min_neurons = 4
 min_bits = 8                            # 32, 16 or 8 bits per weight
-unknown_tests = 30                      # other nodes' questions each test file says it must not answer
+unknown_tests = 30                      # other nodes' questions each node's tests say it must not answer
 probe_tests = 6                         # tool / skill / small-talk questions it must not answer
 near_miss_tests = 1                     # per fact: the question with a key word swapped, not to be answered
 learn_epochs = 400
 compress_epochs = 250
 interval_seconds = 0.5
-sync_seconds = 2.0                      # how often the test files are checked for people's edits
+sync_seconds = 2.0                      # how often the tests are checked for people's edits
 merge = true                            # go back through compressed nodes and merge pairs, chosen at random
 merge_pass_rate = 0.9                   # a merged node replaces both when it passes 90% of their tests
 merge_every_seconds = 30                # how often it tries a merge when there is nothing else to do
@@ -389,6 +403,10 @@ max_concurrent_orders = 16
 
 [nodes]
 max_nodes = 40
+max_running = 8                         # node instances that may run at the same time, across the whole mesh
+instances = 3                           # nodes of one kind that answer together: the champion and its validated
+                                        # instances (runners-up, superseded champions); when they disagree the ego
+                                        # arbitrates (P19)
 max_candidates_per_capability = 2
 default_hidden = [64]
 default_lr = 0.01
@@ -478,6 +496,10 @@ self_test_pass_rate = 1.0
 sandbox_cpu_seconds = 5
 sandbox_memory_mb = 512
 default_timeout_s = 10
+workers = true                          # tools that can stay running do (persistent = true: the Kiwix tool): no
+                                        # start-up per request, kept-alive connections, a cache - many times faster
+worker_cpu_seconds = 600                # a worker's CPU budget, for many requests (then a fresh one starts)
+worker_requests = 5000                  # a worker is replaced after this many requests
 
 # Per-tool settings, merged over the tool's own manifest [config], e.g.:
 # [tools.config.kiwix]

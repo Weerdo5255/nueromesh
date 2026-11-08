@@ -1,5 +1,5 @@
 name = "kiwix"
-version = "1.1.0"
+version = "1.2.0"
 description = "Looks a topic up on a local Kiwix server (kiwix-serve: offline Wikipedia and other ZIM archives) and returns the article as knowledge the mesh retains. Preferred over Wikipedia and not rate-limited (see [research] in directives.toml)."
 entrypoint = "tool.py"
 permissions = ["network"]      # HTTP to the Kiwix server -> needs a human's approval once (P3)
@@ -7,6 +7,7 @@ provides = "knowledge"         # results are retained in the knowledge store and
 keywords = ["tell me about", "who was", "who is", "who were", "what is", "what was", "where is", "research",
             "look up", "kiwix", "offline", "what do you know about", "background on", "history of", "learn about"]
 timeout_s = 30
+persistent = true              # it stays running (tool.py --serve): kept-alive connections, a cache, books searched at once
 
 templates = ["tell me about {topic}", "who was {person}", "what is {thing}", "research {topic}",
              "look up {topic} on kiwix", "what do you know about {topic}", "give me background on {topic}",

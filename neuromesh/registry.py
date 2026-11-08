@@ -60,6 +60,22 @@ class NodeRegistry:
         return [n for n in self.nodes.values() if n.status == "candidate"
                 and (capability is None or n.capability == capability)]
 
+    def instances(self, capability: str | None = None) -> list[NeuralNode]:
+        """Validated nodes that answer together with the champion (ensemble.py)."""
+        return [n for n in self.nodes.values() if n.status == "instance"
+                and (capability is None or n.capability == capability)]
+
+    def make_instance(self, node_id: str, reason: str) -> NeuralNode | None:
+        node = self.nodes.get(node_id)
+        if node is None or node.status == "champion":
+            return None
+        node.status = "instance"
+        node.retired_at = None
+        self.persist(node, weights=True)
+        self.audit("registry", "node.instance", node.id, capability=node.capability, reason=reason)
+        self.bus.publish("node.instance", node=node.id, capability=node.capability, reason=reason)
+        return node
+
     def retired(self, capability: str | None = None) -> list[NeuralNode]:
         return [n for n in self.nodes.values() if n.status == "retired"
                 and (capability is None or n.capability == capability)]
@@ -87,11 +103,17 @@ class NodeRegistry:
                          labels=list(node.labels))
         return node
 
-    def promote(self, node_id: str, reason: str, evidence: dict | None = None) -> NeuralNode:
+    def promote(self, node_id: str, reason: str, evidence: dict | None = None, keep_old: bool = False) -> NeuralNode:
         node = self.nodes[node_id]
         old = self.champion(node.capability)
         if old is not None and old.id != node.id:
-            self._retire(old, f"superseded by {node.id}")
+            if keep_old:  # still good enough to answer with it: an instance (ensemble.py)
+                old.status = "instance"
+                self.persist(old)
+                self.bus.publish("node.instance", node=old.id, capability=old.capability,
+                                 reason=f"superseded by {node.id}; still passes the held-out bar")
+            else:
+                self._retire(old, f"superseded by {node.id}")
         node.status = "champion"
         node.promoted_at = time.time()
         self.persist(node, weights=True)
@@ -129,6 +151,8 @@ class NodeRegistry:
     def rollback(self, capability: str) -> NeuralNode | None:
         """Operator override: reinstate the most recently retired node."""
         retired = sorted(self.retired(capability), key=lambda n: n.retired_at or 0, reverse=True)
+        if not retired:  # the superseded champion may be answering as an instance
+            retired = sorted(self.instances(capability), key=lambda n: n.promoted_at or 0, reverse=True)
         if not retired:
             return None
         return self.promote(retired[0].id, "operator rollback")

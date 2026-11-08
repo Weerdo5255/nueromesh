@@ -167,8 +167,9 @@ rest = "do nothing for now"
 
 [ego]
 answer = "In that situation my ego would choose: {label} ({description})."
-description = "The ego, the nodes wrapped around all the others: given its mood, the tone of the message, how the answer went, what it makes of the topic, whether it dreamt about it, whether it has a view of it and whether it spoke a moment ago, decide whether to say something of its own after the answer, and what kind of thing. The words are built from what is so, and always labelled as its ego's (P18)."
-labels = ["quiet", "curious", "dream", "opinion", "feeling", "doubt"]
+description = "The ego, the nodes wrapped around all the others, and the ultimate arbitrator when instances of the same kind of node disagree. Given its mood, the tone of the message, how the answer went, what it makes of the topic, whether it dreamt about it, whether it has a view of it and whether it spoke a moment ago, decide whether to say something of its own after the answer, and what kind of thing. The words are built from what is so, and always labelled as its ego's (P18)."
+labels = ["quiet", "curious", "dream", "opinion", "feeling", "doubt",
+          "trust-champion", "trust-majority", "trust-confident", "trust-memory"]
 open_labels = false
 internal = true
 kind = "ego"
@@ -181,6 +182,10 @@ dream = "say what it dreamt about the topic, and whether that checked out"
 opinion = "give its own view of the topic, with its reasons"
 feeling = "say how it feels right now, and what moved it"
 doubt = "say it doubts itself here, and why"
+trust-champion = "instances disagree: go with the champion, its proven node"
+trust-majority = "instances disagree: go with what most of them say"
+trust-confident = "instances disagree: go with the side with the most accuracy and confidence behind it"
+trust-memory = "instances disagree: go with what its memory says (how it settled this before)"
 
 [planner]
 answer = "I would pursue that with the {label} strategy ({description})."

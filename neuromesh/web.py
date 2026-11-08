@@ -47,6 +47,7 @@ def _family(system, cap: str) -> dict:
     return {"capability": cap, "examples": system.store.count(cap),
             "champion": node_brief(champ) if champ else None,
             "candidates": [node_brief(n) for n in system.registry.candidates(cap)],
+            "instances": [node_brief(n) for n in system.registry.instances(cap)],
             "retired": [node_brief(n) for n in system.registry.retired(cap)]}
 
 
@@ -78,7 +79,7 @@ def mesh(system) -> dict:
     memory = [{"id": n.id, "facts": len(n.facts()), "bytes": n.bytes, "first_bytes": n.first_bytes,
                "spec": n.spec(), "passed": n.passed, "total": n.total, "served": n.served,
                "status": "learning" if n.dirty else n.status, "parts": len(n.parts) or 1}
-              for n in sorted(mem.nodes.values(), key=lambda n: n.created)] if mem.enabled else []
+              for n in sorted(mem.fact_nodes(), key=lambda n: n.created)] if mem.enabled else []
     a = s.affect
     d = s.director
     agency = s.registry.champion("agency") if "agency" in s.capabilities else None
@@ -168,7 +169,7 @@ def memory_node(system, nid: str) -> dict | None:
         return None
     return {"id": n.id, "status": "learning" if n.dirty else n.status, "spec": n.spec(), "bytes": n.bytes,
             "first_bytes": n.first_bytes, "passed": n.passed, "total": n.total, "served": n.served,
-            "file": str(mem.tests_path(n)), "failing": n.failing, "parts": n.parts or [n.id], "merged_from": n.merged_from,
+            "file": mem.tests_ref(n), "failing": n.failing, "parts": n.parts or [n.id], "merged_from": n.merged_from,
             "facts": [{"ask": t.ask, "answer": t.answer, "source": t.source, "learned": t.learned, "by": t.by,
                        "variants": [v.ask for v in n.tests if v.variant_of == t.ask]} for t in n.facts()],
             "unknowns": [{"ask": u.ask, "reason": u.reason} for u in n.unknowns],

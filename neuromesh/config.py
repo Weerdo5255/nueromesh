@@ -81,6 +81,8 @@ class OrderPolicy:
 @dataclass
 class NodePolicy:
     max_nodes: int = 40
+    max_running: int = 8            # node instances that may run at the same time, across the mesh (ensemble.py)
+    instances: int = 3              # nodes of one kind that answer together: the champion and its instances
     max_candidates_per_capability: int = 2
     default_hidden: tuple = (64,)
     default_lr: float = 0.01
@@ -182,6 +184,9 @@ class ToolPolicy:
     sandbox_cpu_seconds: int = 5
     sandbox_memory_mb: int = 512
     default_timeout_s: float = 10.0
+    workers: bool = True              # tools that can stay running (persistent = true: the Kiwix tool) do
+    worker_cpu_seconds: int = 600     # a worker's CPU budget, for many requests (then a fresh one starts)
+    worker_requests: int = 5000       # a worker is replaced after this many requests
     config: dict = field(default_factory=dict)  # [tools.config.<tool>] overrides of manifest [config]
 
 
@@ -202,6 +207,11 @@ class ResearchPolicy:
                                         # before it gives up and asks you (1 = a single look-up, as before)
     kiwix_coverage: float = 0.6         # how much of a question an article must cover to count as its answer
     catalog_seconds: float = 600.0      # how long the list of Kiwix books is kept before it is read again
+    kiwix_parallel: int = 4             # Kiwix searches run at once for one question (then the first that answers wins)
+    browse: bool = True                 # now and then it reads a Kiwix book it has not opened in a long time
+    browse_every_seconds: float = 300.0 # how often it may pick such a book (in the background, within budgets)
+    browse_stale_days: float = 7.0      # a book unopened for this long counts as "not looked at in a long time"
+    browse_articles: int = 2            # random articles it reads from the book each time
 
 
 @dataclass
@@ -294,14 +304,17 @@ class EvolutionPolicy:
 
 @dataclass
 class MemoryPolicy:
-    """Memory nodes: what the mesh learns, compressed into small neural networks, each checked by an
-    external, human-readable test file (see memory.py)."""
+    """Memory nodes: what the mesh learns, compressed into small neural networks, each checked by its
+    tests in the memory's own database (state/memory.db, see memory.py and memdb.py)."""
     enabled: bool = True
     learn_from: tuple = ("knowledge", "teachers", "people", "challenges")
     serve: bool = True                # answer questions from memory nodes before anything else
     answer_threshold: float = 0.6     # confidence a memory node needs to answer
     test_margin: float = 0.1          # a test passes only with this margin: >= 0.7 for an answer, < 0.5 to not answer
-    tests_dir: str = "memory_tests"   # the test files, relative to the root
+    database: str = "state/memory.db" # the memory's own database (its tests, its own statements), from the root
+    tests_dir: str = "memory_tests"   # test files of earlier versions: imported into the database once, then moved aside
+    own: bool = True                  # keep its opinions and its ego's statements in memory too (untested)
+    own_per_node: int = 40            # statements an own-memory node holds
     facts_per_node: int = 40
     start_hidden: tuple = (64,)       # the first shape a node learns in (then it is compressed)
     max_hidden: int = 256             # how far a node may grow when it cannot hold its facts
@@ -317,7 +330,7 @@ class MemoryPolicy:
     probe_tests: int = 6              # tool / skill / small-talk questions as [[unknown]]
     near_miss_tests: int = 1          # near misses of each of its questions as [[unknown]]
     interval_seconds: float = 0.5
-    sync_seconds: float = 2.0         # how often the test files are checked for edits
+    sync_seconds: float = 2.0         # how often the tests are checked for people's edits
     max_answer_chars: int = 600
     merge: bool = True                # go back through compressed memory nodes and merge pairs, chosen at random
     merge_pass_rate: float = 0.9      # a merged node replaces both when it passes this share of their tests

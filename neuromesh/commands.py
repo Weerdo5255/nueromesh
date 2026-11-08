@@ -12,6 +12,7 @@ from pathlib import Path
 from .background import every
 
 from .report import render_lineage, render_status
+from .ego import a_mood
 
 HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely") or a command:
   /status                         overview + directive scorecard
@@ -64,6 +65,7 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /toolsmith try <tool>           have it experiment with a tool it made now
   /dreams                         sleep and dreams: the dream nodes, last night's dreams, what checked out
   /sleep    /wake                 send it to sleep (dreaming) now, or wake it
+  /memory tests <node> | set <node> <q> :: <a> | own [about]   a node's tests (memory database); change one; its own statements
   /sleep off | on | flip          keep it awake (no sleep) or let it sleep; toss the idle coin now (75% objective, 25% sleep)
   /ego [on | off]                 its ego: its mood, what it is curious about, its views, what it said lately
   /imagine <prompt>               its dream nodes imagine something (also: "imagine ...", "what if ...")
@@ -205,12 +207,12 @@ def memory_lines(system, rest: str = "") -> list[str]:
     st = mem.status()
     head = (f"memory: {len(st['nodes'])} node(s), {st['facts']} facts in {_kb(st['bytes'])}"
             + (f" (first learned in {_kb(st['first_bytes'])})" if st["first_bytes"] > st["bytes"] else "")
-            + f"; answers at confidence >= {p.answer_threshold:g}; tests in {mem.tests_dir}/")
+            + f"; answers at confidence >= {p.answer_threshold:g}; tests in {mem.db_path} ({st['tests_stored']} rows)")
     if rest and rest in mem.nodes:
         n = mem.nodes[rest]
         out = [f"  {n.id} [{n.status}] {len(n.facts())} facts, {len(n.expected_answers())} answers, {_kb(n.bytes)} "
                f"({n.spec()}), {n.passed}/{n.total} tests pass, served {n.served}x",
-               f"  test file: {mem.tests_path(n)}"]
+               f"  tests: {mem.tests_ref(n)} (/memory tests {n.id})"]
         if n.merged_from:
             out.append(f"  merged from {' and '.join(n.merged_from)}; made of {', '.join(n.parts)}")
         out += [f"    {mem._history_line(h)}" for h in n.history[-15:]]
@@ -228,6 +230,10 @@ def memory_lines(system, rest: str = "") -> list[str]:
         merged = f" - merged from {len(x['parts'])} nodes" if len(x["parts"]) > 1 else ""
         out.append(f"  {x['id']} [{x['status']}] {x['facts']} facts {_kb(x['bytes'])}{was} - {x['spec']} - {tests}"
                    + (f" - served {x['served']}x" if x["served"] else "") + merged)
+    own = st["own"]
+    if own["statements"]:
+        out.append(f"  its own statements (opinions, its ego's remarks and arbitrations; untested): {own['statements']} kept"
+                   + "".join(f"; {o['id']} [{o['status']}] {o['statements']} learned" for o in own["nodes"]))
     return out
 
 
@@ -237,15 +243,41 @@ async def memory_command(system, rest: str) -> list[str]:
     if sub == "test":
         if not mem.enabled:
             return ["  memory nodes are off"]
-        mem.sync_files(force=True)
+        mem.sync_tests(force=True)
         out = []
-        for node in list(mem.nodes.values()):
+        for node in mem.fact_nodes():
             r = await asyncio.to_thread(mem.run_tests, node)
             mark = "pass" if r["passed"] == r["total"] else "FAIL"
-            out.append(f"  {node.id}: {r['passed']}/{r['total']} {mark}  ({mem.tests_path(node).name})")
+            out.append(f"  {node.id}: {r['passed']}/{r['total']} {mark}  ({mem.tests_ref(node)})")
             for x in [x for x in r["results"] if not x["pass"]][:5]:
                 out.append(f"    x {x['ask'][:60]!r}: wanted {x['want'][:50]!r}, got {x['got'][:50]!r} ({x['confidence']:.2f})")
         return out or ["  no memory nodes yet"]
+    if sub == "tests":  # a node's tests, from the memory database
+        node = mem.nodes.get(arg.strip())
+        if node is None:
+            return [f"  no memory node {arg.strip()!r} (/memory lists them)"]
+        return [f"  {line}" for line in mem.render_tests(node).splitlines()]
+    if sub == "set":  # /memory set mem-0001 <question> :: <answer>  - a person changes (or adds) a test
+        nid, _, qa = arg.strip().partition(" ")
+        ask, sep, answer = qa.partition("::")
+        node = mem.nodes.get(nid)
+        if node is None or node.own or not sep or not ask.strip() or not answer.strip():
+            return ["  /memory set <node> <question> :: <answer>   (a fact node: /memory lists them)"]
+        rows = [{"ask": t.ask, "answer": t.answer, "variant_of": t.variant_of, "source": t.source, "learned": t.learned,
+                 "by": t.by} for t in node.tests]
+        hit = [r for r in rows if r["ask"].lower() == " ".join(ask.split()).lower()]
+        for r in hit:
+            r.update(answer=answer.strip(), by=os.environ.get("USER", "operator"))
+        if not hit:
+            rows.append({"ask": " ".join(ask.split()), "answer": answer.strip(), "by": os.environ.get("USER", "operator")})
+        res = mem.edit_tests(nid, rows, by=os.environ.get("USER", "operator"))
+        return [f"  {'changed' if hit else 'added'} a test in {nid}; it relearns to match ({', '.join(res['touched']) or 'no change'})"]
+    if sub == "own":  # its own statements, kept without tests
+        rows = mem.own_statements(about=arg.strip() or None, limit=20)
+        if not rows:
+            return ["  no own statements kept yet (its opinions and its ego's remarks are kept as it makes them)"]
+        return [f"  {time.strftime('%Y-%m-%d %H:%M', time.localtime(r['ts']))} [{r['kind']}]"
+                + (f" about {r['about']}" if r["about"] else "") + f": {r['text'][:140]}" for r in rows]
     if sub == "merge":
         if not mem.enabled:
             return ["  memory nodes are off"]
@@ -621,7 +653,7 @@ async def execute(system, line: str) -> Output:
                if res.inquiry else [])
         thought = ([f"   ~ its own thinking ({res.thought['node']}, from {res.thought['grounds']} facts; not part of the answer): "
                     f"{res.thought['text']}"] if res.thought and res.route != "thinking" else [])
-        ego = ([f"   @ its ego ({res.ego['kind']}, in a {res.ego['mood']} mood; its own view, not part of the answer): "
+        ego = ([f"   @ its ego ({res.ego['kind']}, in {a_mood(res.ego['mood'])}; its own view, not part of the answer): "
                 f"{res.ego['text']}"] if res.ego else [])
         return Output([first] + [f"   {m}" for m in more] + thought + ego + ask + [f"   . {step}" for step in res.trace],
                       is_order=True)
@@ -800,8 +832,8 @@ async def execute(system, line: str) -> Output:
                     out = ["  that can't be kept as a fact (too short, empty, or a tool/skill question)"]
                 else:
                     verb = {"new": "learning", "updated": "updating", "known": "already knows"}[made[1]]
-                    out = [f"  {verb} it in memory node {made[0]}; tests in {system.memory.tests_dir.name}/{made[0]}.toml "
-                           f"(/memory {made[0]})"]
+                    out = [f"  {verb} it in memory node {made[0]}; its tests are in the memory database "
+                           f"(/memory tests {made[0]})"]
         elif cmd == "challenges" or (cmd == "challenge" and not rest):
             out = challenge_lines(system)
         elif cmd == "challenge":

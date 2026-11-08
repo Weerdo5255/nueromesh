@@ -212,7 +212,7 @@ class Corrections:
         mem = self.sys.memory
         x = mm.encode_many([text], mem.dim)
         out = []
-        for node in mem.nodes.values():
+        for node in mem.fact_nodes():
             if node.params is None:
                 continue
             p = mm.softmax(mm.forward(node.params, mm.fold(x, node.inputs))[0])[0]

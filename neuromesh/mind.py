@@ -224,6 +224,10 @@ class Mind:
         note = self.note("opinion", subject, reasons, stance=stance, strength=strength, source=source,
                          evidence=evidence)
         now = self.clock()
+        mem = getattr(self.sys, "memory", None)
+        if old != stance and not note.private and mem is not None:  # kept in memory too, untested (memory.py)
+            mem.remember_own("opinion", f"My view of {display(subject)}: {stance} ({reasons[:300]})",
+                             about=display(subject), mood=self.sys.affect.state.mood(), source=source)
         if old != stance and (old is None or now - self._announced.get(subject, 0.0) >= 60):
             self._announced[subject] = now  # changes of mind are announced at most once a minute
             # the activity log is visible to users: a private opinion is announced, never shown
@@ -527,7 +531,7 @@ class Mind:
                 if made is None:
                     return False, ["  thanks - but I couldn't keep that as an answer"]
                 return True, [f"  thanks - I'll remember that: compressing it into memory node {made[0]} "
-                              f"(tests in {s.memory.tests_dir.name}/{made[0]}.toml)"]
+                              f"(its tests are in the memory database: /memory tests {made[0]})"]
             labels = s.dispatch.labels
             route = next((r for r in (a, f"tool:{low}", f"skill:{low}") if r in labels), None)
             if route and original:

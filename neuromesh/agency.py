@@ -402,9 +402,9 @@ class Director(Agent):
             practice.sort(key=lambda p: p[1])
         any_suite = bool(ch.enabled and any(r["exam"] for r in ch.summary())) if ch.enabled else False
         mem = s.memory
-        if not mem.enabled or not mem.nodes:
+        if not mem.enabled or not mem.fact_nodes():
             memory = "none"
-        elif any(n.failing or (n.total and n.passed < n.total) for n in mem.nodes.values() if not n.dirty):
+        elif any(n.failing or (n.total and n.passed < n.total) for n in mem.fact_nodes() if not n.dirty):
             memory = "failing"
         elif now - self.verified_at > pol.verify_after_seconds:
             memory = "unverified"
@@ -626,16 +626,16 @@ class Director(Agent):
             mem = s.memory
             mem.sync_files(force=True)
             failing = 0
-            for node in list(mem.nodes.values()):
+            for node in mem.fact_nodes():
                 r = await asyncio.to_thread(mem.run_tests, node)
                 bad = r["total"] - r["passed"]
                 if bad and node.params is not None:
                     failing += bad
                     node.checked_version = -1  # relearn until every test passes again
             self.verified_at = time.time()
-            record["target"] = f"{len(mem.nodes)} memory nodes"
+            record["target"] = f"{len(mem.fact_nodes())} memory nodes"
             record["summary"] = (f"{failing} failing tests found; relearning them" if failing
-                                 else f"all {len(mem.nodes)} memory nodes pass their tests")
+                                 else f"all {len(mem.fact_nodes())} memory nodes pass their tests")
             record["value"] = 0.9 if failing else 0.25
         elif mode == "build":
             need = sit["needs"][0]
@@ -693,7 +693,7 @@ class Director(Agent):
             record["summary"] = "rests"
 
     def _facts(self) -> int:
-        return sum(len(n.facts()) for n in self.sys.memory.nodes.values()) if self.sys.memory.enabled else 0
+        return sum(len(n.facts()) for n in self.sys.memory.fact_nodes()) if self.sys.memory.enabled else 0
 
     def _last_exam(self, suite: str):
         exams = [r for r in self.sys.challenges.history if r["suite"] == suite and r["mode"] == "exam"]

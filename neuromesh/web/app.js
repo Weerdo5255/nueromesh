@@ -183,6 +183,7 @@
       ["Uptime", span(st.uptime_s)],
       ["Orders", num(st.orders) + (st.inflight ? ` (${st.inflight} in flight)` : "")],
       ["Nodes", `${n.live} live, ${n.ever} built`],
+      st.pool ? ["Running at once", `${st.pool.running} of ${st.pool.max_running} (peak ${st.pool.peak})`] : null,
       mem && mem.enabled && mem.nodes.length ? ["Memory", `${mem.facts} facts in ${bytes(mem.bytes)}`] : null,
       ["Background", pct(st.background_duty_cycle)],
       ["Compute", st.compute],
@@ -209,10 +210,11 @@
   // ------------------------------------------------------------------ its ego, on the way out
   // The ego is wrapped around everything: after the answer it may say something of its own - what it is
   // curious about, a dream, its view, how it feels, a doubt - built from what is so and labelled (P18).
+  const aMood = m => `${/^[aeiou]/i.test(String(m)) ? "an" : "a"} ${m} mood`;
   const EGO_KIND = { curious: "curious", dream: "a dream", opinion: "its view", feeling: "how it feels", doubt: "a doubt", self: "itself" };
   function egoAside(e) {
     return h("aside", { class: `ego mood-${e.mood}`, "aria-label": "Its ego" },
-      h("p", { class: "ego-by" }, "Its ego", h("span", {}, ` ${EGO_KIND[e.kind] || e.kind}, in a ${e.mood} mood; its own view, not part of the answer`)),
+      h("p", { class: "ego-by" }, "Its ego", h("span", {}, ` ${EGO_KIND[e.kind] || e.kind}, in ${aMood(e.mood)}; its own view, not part of the answer`)),
       h("p", {}, e.text));
   }
 
@@ -477,6 +479,7 @@
           svg.append(sv("circle", { cx: x, cy: y, r: 7, class: "m-none" }));
           x += 16;
         }
+        (f.instances || []).forEach(n => { const ri = Math.max(4, radius(n.params) * 0.7); svg.append(sv("circle", { cx: x + ri - 4, cy: y, r: ri, class: "m-inst" + mark(n.id), ...nodeAttrs(n.id) }, sv("title", {}, "instance: answers with the champion; " + nodeTip(n)))); x += ri * 2 + 4; });
         f.candidates.forEach(n => { svg.append(sv("circle", { cx: x, cy: y, r: 4.5, class: "m-chall" + mark(n.id), ...nodeAttrs(n.id) }, sv("title", {}, "challenger " + nodeTip(n)))); x += 12; });
         f.retired.forEach(n => { svg.append(sv("circle", { cx: x, cy: y, r: 4.5, class: "m-retired" + mark(n.id), ...nodeAttrs(n.id) }, sv("title", {}, "retired " + nodeTip(n)))); x += 12; });
         const t = sv("text", { x: x + 6, y: y + 4.5, class: "m-text" });
@@ -585,7 +588,7 @@
       g.offset = pad;
       svg.setAttribute("viewBox", `0 0 ${g.W} ${g.H}`);
       svg.setAttribute("height", g.H);
-      svg.setAttribute("aria-label", `${svg.getAttribute("aria-label")}; its ego wraps around all of it, in a ${m.ego.mood} mood`);
+      svg.setAttribute("aria-label", `${svg.getAttribute("aria-label")}; its ego wraps around all of it, in ${aMood(m.ego.mood)}`);
       svg.append(inner, egoMembrane(m.ego, g));
     }
     return { svg, g };
@@ -603,7 +606,7 @@
 it decides whether to say something of its own after an answer, and what`))
       : sv("circle", { cx, cy, r: 6, class: "m-none" }, sv("title", {}, `ego node: not built yet (${e.examples} examples); the ego policy decides`)));
     grp.append(sv("text", { x: cx + 15, y: cy + 4.5, class: "m-ego-label" },
-      sv("tspan", { class: "m-ego-name" }, "ego"), sv("tspan", { dx: 8 }, `takes every order in, in a ${e.mood} mood`)));
+      sv("tspan", { class: "m-ego-name" }, "ego"), sv("tspan", { dx: 8 }, `takes every order in, in ${aMood(e.mood)}`)));
     const room = g.chars(cx + 15);
     grp.append(sv("text", { x: cx + 15, y: H - 7.5, class: "m-ego-label m-ego-out" },
       cut(last ? `on the way out it said (${EGO_KIND[last.kind] || last.kind}): ${last.text}` : "on the way out it may add a view of its own, labelled", room)));
@@ -1018,6 +1021,7 @@ it decides whether to say something of its own after an answer, and what`))
         h("td", {}, ch ? ch.id : h("span", { class: "dim" }, "none yet")),
         h("td", {}, ch ? shape(ch.arch) : ""), h("td", { class: "n" }, ch ? pct(ch.holdout_acc) : ""),
         h("td", { class: "n" }, ch ? num(ch.serves) : ""), h("td", { class: "n" }, ch ? ch.generation : ""),
+        h("td", {}, (c.instances || []).map(x => `${x.id} (${pct(x.holdout_acc)})`).join(", ") || h("span", { class: "dim" }, "none")),
         h("td", {}, c.candidates.map(x => `${x.id} (${pct(x.holdout_acc)})`).join(", ") || h("span", { class: "dim" }, "none")),
         h("td", {}, ev ? h("span", {}, spark(ev.sizes), ` ${ev.tried} tried, ${ev.promoted} promoted`) : ""),
         h("td", {}, c.retired.length ? h("button", { type: "button", class: "small", title: `Bring back ${c.retired[c.retired.length - 1]}`,
@@ -1029,7 +1033,7 @@ it decides whether to say something of its own after an answer, and what`))
           h("p", { class: "lede" }, `${st.nodes.live} nodes live, ${st.nodes.ever} built, ${st.nodes.disposed} disposed. ` +
             (evo?.enabled ? `Evolution grows nodes ${pct(evo.growth_bias)} of the time; the size column shows each champion's size over its generations.` : "Evolution is off.")),
           h("div", { class: "scroll-x" }, h("table", { class: "tbl" },
-            h("thead", {}, h("tr", {}, ["Capability", "Examples", "Champion", "Shape", "Held-out", "Served", "Gen", "Challengers", "Evolution", ""].map((t, i) => h("th", { class: [1, 4, 5, 6].includes(i) ? "n" : null }, t)))),
+            h("thead", {}, h("tr", {}, ["Capability", "Examples", "Champion", "Shape", "Held-out", "Served", "Gen", "Instances", "Challengers", "Evolution", ""].map((t, i) => h("th", { class: [1, 4, 5, 6].includes(i) ? "n" : null }, t)))),
             h("tbody", {}, rows)))),
         h("div", { class: "section" }, h("h2", {}, "Agents"),
           h("div", { class: "scroll-x" }, h("table", { class: "tbl" }, h("tbody", {}, Object.entries(st.agents).map(([a, stats]) =>
@@ -1086,9 +1090,9 @@ it decides whether to say something of its own after an answer, and what`))
       h("div", { class: "section" },
         h("p", { class: "lede" }, `${mem.facts} facts in ${mem.nodes.length} memory node${mem.nodes.length === 1 ? "" : "s"}, ${bytes(mem.bytes)}` +
           (mem.first_bytes > mem.bytes ? ` (first learned in ${bytes(mem.first_bytes)})` : "") +
-          `. A node answers at ${pct(mem.threshold)} confidence or more, and is only ever replaced by a smaller one that passes every test in its file` +
+          `. A node answers at ${pct(mem.threshold)} confidence or more, and is only ever replaced by a smaller one that passes every one of its tests` +
           (mem.merge ? `, or merged with another into one node that passes at least ${pct(mem.merge_pass_rate)} of both nodes' tests (what it fails is not served, and relearned)` : "") +
-          `. Test files: ${mem.tests_dir}`),
+          `. Its tests are kept in the memory's own database, ${mem.database || mem.tests_dir} (${num(mem.tests_stored || 0)} rows): /memory tests <node> shows them, /memory set changes one.`),
         h("h2", {}, "Teach it a fact"), memorize),
       h("div", { class: "section" }, h("div", { class: "row", style: "justify-content:space-between" }, h("h2", {}, "Memory nodes"), runTests),
         mem.nodes.length
@@ -1097,6 +1101,17 @@ it decides whether to say something of its own after an answer, and what`))
               h("tbody", {}, rows)))
           : h("p", { class: "dim" }, "Nothing learned yet. It learns from research, teacher answers, challenges and what you teach it.")),
     ];
+    const own = mem.own || { nodes: [], statements: 0 };
+    if (own.enabled !== false) {
+      const said = (S.extra.own?.statements || []).slice(0, 8).map(r => h("li", { class: "ask" },
+        h("p", {}, h("span", { class: "kind-chip" }, r.kind.replace("ego:", "ego, ")), r.about ? h("b", {}, ` ${r.about}: `) : " ", r.text),
+        h("p", { class: "why" }, `${dateTime(r.ts)}${r.mood ? `, in ${aMood(r.mood)}` : ""}${r.node ? `; learned by ${r.node}` : "; kept, not learned (about nothing in particular)"}`)));
+      kids.push(h("div", { class: "section" }, h("h2", {}, "Its own statements (untested)"),
+        h("p", { class: "lede" }, `Its opinions, what its ego said and how its ego settled disagreements between its nodes are kept in memory too, without tests: nothing checks them, because they are its own views, never facts. ` +
+          `${num(own.statements)} kept` + (own.nodes.length ? `; learned by ${own.nodes.map(o => `${o.id} (${o.statements}, ${o.status})`).join(", ")}.` : ".") +
+          " They are never served as an answer about the world."),
+        said.length ? h("ul", { class: "rows" }, said) : h("p", { class: "dim" }, "Nothing yet.")));
+    }
     if (S.memTests) {
       kids.push(h("div", { class: "section" }, h("h2", {}, "Test run"), h("ul", { class: "rows" }, S.memTests.nodes.map(r =>
         h("li", { class: "ask" }, h("p", {}, h("b", {}, r.node), " ", h("span", { class: r.passed === r.total ? "ok" : "no" }, `${r.passed}/${r.total} pass`)),
@@ -1495,7 +1510,7 @@ it decides whether to say something of its own after an answer, and what`))
     const views = [...v.likes.map(x => view(x, true)), ...v.dislikes.map(x => view(x, false))];
     const remarks = (eg.remarks || []).slice().reverse().map(r => h("li", { class: `ask ego-remark mood-${r.mood}` },
       h("p", {}, h("span", { class: "kind-chip ego-chip" }, EGO_KIND[r.kind] || r.kind), " ", r.text),
-      h("p", { class: "why" }, `after ${r.order}${r.about ? ` (about ${r.about})` : ""}, in a ${r.mood} mood; ${r.how}`)));
+      h("p", { class: "why" }, `after ${r.order}${r.about ? ` (about ${r.about})` : ""}, in ${aMood(r.mood)}; ${r.how}`)));
     const nodes = (eg.nodes || []).map(n => h("li", {}, h("b", {}, n.id), ` ${n.champion ? "serving" : n.status}${n.accuracy == null ? "" : `, held-out ${pct(n.accuracy)}`}`));
     const st = eg.stats || {};
     const spoke = Object.entries(st).filter(([k]) => EGO_KIND[k]).reduce((a, [, n]) => a + n, 0);
@@ -1589,26 +1604,120 @@ it decides whether to say something of its own after an answer, and what`))
     $("#note-mind-ego").textContent = st.ego?.enabled ? st.ego.mood : "off";
   }
 
+  // ------------------------------------------------------------------ the Mind's archive
+  // Each Mind tab shows the last day. Anything older is archived: it is looked up by date and time (journal.py).
+  const DAY = 86400;
+  const TS_KEYS = ["ts", "updated", "updated_at", "ended_at", "created_at", "created", "at", "when"];
+  const CURRENT = new Set(["active", "open", "pending", "waiting", "paused", "awaiting approval", "todo", "asked"]);
+  function stamp(x) {
+    for (const k of TS_KEYS) if (typeof x?.[k] === "number" && x[k] > 1e9) return x[k];
+    return null;
+  }
+  // the same data with what is older than a day taken out (what is still open or active stays); counts what went
+  function lastDay(v, depth = 0) {
+    if (!v || typeof v !== "object" || depth > 2) return v;
+    const cutoff = Date.now() / 1000 - DAY;
+    if (Array.isArray(v)) {
+      const out = v.filter(x => {
+        const t = x && typeof x === "object" ? stamp(x) : null;
+        const old = t !== null && t < cutoff && !CURRENT.has(x.status);
+        if (old) S.archivedNow += 1;
+        return !old;
+      });
+      return out.map(x => lastDay(x, depth + 1));
+    }
+    const out = {};
+    for (const [k, x] of Object.entries(v)) out[k] = Array.isArray(x) || (x && typeof x === "object") ? lastDay(x, depth + 1) : x;
+    return out;
+  }
+  S.archive = { at: "", hours: 6, scope: "tab", rows: null, days: null, daysFor: "", loading: false };
+  function localValue(sec) {
+    const d = new Date(sec * 1000);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  async function lookUp(tab, at, hours) {
+    const A = S.archive;
+    A.loading = true;
+    renderMind(true);
+    try {
+      const q = new URLSearchParams({ at: String(Math.round(at)), hours: String(hours) });
+      if (tab) q.set("tab", tab);
+      const r = await (await fetch(`/mind/archive?${q}`)).json();
+      A.rows = r.rows; A.from = r.from; A.to = r.to; A.more = r.more; A.lookedFor = tab;
+    } catch (err) { toast(err.message); }
+    A.loading = false;
+    renderMind(true);
+  }
+  async function loadDays(tab) {
+    const A = S.archive;
+    A.daysFor = tab;
+    try {
+      const q = new URLSearchParams({ tz: String(new Date().getTimezoneOffset()) });
+      if (tab) q.set("tab", tab);
+      A.days = (await (await fetch(`/mind/archive/days?${q}`)).json()).days;
+    } catch { A.days = []; }
+    renderMind(true);
+  }
+  function archiveBar(tab, archived) {
+    const A = S.archive;
+    const scopeTab = A.scope === "tab" ? tab : "";
+    if (A.daysFor !== scopeTab && !A.loadingDays) { A.loadingDays = true; loadDays(scopeTab).finally(() => { A.loadingDays = false; }); }
+    const when = h("input", { type: "datetime-local", value: A.at || localValue(Date.now() / 1000 - DAY), max: localValue(Date.now() / 1000),
+      "aria-label": "Date and time to look up", onchange: e => { A.at = e.target.value; } });
+    when.dataset.free = "1";
+    const around = h("select", { "aria-label": "How much of the time around it", onchange: e => { A.hours = Number(e.target.value); } },
+      [[1, "within an hour"], [6, "within 6 hours"], [24, "that day"], [168, "that week"]].map(([v, t]) => h("option", { value: v, selected: v === A.hours }, t)));
+    const scope = h("select", { "aria-label": "Which part of its mind", onchange: e => { A.scope = e.target.value; renderMind(true); } },
+      h("option", { value: "tab", selected: A.scope === "tab" }, "this tab"), h("option", { value: "all", selected: A.scope === "all" }, "all of its mind"));
+    const form = h("form", { class: "row archive-form", onsubmit: e => {
+      e.preventDefault();
+      A.at = when.value;
+      const at = when.value ? new Date(when.value).getTime() / 1000 : Date.now() / 1000 - DAY;
+      lookUp(scopeTab, at, A.hours);
+    } }, h("label", { class: "row small" }, "Look up", when), around, scope, h("button", { type: "submit", disabled: A.loading }, A.loading ? "Looking…" : "Look up"));
+    const days = (A.days || []).filter(d => d.start + DAY < Date.now() / 1000 + 1).slice(0, 14).map(d => h("button", { type: "button", class: "quiet small day-chip",
+      onclick: () => { A.at = localValue(d.start + DAY / 2); A.hours = 24; lookUp(scopeTab, d.start + DAY / 2, 24); } },
+      `${new Date(d.start * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" })} (${d.count})`));
+    const rows = A.rows && A.lookedFor === scopeTab ? A.rows : null;
+    const results = rows === null ? null : h("div", { class: "archive-results" },
+      h("p", { class: "small dim" }, rows.length ? `${rows.length}${A.more ? "+" : ""} entr${rows.length === 1 ? "y" : "ies"} from ${dateTime(A.from)} to ${dateTime(A.to)}, newest first:`
+        : `Nothing in ${scopeTab ? "this tab" : "its mind"} from ${dateTime(A.from)} to ${dateTime(A.to)}.`,
+        h("button", { type: "button", class: "quiet small", onclick: () => { A.rows = null; renderMind(true); } }, "Close")),
+      rows.length ? h("ol", { class: "rows archive-rows" }, rows.map(r => h("li", {},
+        h("time", { class: "dim small", datetime: new Date(r.ts * 1000).toISOString() }, dateTime(r.ts)),
+        scopeTab ? null : h("span", { class: "kind-chip" }, r.tab_name), " ", r.line.replace(/^\[[a-z]+\]\s*/, "")))) : null);
+    return h("section", { class: "archive", "aria-label": "The archive" },
+      h("div", { class: "archive-head" },
+        h("p", { class: "small" }, h("b", {}, "Archive "), archived ? `${archived} item${archived === 1 ? "" : "s"} older than a day ${archived === 1 ? "is" : "are"} archived here. ` : "This tab shows the last day; older entries are archived. ",
+          "Pick a date and time to see what was in its mind then."),
+        form),
+      days.length ? h("div", { class: "row day-chips" }, h("span", { class: "small dim" }, "Days with entries:"), days) : null,
+      results);
+  }
+
   function renderMind(force) {
     const host = $("#mind");
     const st = S.dash.status;
     syncTabs($("#mind-tabs"), "mind", S.mindTab, host);
     mindBadges(st);
     if (!force && busy(host)) return;
+    S.archivedNow = 0;
+    const d = lastDay;  // the last day only: anything older is in the archive
     const panel = {
-      questions: () => questionsPanel(st.mind),
-      ego: () => egoPanel(S.extra.ego, st.ego),
-      thinking: () => thinkingPanel(S.extra.thinking, st.thinking),
-      curiosity: () => curiosityPanel(S.extra.curiosity, st.curiosity),
-      objectives: () => objectivesPanel(st.objectives),
-      directors: () => directorsPanel(st.directors),
-      initiative: () => initiative(st.agency) || offPanel("Initiative", "Its initiative is not available in this NeuroMesh."),
-      tools: () => toolsmithPanel(st.toolsmith) || offPanel("Tools it writes", "The toolsmith is off. Turn it on with [toolsmith] enabled = true in directives.toml."),
-      dreams: () => dreamsPanel(st.dreams) || offPanel("Dreams", "Dreams are off. Turn them on with [dreams] enabled = true in directives.toml."),
-      temperament: () => temperamentPanel(st.temperament),
-      thoughts: () => thoughtsPanel(st.mind, S.extra.opinions, S.extra.notes),
+      questions: () => questionsPanel(d(st.mind)),
+      ego: () => egoPanel(d(S.extra.ego), st.ego),
+      thinking: () => thinkingPanel(d(S.extra.thinking), st.thinking),
+      curiosity: () => curiosityPanel(d(S.extra.curiosity), st.curiosity),
+      objectives: () => objectivesPanel(d(st.objectives)),
+      directors: () => directorsPanel(d(st.directors)),
+      initiative: () => initiative(d(st.agency)) || offPanel("Initiative", "Its initiative is not available in this NeuroMesh."),
+      tools: () => toolsmithPanel(d(st.toolsmith)) || offPanel("Tools it writes", "The toolsmith is off. Turn it on with [toolsmith] enabled = true in directives.toml."),
+      dreams: () => dreamsPanel(d(st.dreams)) || offPanel("Dreams", "Dreams are off. Turn them on with [dreams] enabled = true in directives.toml."),
+      temperament: () => temperamentPanel(d(st.temperament)),
+      thoughts: () => thoughtsPanel(d(st.mind), d(S.extra.opinions), d(S.extra.notes)),
     }[S.mindTab];
-    fill(host, panel());
+    const body = panel();
+    fill(host, archiveBar(S.mindTab, S.archivedNow), body);
   }
 
   function selectMind(tab, focus) {
@@ -1810,7 +1919,9 @@ it decides whether to say something of its own after an answer, and what`))
       if (S.logsTab === "lineage" && due("lineage", 5000)) jobs.push(get("lineage", `/lineage${S.lineageCap ? `?capability=${encodeURIComponent(S.lineageCap)}` : ""}`));
     } else if (S.view === "status") {
       if (due("knowledge", 10000)) jobs.push(get("knowledge", "/knowledge?n=25"));
-    } else if (S.view === "memory" && S.memNode && due("memNode", 3000)) {
+    }
+    if (S.view === "memory" && due("own", 5000)) jobs.push(get("own", "/memory/own?limit=20"));
+    if (S.view === "memory" && S.memNode && due("memNode", 3000)) {
       S.extraAt.memNode = now;
       jobs.push(api(`/memory?node=${encodeURIComponent(S.memNode)}`).then(r => { S.memDetail = r; }).catch(() => { S.memDetail = null; S.memNode = null; }));
     }

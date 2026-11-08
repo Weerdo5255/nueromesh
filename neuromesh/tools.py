@@ -57,6 +57,7 @@ class ToolManifest:
     fillers: dict = field(default_factory=dict)
     config: dict = field(default_factory=dict)  # passed to the tool on every run
     author: str = ""                            # "neuromesh": its own toolsmith wrote it (P15)
+    persistent: bool = False                    # it can stay running (tool.py --serve): see Worker
 
     @property
     def route(self) -> str:
@@ -73,7 +74,7 @@ class ToolManifest:
                    supersedes=m.get("supersedes") or None, provides=m.get("provides", ""),
                    examples=list(m.get("examples", [])), templates=list(m.get("templates", [])),
                    fillers=dict(m.get("fillers", {})), config=dict(m.get("config", {})),
-                   author=str(m.get("author", "")))
+                   author=str(m.get("author", "")), persistent=bool(m.get("persistent", False)))
 
 
 @dataclass
@@ -123,18 +124,123 @@ try:
         resource.setrlimit(resource.RLIMIT_AS, (mem * 1048576, mem * 1048576))
 except Exception:
     pass
-sys.argv = [entry]
+sys.argv = [entry] + sys.argv[4:]
 runpy.run_path(entry, run_name="__main__")
 """
 
 
+class Worker:
+    """A tool that stays running (manifest: persistent = true; it is started as tool.py --serve): requests go
+    to it as JSON lines, many at once, each with an id, and its answers come back the same way. It keeps
+    its connections and caches warm between requests - the Kiwix tool answers many times faster so. It runs
+    in the same sandbox as a single run (limits, a clean environment, its own folder); its CPU limit is a
+    budget for many requests, and when it is spent, the worker dies and a fresh one takes over."""
+
+    def __init__(self, tool: "Tool", proc, digest: str):
+        self.tool, self.proc, self.digest = tool, proc, digest
+        self.pending: dict[int, asyncio.Future] = {}
+        self.next_id = 1
+        self.served = 0
+        self.started = time.time()
+        self.reader = asyncio.create_task(self._read())
+
+    @property
+    def alive(self) -> bool:
+        return self.proc.returncode is None and not self.reader.done()
+
+    async def _read(self) -> None:
+        try:
+            while True:
+                line = await self.proc.stdout.readline()
+                if not line:
+                    break
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                fut = self.pending.pop(int(data.pop("id", -1)), None) if isinstance(data, dict) else None
+                if fut is not None and not fut.done():
+                    fut.set_result(data)
+        finally:
+            for fut in self.pending.values():
+                if not fut.done():
+                    fut.set_exception(RuntimeError("the tool's worker stopped"))
+            self.pending.clear()
+
+    async def call(self, request: dict, timeout: float) -> dict:
+        rid = self.next_id
+        self.next_id += 1
+        fut = asyncio.get_running_loop().create_future()
+        self.pending[rid] = fut
+        self.proc.stdin.write((json.dumps({**request, "id": rid}) + "\n").encode())
+        await self.proc.stdin.drain()
+        try:
+            return await asyncio.wait_for(fut, timeout)
+        finally:
+            self.pending.pop(rid, None)
+            self.served += 1
+
+    async def stop(self) -> None:
+        if self.proc.returncode is None:
+            try:
+                self.proc.stdin.close()
+                await asyncio.wait_for(self.proc.wait(), 2)
+            except Exception:
+                self.proc.kill()
+                await self.proc.wait()
+        self.reader.cancel()
+
+
 class Sandbox:
-    def __init__(self, cpu_seconds: int = 5, memory_mb: int = 512):
+    def __init__(self, cpu_seconds: int = 5, memory_mb: int = 512, workers: bool = True, worker_cpu_seconds: int = 600,
+                 worker_requests: int = 5000):
         self.cpu_seconds = cpu_seconds
         self.memory_mb = memory_mb
+        self.use_workers = workers                  # [tools] workers: persistent tools stay running
+        self.worker_cpu_seconds = worker_cpu_seconds
+        self.worker_requests = worker_requests      # a worker is replaced after this many requests
+        self.workers: dict[str, Worker] = {}
+        self._starting: dict[str, asyncio.Lock] = {}
 
     NETWORK_ENV = ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
                    "SSL_CERT_FILE", "SSL_CERT_DIR")
+
+    def _env(self, m: ToolManifest) -> dict:
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONIOENCODING": "utf-8",
+               "LANG": "C.UTF-8", "NEUROMESH_TOOL": m.name}
+        if "network" in m.permissions:  # proxy/certificate settings only for approved network tools
+            env.update({k: os.environ[k] for k in self.NETWORK_ENV if k in os.environ})
+        return env
+
+    async def _worker(self, tool: Tool) -> Worker:
+        m = tool.manifest
+        w = self.workers.get(m.name)
+        if w is not None and w.alive and w.digest == m.digest and w.served < self.worker_requests:
+            return w
+        lock = self._starting.setdefault(m.name, asyncio.Lock())
+        async with lock:
+            w = self.workers.get(m.name)
+            if w is not None and w.alive and w.digest == m.digest and w.served < self.worker_requests:
+                return w
+            if w is not None:
+                await w.stop()
+            entry = (m.path / m.entrypoint).resolve()
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-I", "-c", _LAUNCHER, str(self.worker_cpu_seconds), str(self.memory_mb), str(entry),
+                "--serve", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL, cwd=str(m.path), env=self._env(m), limit=1 << 24)
+            w = Worker(tool, proc, m.digest)
+            self.workers[m.name] = w
+            return w
+
+    async def close(self) -> None:
+        for w in list(self.workers.values()):
+            await w.stop()
+        self.workers.clear()
+
+    def worker_status(self) -> dict:
+        return {name: {"alive": w.alive, "served": w.served, "since": round(w.started, 1), "pid": w.proc.pid}
+                for name, w in self.workers.items()}
 
     async def run(self, tool: Tool, text: str, timeout: float, config: dict | None = None,
                   context: list | None = None) -> ToolRun:
@@ -142,10 +248,21 @@ class Sandbox:
         entry = (m.path / m.entrypoint).resolve()
         if m.path.resolve() not in entry.parents:
             return ToolRun(False, error="entrypoint escapes the tool folder")
-        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONIOENCODING": "utf-8",
-               "LANG": "C.UTF-8", "NEUROMESH_TOOL": m.name}
-        if "network" in m.permissions:  # proxy/certificate settings only for approved network tools
-            env.update({k: os.environ[k] for k in self.NETWORK_ENV if k in os.environ})
+        if m.persistent and self.use_workers:  # it stays running: no start-up, warm connections and caches
+            t0 = time.perf_counter()
+            request = {"input": text, "config": config if config is not None else dict(m.config)}
+            if context:
+                request["context"] = context
+            try:
+                w = await self._worker(tool)
+                data = await w.call(request, timeout)
+            except asyncio.TimeoutError:
+                return ToolRun(False, error=f"timeout after {timeout}s", ms=(time.perf_counter() - t0) * 1000)
+            except Exception as exc:  # the worker died (its CPU budget, a crash): a fresh one next time
+                return ToolRun(False, error=f"the tool's worker stopped ({exc})", ms=(time.perf_counter() - t0) * 1000,
+                               transient=True)
+            return self._result(data, (time.perf_counter() - t0) * 1000)
+        env = self._env(m)
         t0 = time.perf_counter()
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-I", "-c", _LAUNCHER, str(self.cpu_seconds), str(self.memory_mb), str(entry),
@@ -167,6 +284,12 @@ class Sandbox:
         try:
             data = json.loads(lines[-1]) if lines else {}
         except json.JSONDecodeError:
+            return ToolRun(False, error="tool printed invalid JSON", ms=ms)
+        return self._result(data, ms)
+
+    @staticmethod
+    def _result(data: dict, ms: float) -> ToolRun:
+        if not isinstance(data, dict):
             return ToolRun(False, error="tool printed invalid JSON", ms=ms)
         if "error" in data:
             return ToolRun(False, error=str(data["error"]), ms=ms, transient=bool(data.get("transient")),

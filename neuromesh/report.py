@@ -131,14 +131,23 @@ def describe_event(ev: Event) -> str | None:
         return f"[memory]   {d['node']} is as small as its tests allow: {d['bytes']:,} bytes{first}, {d['spec']}"
     if t == "memory.edited":
         if d.get("new"):
-            return f"[memory]   new test file {d['node']}.toml from a person: learning its {d['added']} facts"
+            return f"[memory]   new tests for {d['node']} from a person (memory database): learning its {d['added']} facts"
         bad = f", {d['malformed']} unreadable" if d.get("malformed") else ""
         return (f"[memory]   {d['node']} tests edited by a person: {d['added']} added, {d['removed']} removed, "
                 f"{d['changed']} answers changed{bad}; retraining to match")
     if t == "memory.forgotten":
         return f"[memory]   forgot {d['node']}: {d['why']}"
     if t == "memory.unreadable":
-        return f"[memory]   {d['node']}.toml can't be read ({d['error'][:80]}); keeping the node as it is"
+        return f"[memory]   {d['node']}'s tests can't be read ({d['error'][:80]}); keeping the node as it is"
+    if t == "memory.imported":
+        return (f"[memory]   imported {d['imported']} test file(s) into the memory database; the old folder is now "
+                f"{d['moved_to']}")
+    if t == "memory.own":
+        return (f"[memory]   kept its own {d['kind'].replace('ego:', 'ego remark, ')} (untested)"
+                + (f" about {d['about']}" if d.get("about") else "") + (f" in {d['node']}" if d.get("node") else "")
+                + f": {d['text'][:100]}")
+    if t == "memory.own_learned":
+        return f"[memory]   {d['node']} learned its {d['statements']} own statements (untested) in {d['bytes']:,} bytes"
     if t == "agency.decided":
         did = f"; {d['summary']}" if d.get("summary") else ""
         by = f" by {d['by']}" if d.get("by") else ""
@@ -246,7 +255,16 @@ def describe_event(ev: Event) -> str | None:
     if t == "dream.toggled":
         return f"[sleep]    {d['by']} {'let it sleep again' if d['allow'] else 'turned sleep off: it stays awake'}"
     if t == "ego.spoke":
-        return f"[ego]      after {d['order']}, in a {d['mood']} mood ({d['kind']}, {d['node']}): {_cut(d['text'], 140)}"
+        from .ego import a_mood
+        return f"[ego]      after {d['order']}, in {a_mood(d['mood'])} ({d['kind']}, {d['node']}): {_cut(d['text'], 140)}"
+    if t == "ego.arbitrated":
+        return (f"[ego]      its {d['kind']} instances disagreed ({d['sides']} answers) on '{_cut(d['text'], 60)}': it went with "
+                f"{_cut(d['label'], 60)} ({d['strategy']}, {d['by']}: {_cut(d['why'], 80)})")
+    if t == "kiwix.browsed":
+        got = ", ".join(d.get("learned") or []) or f"nothing ({d.get('note', '')})"
+        return f"[research] browsed {d['book']} ({d['why']}): {_cut(got, 140)}"
+    if t == "node.instance":
+        return f"[instance] {d['node']} answers with the {d['capability']} champion - {d['reason']}"
     if t == "ego.toggled":
         return f"[ego]      {d['by']} turned its ego {'on' if d['on'] else 'off'}"
     if t == "dream.dreamt":

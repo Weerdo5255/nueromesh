@@ -204,7 +204,7 @@ class Curiosity:
         s = self.sys
         out, seen = [], set()
         from .memory import key as fact_key
-        known = {fact_key(t.ask) for n in s.memory.nodes.values() for t in n.facts()} if s.memory.enabled else set()
+        known = {fact_key(t.ask) for n in s.memory.fact_nodes() for t in n.facts()} if s.memory.enabled else set()
 
         def add(question: str, why: str, order: str = "") -> None:
             q = " ".join(str(question or "").split())
@@ -258,7 +258,7 @@ class Curiosity:
             if n > 0:
                 area(self.names.get(k, k)).asked = n
         if s.memory.enabled:  # what it knows: facts about an area, and names it only knows by name
-            for node in s.memory.nodes.values():
+            for node in s.memory.fact_nodes():
                 for t in node.facts():
                     about = {norm(x) for x in topics_in(t.ask)}
                     for x in topics_in(t.ask):
@@ -292,7 +292,7 @@ class Curiosity:
         for k, rec in fascinated.items():
             area(rec.get("name") or k).ego = int(rec.get("times", 1))
         common = self.common_words()
-        for k in [k for k, a in areas.items() if " " not in k and k in common and not a.people and not a.gaps and not a.ego]:
+        for k in [k for k, a in areas.items() if " " not in k and k in common and not a.people and not a.gaps]:
             del areas[k]  # a word people write in lower case is not a name ("Meeting", "Overall")
         p = self.pol
         for a in areas.values():
@@ -337,13 +337,18 @@ class Curiosity:
 
     def common_words(self) -> set:
         """Words seen in lower case, often enough: in what people write and in the facts it holds."""
+        cached = getattr(self, "_common", None)
+        if cached and time.time() - cached[0] < 30:
+            return cached[1]
         seen = Counter({w: n for w, n in self.lower.items() if n >= 2})
         if self.sys.memory.enabled:
-            for node in self.sys.memory.nodes.values():
+            for node in self.sys.memory.fact_nodes():
                 for t in node.facts():
                     for w in re.findall(r"\b([a-z][a-z'\-]{3,})\b", f"{t.ask[1:]} {t.answer[1:]}"):
                         seen[w] += 2
-        return {w for w, n in seen.items() if n >= 2}
+        words = {w for w, n in seen.items() if n >= 2}
+        self._common = (time.time(), words)
+        return words
 
     def ranked(self, limit: int = 20) -> list[Area]:
         return sorted((a for a in self.areas().values() if a.score > 0), key=lambda a: (-a.score, a.key))[:limit]

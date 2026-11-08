@@ -467,7 +467,8 @@ class Orchestrator(Agent):
         source = (f"memory node {node.id} ({node.bytes:,} bytes{was}; {node.passed}/{node.total} tests pass)"
                   + (f", learned from {rec.source}" if rec.source else ""))
         res.sources.append(source)
-        res.trace.append(f"answered by memory node {node.id} (confidence {rec.confidence:.2f}; {node.spec()})")
+        res.trace.append(f"answered by memory node {node.id} (confidence {rec.confidence:.2f}; {node.spec()})"
+                         + (f"; {rec.how}" if getattr(rec, "how", "") else ""))
         self.sys.bus.publish("memory.recalled", node=node.id, question=res.text[:200], confidence=rec.confidence)
 
     def _remember(self, res: Result, question: str, answer: str, source: str) -> None:
@@ -693,9 +694,10 @@ class Trainer(Agent):
         for cap in sorted(s.capabilities, key=lambda c: c not in focus):
             champ = s.registry.champion(cap)
             if champ is not None:
-                g = s.store.count(cap) - champ.examples_seen
-                if g > gap:
-                    best, gap = champ, g
+                for n in [champ] + s.registry.instances(cap):  # its instances learn the new examples too
+                    g = s.store.count(cap) - n.examples_seen
+                    if g > gap:
+                        best, gap = n, g
         return best
 
     async def step(self) -> None:
@@ -728,7 +730,7 @@ class Trainer(Agent):
         y = node.label_indices([e.label for e in train])
         w = np.array([e.weight for e in train], dtype=np.float32)
         params, opt, loss = await self.bg(node.train_copy, X, y, w, s.directives.background.train_epochs_per_slice)
-        if node.status == "champion":
+        if node.status in ("champion", "instance"):
             hold = s.store.examples(cap, "holdout")
             if hold:
                 Xh = await self.bg(s.encode_many, [e.text for e in hold])
@@ -837,7 +839,7 @@ class Evaluator(Agent):
             cands = [c for c in s.registry.candidates(cap) if c.train_steps >= npol.min_train_steps_before_eval]
             if champ is None and not cands:
                 continue
-            nodes = ([champ] if champ else []) + cands
+            nodes = ([champ] if champ else []) + s.registry.instances(cap) + cands
             key = (s.store.count(cap), tuple((n.id, n.train_steps) for n in nodes))
             if self._seen.get(cap) == key:
                 continue
@@ -904,7 +906,9 @@ class Evaluator(Agent):
                                   f"evolution favours more capacity" if grown else
                                   f"adds {gain} with no held-out regression ({ok.mean():.3f} vs {c_acc:.3f})")
                         evidence["evolution"] = cand.metrics.get("evolution")
-                        s.registry.promote(cand.id, reason, evidence)
+                        room = len(s.registry.instances(cap)) < max(0, npol.instances - 1)
+                        keep = room and (c_acc or 0.0) >= npol.serve_min_accuracy
+                        s.registry.promote(cand.id, reason, evidence, keep_old=keep)
                         self.stats["promotions"] += 1
                         break
 
@@ -931,9 +935,29 @@ class Curator(Agent):
             # a challenger that is ahead but still waiting for enough held-out evidence may stay
             ahead = (n.metrics.get("holdout_acc") or 0.0) > (ca or 0.0)
             if (n.train_steps >= npol.max_candidate_slices and evaluated and not ahead) or too_old:
+                acc = n.metrics.get("holdout_acc")
+                room = len(s.registry.instances(n.capability)) < max(0, npol.instances - 1)
+                if (evaluated and room and acc is not None and acc >= npol.serve_min_accuracy and champ is not None
+                        and set(n.labels) >= set(champ.labels)):
+                    s.registry.make_instance(n.id, f"runner-up at held-out {acc} (champion {ca}): it answers with "
+                                                   f"the champion")
+                    self.stats["instances"] += 1
+                    continue
                 s.registry.dispose(n.id, f"failed challenger (held-out {n.metrics.get('holdout_acc')} "
                                          f"vs champion {ca})")
                 self.stats["disposed"] += 1
+        for cap in list(s.capabilities):
+            champ = s.registry.champion(cap)
+            insts = sorted(s.registry.instances(cap), key=lambda n: -(n.metrics.get("holdout_acc") or 0.0))
+            for i, n in enumerate(insts):
+                acc = n.metrics.get("holdout_acc") or 0.0
+                why = ("no champion to answer with" if champ is None else
+                       f"held-out {acc} fell below {npol.serve_min_accuracy}" if acc < npol.serve_min_accuracy else
+                       "its labels fall behind the champion's" if not set(n.labels) >= set(champ.labels) else
+                       f"more than {max(0, npol.instances - 1)} instances" if i >= max(0, npol.instances - 1) else "")
+                if why:
+                    s.registry.dispose(n.id, f"instance retired: {why}")
+                    self.stats["disposed"] += 1
         for n in s.registry.live():
             if n.capability not in s.capabilities:
                 s.registry.dispose(n.id, "capability no longer exists")
@@ -1084,6 +1108,31 @@ class Explorer(Agent):
 
 
 # ====================================================================== researcher
+class Reader(Agent):
+    """Browsing: now and then ([research] browse_every_seconds) it opens a Kiwix book it has never read, or not
+    for a long time, and learns something new from it (seeker.py: browse)."""
+    name = "reader"
+
+    def __init__(self, system):
+        super().__init__(system)
+        self.last = time.time()  # the first time, a while after it starts
+
+    @property
+    def interval(self) -> float:
+        return max(1.0, min(5.0, self.sys.directives.research.browse_every_seconds / 4))
+
+    async def step(self) -> None:
+        s = self.sys
+        pol = s.directives.research
+        if not (pol.enabled and pol.browse) or not s.guardian.background_allowed() or s.seeker.tool() is None:
+            return
+        if time.time() - self.last < pol.browse_every_seconds:
+            return
+        self.last = time.time()
+        res = await s.seeker.browse()
+        self.stats["browsed" if res.get("ok") else "skipped"] += 1
+
+
 class Researcher(Agent):
     """Background research within its own budget: reads up on articles linked from what
     users asked about (curiosity, depth-limited) and re-reads retained articles once they

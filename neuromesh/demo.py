@@ -273,24 +273,25 @@ async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7,
         mem = system.memory
         for q, a in FACTS:
             mem.learn(q, a, "the demo operator", by="demo-operator", kind="people")
-        settled = lambda: (mem.nodes and all(not n.dirty and n.status == "compressed" for n in mem.nodes.values())  # noqa: E731
+        settled = lambda: (mem.fact_nodes() and all(not n.dirty and n.status == "compressed" for n in mem.fact_nodes())  # noqa: E731
                            and not mem.merge_candidates())
         await demo.wait_for(settled, 40, "the memory nodes to compress and merge")
-        node = max(mem.nodes.values(), key=lambda n: len(n.facts()))
+        node = max(mem.fact_nodes(), key=lambda n: len(n.facts()))
         made = f" (merged from {len(node.parts)} nodes)" if len(node.parts) > 1 else ""
         print(f"  {node.id}{made}: {len(node.facts())} facts, first learned in {node.first_bytes:,} bytes, now "
               f"{node.bytes:,} bytes ({node.spec()}); {node.passed}/{node.total} tests pass")
         for q in ("what's the capital of Australia?", "how tall is mount everest", "What is the capital of Austria?"):
             res = await system.submit(q)
             print(f"  > {q}\n      " + res.summary().replace("\n", "\n      "))
-        path = mem.tests_path(node)
-        print(f"  test file {path.relative_to(work)} (human readable; excerpt):")
-        text = path.read_text()
-        for line in text.splitlines()[7:12] + text.split("\n[[test]]\n")[1].strip().splitlines()[:2]:
+        print(f"  its tests, in the memory database {mem.db_path.relative_to(work)} (/memory tests {node.id}; excerpt):")
+        text = mem.render_tests(node)
+        for line in text.splitlines()[1:6] + text.split("\n[[test]]\n")[1].strip().splitlines()[:2]:
             print(f"    {line}")
-        print("  the operator edits the test file: Mount Everest's height changes to 8,848.86 metres")
-        path.write_text(text.replace('answer = "Mount Everest is 8,849 metres tall."',
-                                     'answer = "Mount Everest is 8,848.86 metres tall."'))
+        print("  the operator edits the tests with an SQLite tool: Mount Everest's height changes to 8,848.86 metres")
+        import sqlite3
+        with sqlite3.connect(mem.db_path) as db:
+            db.execute("UPDATE tests SET answer = ? WHERE answer = ?",
+                       ("Mount Everest is 8,848.86 metres tall.", "Mount Everest is 8,849 metres tall."))
         edited = "Mount Everest is 8,848.86 metres tall."
         await demo.wait_for(lambda: edited in node.answers and settled(), 30, "the memory node to relearn the edit")
         res = await system.submit("How tall is Mount Everest?")
@@ -428,7 +429,7 @@ async def run_demo(use_llm: bool = False, keep: bool = False, seed: int = 7,
         print(f"  > What is the capital of Freedonia?\n      {res.summary()}")
         system.memory.learn("What is the capital of Freedonia?", "Fredville is the capital of Freedonia.", "the demo operator",
                             by="demo-operator", kind="people")
-        await demo.wait_for(lambda: all(not n.dirty for n in system.memory.nodes.values()), 30, "memory to learn it")
+        await demo.wait_for(lambda: all(not n.dirty for n in system.memory.fact_nodes()), 30, "memory to learn it")
         for t in await book.second_thoughts(by="demo-operator"):
             print(f"  second thoughts ({t['verdict']}): {t['line'][:180]}")
 

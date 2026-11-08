@@ -409,7 +409,7 @@ class DreamBank:
         s = self.sys
         out: list[dict] = []
         if s.memory.enabled:
-            for node in s.memory.nodes.values():
+            for node in s.memory.fact_nodes():
                 for t in node.facts():
                     said = sentences(t.answer) if len(t.answer.split()) >= 4 else [statement(t.ask, t.answer)]
                     for sent in said:  # statements only: a question is not something it knows

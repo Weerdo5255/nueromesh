@@ -4,6 +4,7 @@ books, other wordings, title and full text - until an article answers the questi
 import json
 import tempfile
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -53,6 +54,18 @@ def handler(shelf: str):
                                   f"href=\"/content/{b}\" /></entry>" for b in books)
                 self._send(200, f'<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">{entries}</feed>',
                            "application/atom+xml")
+                return
+            if url.path == "/random":  # a random article from a book: a redirect to it
+                arts = books.get(q.get("content", ""))
+                if not arts:
+                    self._send(404, "no")
+                    return
+                Mock.random = (getattr(Mock, "random", 0) + 1)
+                title = sorted(arts)[Mock.random % len(arts)]
+                self.send_response(302)
+                self.send_header("Location", f"/content/{q['content']}/A/{title.replace(' ', '_')}")
+                self.send_header("content-length", "0")
+                self.end_headers()
                 return
             if url.path == "/suggest":
                 arts = books.get(q.get("content", ""))
@@ -216,6 +229,58 @@ class SeekerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((status, body["ok"]), (200, True))
         status, _ = await _route(s, "POST", "/kiwix", {}, {})
         self.assertEqual(status, 400)
+
+    async def test_it_stays_running_fast_and_browses_books(self):
+        s = self.system
+        t = s.seeker.tool()
+        self.assertTrue(t.manifest.persistent)
+        res = await s.submit("What does serendipity mean?")
+        self.assertTrue(res.ok, res.note)
+        w = s.sandbox.workers["kiwix"]
+        pid = w.proc.pid
+        res = await s.submit("Where should I stay when I visit Kyoto?")
+        self.assertTrue(res.ok, res.note)
+        self.assertEqual(s.sandbox.workers["kiwix"].proc.pid, pid, "the same worker answers again")
+        self.assertGreaterEqual(w.served, 3)
+        # much faster than a fresh process for every look-up
+        cfg = {**s.tool_config(t), "only": [{"server": "", "book": DICT}]}
+        timeout = 30
+
+        async def five():
+            started = time.perf_counter()
+            for _ in range(5):
+                run = await s.sandbox.run(t, "serendipity", timeout, cfg)
+                self.assertTrue(run.ok, run.error)
+            return time.perf_counter() - started
+        s.sandbox.use_workers = False
+        slow = await five()
+        s.sandbox.use_workers = True
+        fast = await five()
+        self.assertLess(fast * 3, slow, (fast, slow))
+        # browsing: a book it has never opened first
+        s.seeker.books_seen = {WIKI: time.time(), DICT: time.time()}
+        r = await s.seeker.browse()
+        self.assertEqual((r["ok"], r["book"]), (True, VOYAGE), r)
+        self.assertIn("never opened", r["why"])
+        self.assertEqual(r["learned"], ["Kyoto"])
+        self.assertIsNotNone(s.knowledge.find("Kyoto") if hasattr(s.knowledge, "find") else True)
+        self.assertTrue(any(e.topic == "kiwix.browsed" for e in s.bus.recent("kiwix.*", 20)))
+        r = await s.seeker.browse()
+        self.assertFalse(r["ok"])
+        self.assertIn("opened every book", r["why"])
+        s.seeker.books_seen[DICT] = time.time() - 9 * 86400  # not for nine days: it goes back to it
+        r = await s.seeker.browse()
+        self.assertEqual(r["book"], DICT)
+        self.assertIn("not opened for 9 days", r["why"])
+        lines = "\n".join(await s.seeker.lines())
+        self.assertIn("browsing: every", lines)
+        self.assertIn("stays running", lines)
+        # the Reader does it on its own, now and then
+        s.seeker.books_seen = {}
+        s.directives.research.browse_every_seconds = 0.5
+        reader = next(a for a in s.agents if a.name == "reader")
+        reader.last = 0
+        self.assertTrue(await wait_for(lambda: reader.stats["browsed"] >= 1, 20), dict(reader.stats))
 
 
 if __name__ == "__main__":

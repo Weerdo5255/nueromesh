@@ -16,10 +16,12 @@ import numpy as np
 from .activity import ActivityLog, ActivityTracker
 from .agency import AgencyTeacher, Director
 from .ego import Ego, EgoTeacher
+from .ensemble import NodePool, members as ensemble_members
+from .journal import MindJournal
 from .anatomy import record as record_firing
 from .directors import DirectorPool
 from .dreams import DreamBank, Dreamer
-from .agents import (Architect, Compressor, Curator, Evaluator, Explorer, Investigator, Orchestrator, Researcher,
+from .agents import (Architect, Compressor, Curator, Evaluator, Explorer, Investigator, Orchestrator, Reader, Researcher,
                      Sentinel, TaskRunner, Trainer)
 from .background import BackgroundTasks
 from .challenges import ChallengeTeacher, Challenges
@@ -82,7 +84,9 @@ class System:
         self.registry = NodeRegistry(self.store, self.bus, self.state_dir / "nodes", self.guardian.audit,
                                      self.backend)
         self.tools = ToolRegistry(self.root, self.directives.tools.plugin_dirs, self.store)
-        self.sandbox = Sandbox(self.directives.tools.sandbox_cpu_seconds, self.directives.tools.sandbox_memory_mb)
+        tools_pol = self.directives.tools
+        self.sandbox = Sandbox(tools_pol.sandbox_cpu_seconds, tools_pol.sandbox_memory_mb, workers=tools_pol.workers,
+                               worker_cpu_seconds=tools_pol.worker_cpu_seconds, worker_requests=tools_pol.worker_requests)
         teachers: dict = {"human": HumanTeacher()}
         for name, cfg in tp.models.items():  # one teacher per [teachers.<name>] table
             teachers[name] = LLMTeacher(name, cfg, self.guardian, self.bus)
@@ -123,6 +127,8 @@ class System:
         self.seeker = Seeker(self)            # searching every Kiwix book, again and again, for an answer (seeker.py)
         self.ego = Ego(self)                  # the outer layer: its mood on the way in, its own view on the way out (P18)
         self.bus.listen(self.ego.on_event)
+        self.journal = MindJournal(self)      # everything in its mind, by date and time (the Mind's archive)
+        self.bus.listen(self.journal.on_event)
         for cap in self.capabilities:  # what people taught, exactly as they put it, stands (P1)
             for ex in self.store.examples(cap):
                 if ex.source == "human":
@@ -136,6 +142,7 @@ class System:
         self.last_order_at = 0.0
         self.served: deque[str] = deque(maxlen=100)
         self.firings: deque[dict] = deque(maxlen=400)  # what each node fired on lately (anatomy.py)
+        self.pool = NodePool(self)  # every node instance that answers runs here, at most [nodes] max_running at once
         self._enc_cache: OrderedDict[str, np.ndarray] = OrderedDict()
         self._enc_lock = threading.Lock()
         self._tasks: list[asyncio.Task] = []
@@ -146,7 +153,7 @@ class System:
         self.dreamer = Dreamer(self)    # idle: the coin flip (an objective, or sleep), and dreaming
         self.agents = [self.directors, self.orchestrator, Architect(self), Trainer(self), Evaluator(self), Curator(self),
                        Explorer(self), self.researcher, self.investigator, TaskRunner(self), Compressor(self),
-                       self.director, self.dreamer, Ruminator(self), Thinker(self), Sentinel(self)]
+                       self.director, self.dreamer, Ruminator(self), Thinker(self), Reader(self), Sentinel(self)]
 
     # ------------------------------------------------------------- lifecycle
     async def start(self) -> "System":
@@ -176,7 +183,16 @@ class System:
         self.affect.save()
         self.evolution.save()
         self.guardian.audit("system", "system.stop")
+        try:
+            await self.sandbox.close()  # tools that stay running (the Kiwix tool)
+        except Exception:
+            pass
         self.store.close()
+        try:
+            self.memory.db.close()
+        except Exception:
+            pass
+        self.pool.close()
 
     async def __aenter__(self) -> "System":
         return await self.start()
@@ -239,18 +255,41 @@ class System:
         guess = None
         fired = None
         if node is not None:
-            label, conf = node.predict(self.encode(text), exclude)
-            node.last_used = time.time()
-            node.metrics["serves"] = node.metrics.get("serves", 0) + 1
+            team = ensemble_members(self, cap)  # the champion and its instances, all at once (ensemble.py)
+            x = self.encode(text)
+            preds = await self.pool.gather(cap, [(m.predict, x, exclude) for m in team])
+            votes = []
+            for m, (label, conf) in zip(team, preds):
+                m.last_used = time.time()
+                m.metrics["serves"] = m.metrics.get("serves", 0) + 1
+                f = record_firing(self, m.id, cap, text, label, conf, used=False)
+                acc = m.metrics.get("holdout_acc")
+                votes.append({"node": m, "label": label, "conf": float(conf), "acc": float(acc or 0.0), "fired": f,
+                              "champion": m is node,
+                              "ok": acc is not None and acc >= self.directives.nodes.serve_min_accuracy
+                              and conf >= self.directives.orders.confidence_threshold})
+            label, conf = preds[0]
             guess = (label, conf)
-            fired = record_firing(self, node.id, cap, text, label, conf, used=False)
-            acc = node.metrics.get("holdout_acc")
-            if (acc is not None and acc >= self.directives.nodes.serve_min_accuracy
-                    and conf >= self.directives.orders.confidence_threshold):
+            fired = votes[0]["fired"]
+            sure = [v for v in votes if v["ok"]]
+            if sure:
+                labels = list(dict.fromkeys(v["label"] for v in sure))
+                if len(labels) == 1:  # they agree (or only one is sure): their answer, together
+                    chosen = next((v for v in sure if v["champion"]), sure[0])
+                    agree = len([v for v in votes if v["label"] == chosen["label"]])
+                    how = f" with {agree - 1} instance{'s' if agree != 2 else ''} agreeing" if agree > 1 else ""
+                    conf_out = sum(v["conf"] for v in sure) / len(sure)
+                else:  # they disagree: the ego is the ultimate arbitrator
+                    self.pool.disagreed += 1
+                    verdict = self.ego.arbitrate(cap, text, sure)
+                    chosen = next(v for v in sure if v["label"] == verdict["label"] and v["node"].id == verdict["node"])
+                    how = f" (instances disagreed; the ego arbitrated: {verdict['strategy']}, {verdict['why']})"
+                    conf_out = chosen["conf"]
+                chosen["fired"]["used"] = True
+                m = chosen["node"]
                 if allow_teacher and learn and self.rng.random() < self.directives.orders.audit_sample_rate:
-                    self._spot_check(cap, text, label, node)
-                fired["used"] = True
-                return Inference(label, conf, f"node:{node.id}", node.id, "node")
+                    self._spot_check(cap, text, chosen["label"], m)
+                return Inference(chosen["label"], conf_out, f"node:{m.id}{how}", m.id, "node")
         if allow_teacher:
             lesson = await self.teachers.label(spec, text)
             usable = lesson and lesson.label and lesson.label not in exclude and (
@@ -547,6 +586,8 @@ class System:
                 notes.append(f"{t.name}: {error}")
                 continue
             doc = self.knowledge.add(k, reason)
+            if t.name == "kiwix":
+                self.seeker.note_book(str(k.get("revision") or ""))
             self.guardian.audit(actor, "knowledge.learned", doc.title, source=doc.source, url=doc.url,
                                 passages=doc.passages, reason=reason)
             self.memory.learn_article(doc)  # and compressed into a memory node
@@ -610,6 +651,7 @@ class System:
                 "labels": spec.active_labels(), "examples": self.store.count(name),
                 "champion": self._brief(champ) if champ else None,
                 "candidates": [self._brief(n) for n in self.registry.candidates(name)],
+                "instances": [self._brief(n) for n in self.registry.instances(name)],
                 "retired": [n.id for n in self.registry.retired(name)],
             }
         lineage = self.registry.lineage.values()
@@ -648,6 +690,7 @@ class System:
             "curiosity": {"enabled": self.curiosity.enabled,
                           "gaps": sum(len(a.gaps) for a in self.curiosity.areas().values()) if self.curiosity.enabled else 0},
             "dreams": self.dreams.status(),
+            "pool": self.pool.status(),
             "ego": {"enabled": self.ego.enabled, "mood": self.affect.snapshot().get("mood", "steady"),
                     "remarks": sum(v for k, v in self.ego.stats.items() if k not in ("quiet", "fascinated")),
                     "last": (list(self.ego.remarks)[-1] if self.ego.remarks else None)},

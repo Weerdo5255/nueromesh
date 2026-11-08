@@ -13,16 +13,27 @@ only those named after it). Books come from each server's OPDS catalog (/catalog
 More than one server: "url" and the extra "servers" are all searched, in that order; a server that
 is down is skipped. For one search of many (the mesh's Kiwix search, seeker.py) the request may
 narrow things down: "only" [{"server", "book"}] searches just those books, "exclude" skips articles
-already read. "__catalog__" lists every book on every server. Talks only to the configured servers.
+already read. "__catalog__" lists every book on every server; "__random__" reads a random article
+from the "only" book (for browsing a book it has not opened in a long time). Talks only to the
+configured servers.
+
+Speed: started with --serve (manifest: persistent = true) it stays running and answers requests as
+JSON lines, many at once: connections to the servers are kept alive, the book catalog and what it read
+are cached, and every book is searched at the same time (the best book's article still wins).
 """
 import html
+import http.client
 import json
 import re
 import sys
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 
 DEFAULTS = {"url": "http://localhost:8080", "servers": [], "books": [], "language": "eng", "use_proxy": False, "timeout": 15,
@@ -47,6 +58,79 @@ class Transient(Exception):
 
 class NotFound(Exception):
     """The server works but has no such article."""
+
+
+class Pool:
+    """--serve: keep-alive connections (one per thread and server) and a cache of the pages it read."""
+
+    def __init__(self, cache_mb: int = 96):
+        self.local = threading.local()
+        self.lock = threading.Lock()
+        self.cache: OrderedDict = OrderedDict()
+        self.size, self.limit = 0, cache_mb << 20
+        self.hits = self.misses = 0
+
+    def _conn(self, scheme: str, netloc: str, timeout: float):
+        conns = getattr(self.local, "conns", None)
+        if conns is None:
+            conns = self.local.conns = {}
+        c = conns.get((scheme, netloc))
+        if c is None:
+            cls = http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
+            c = conns[(scheme, netloc)] = cls(netloc, timeout=timeout)
+        return c
+
+    def _drop(self, scheme: str, netloc: str) -> None:
+        c = getattr(self.local, "conns", {}).pop((scheme, netloc), None)
+        if c is not None:
+            c.close()
+
+    def fetch(self, url: str, headers: dict, timeout: float) -> tuple[int, str, str]:
+        with self.lock:
+            hit = self.cache.get(url)
+            if hit is not None:
+                self.cache.move_to_end(url)
+                self.hits += 1
+                return 200, hit[0], hit[1]
+            self.misses += 1
+        start = url
+        for _ in range(6):  # redirects (a random article, a moved title)
+            parts = urllib.parse.urlsplit(url)
+            path = (parts.path or "/") + ("?" + parts.query if parts.query else "")
+            for attempt in (0, 1):  # a kept-alive connection the server closed: once more, on a fresh one
+                c = self._conn(parts.scheme, parts.netloc, timeout)
+                try:
+                    c.request("GET", path, headers=headers)
+                    r = c.getresponse()
+                    body = r.read()
+                    if r.will_close:
+                        self._drop(parts.scheme, parts.netloc)
+                    break
+                except (http.client.HTTPException, OSError):
+                    self._drop(parts.scheme, parts.netloc)
+                    if attempt:
+                        raise
+            loc = r.getheader("Location")
+            if r.status in (301, 302, 303, 307, 308) and loc:
+                url = urllib.parse.urljoin(url, loc)
+                continue
+            text = body.decode(r.msg.get_content_charset() or "utf-8", errors="replace")
+            if r.status == 200 and "/random" not in start and "/catalog/" not in start:
+                with self.lock:
+                    for key in {start, url}:
+                        if key not in self.cache:
+                            self.cache[key] = (text, url)
+                            self.size += len(text)
+                    while self.size > self.limit and self.cache:
+                        _, (old, _) = self.cache.popitem(last=False)
+                        self.size -= len(old)
+            return r.status, text, url
+        return 508, "", url
+
+
+POOL: Pool | None = None                  # --serve only
+FAN: ThreadPoolExecutor | None = None     # --serve only: every book searched at once
+CATALOG: dict = {}                        # --serve only: the catalog, per configuration
 
 
 def topic_of(text: str) -> str:
@@ -87,6 +171,19 @@ class Server:
 
     def get(self, path: str, params: dict | None = None, link: bool = False) -> tuple[str, str]:
         url = self.url(path, params, link)
+        if POOL is not None and not self.cfg.get("use_proxy"):
+            try:
+                status, text, final = POOL.fetch(url, {"User-Agent": self.cfg["user_agent"], "Connection": "keep-alive"},
+                                                 float(self.cfg["timeout"]))
+            except (http.client.HTTPException, OSError) as exc:
+                raise Transient(f"Kiwix server unreachable at {self.base} ({exc})") from None
+            if status in (404, 400):
+                raise NotFound(f"HTTP {status} for {url}")
+            if status in (429, 500, 502, 503, 504):
+                raise Transient(f"Kiwix server returned HTTP {status}")
+            if status >= 300:
+                raise RuntimeError(f"Kiwix server returned HTTP {status} for {url}")
+            return text, final
         req = urllib.request.Request(url, headers={"User-Agent": self.cfg["user_agent"]})
         try:
             with self.opener.open(req, timeout=float(self.cfg["timeout"])) as resp:
@@ -340,6 +437,10 @@ def summary_of(intro: str, limit: int = 700) -> str:
 
 def read_article(server: Server, path: str, fallback_title: str) -> dict | None:
     page, final = server.get(path, link=True)
+    return parse_article(server, page, final, fallback_title)
+
+
+def parse_article(server: Server, page: str, final: str, fallback_title: str) -> dict | None:
     parser = ArticleParser()
     parser.feed(page[: 4 * int(server.cfg["max_chars"])])
     parser._flush()
@@ -366,8 +467,14 @@ def servers_of(cfg: dict) -> list[Server]:
     return out
 
 
-def catalog(cfg: dict) -> tuple[list[tuple[Server, dict]], list[str]]:
-    """Every book on every server, chosen and ranked per server ([books], [language]); and the servers that are down."""
+def catalog(cfg: dict, fresh: bool = False) -> tuple[list[tuple[Server, dict]], list[str]]:
+    """Every book on every server, chosen and ranked per server ([books], [language]); and the servers that are
+    down. --serve keeps it for "catalog_seconds" (a request for "__catalog__" always reads it again)."""
+    key = json.dumps([cfg["url"], cfg.get("servers"), cfg.get("books"), cfg.get("language")], sort_keys=True)
+    if POOL is not None and not fresh:
+        hit = CATALOG.get(key)
+        if hit and time.time() - hit[0] < float(cfg.get("catalog_seconds", 600)) and hit[1]:
+            return hit[1], hit[2]
     out, down = [], []
     for server in servers_of(cfg):
         try:
@@ -380,14 +487,46 @@ def catalog(cfg: dict) -> tuple[list[tuple[Server, dict]], list[str]]:
         except RuntimeError:
             picked = []  # this server serves none of the configured books
         out += [(server, b) for b in picked]
+    if POOL is not None:
+        CATALOG[key] = (time.time(), out, down)
     return out, down
 
 
-def main() -> None:
-    request = json.load(sys.stdin)
+def knowledge_of(cfg: dict, server: Server, book: dict, art: dict, topic: str) -> dict:
+    summary = summary_of(art["intro"])
+    knowledge = {
+        "source": "kiwix", "language": book["language"] or cfg["language"], "title": art["title"],
+        "url": art["url"], "revision": book["name"], "topic": topic, "summary": summary,
+        "passages": passages(art["parts"], int(cfg["max_passages"])),
+        "links": art["links"][: int(cfg["links"])], "book": book["title"] or book["name"], "server": server.base,
+    }
+    return {"output": f"{summary}\n(Kiwix: {art['title']}, {book['title'] or book['name']})", "knowledge": knowledge}
+
+
+def random_article(cfg: dict, sources: list, exclude: set) -> dict:
+    """A random article from the book asked for (browsing: something new from a book it has not opened lately)."""
+    for server, book in sources:
+        for _ in range(4):
+            page = None
+            for params in ({"content": book["name"]}, {"books.name": book["name"]}):
+                try:
+                    page, final = server.get("/random", params)
+                    break
+                except NotFound:
+                    continue
+            if page is None:
+                break
+            art = parse_article(server, page, final, _title_from_path(final))
+            if art is None or art["url"] in exclude:
+                continue
+            return knowledge_of(cfg, server, book, art, art["title"])
+    raise NotFound(f"no random article from {', '.join(b['name'] for _, b in sources)}")
+
+
+def handle(request: dict) -> dict:
     cfg = {**DEFAULTS, **(request.get("config") or {})}
-    sources, down = catalog(cfg)
-    what = request["input"].strip()
+    what = str(request.get("input", "")).strip()
+    sources, down = catalog(cfg, fresh=what in ("__catalog__", "__selftest__"))
     if what in ("__selftest__", "__catalog__"):
         if not sources:
             if down and len(down) == len(servers_of(cfg)):
@@ -396,12 +535,10 @@ def main() -> None:
         if what == "__catalog__":
             listed = [{"server": srv.base, "name": b["name"], "title": b["title"], "language": b["language"],
                        "category": b["category"]} for srv, b in sources]
-            print(json.dumps({"output": f"{len(listed)} book{'s' if len(listed) != 1 else ''} on "
-                                        f"{len({x['server'] for x in listed})} server(s)", "books": listed, "down": down}))
-            return
+            return {"output": f"{len(listed)} book{'s' if len(listed) != 1 else ''} on "
+                              f"{len({x['server'] for x in listed})} server(s)", "books": listed, "down": down}
         names = ", ".join(b["name"] for _, b in sources[:4]) + (", ..." if len(sources) > 4 else "")
-        print(json.dumps({"output": f"kiwix ok: {len(sources)} book{'s' if len(sources) != 1 else ''} ({names})"}))
-        return
+        return {"output": f"kiwix ok: {len(sources)} book{'s' if len(sources) != 1 else ''} ({names})"}
     if not sources:
         if down:
             raise Transient("; ".join(down))
@@ -412,17 +549,24 @@ def main() -> None:
         if not sources:
             raise NotFound(f"none of the books asked for is served: {', '.join(n for _, n in only)}")
     exclude = {str(u) for u in (cfg.get("exclude") or [])}
+    if what == "__random__":
+        return random_article(cfg, sources, exclude)
     full = str(cfg.get("search", "title")).lower() == "fulltext"
     topic = topic_of(what)
     bare = re.sub(r"^(the|a|an)\s+", "", topic, flags=re.I)  # titles rarely start with an article
-    unreachable = 0
-    for server, book in sources:
-        seen: set[str] = set()
+
+    def look(src):
+        server, book = src
         try:
-            found = [c for term in dict.fromkeys([topic, bare]) for c in candidates(server, book, term, full)]
+            return [c for term in dict.fromkeys([topic, bare]) for c in candidates(server, book, term, full)]
         except Transient:
-            unreachable += 1
+            return None
+    found_all = list(FAN.map(look, sources)) if FAN is not None and len(sources) > 1 else [look(x) for x in sources]
+    unreachable = sum(1 for f in found_all if f is None)
+    for (server, book), found in zip(sources, found_all):  # in the books' order: the best book's article wins
+        if found is None:
             continue
+        seen: set[str] = set()
         for title, path in found:
             if path in seen:
                 continue
@@ -435,28 +579,58 @@ def main() -> None:
                 break
             if art is None or art["url"] in exclude or path in exclude:
                 continue
-            summary = summary_of(art["intro"])
-            knowledge = {
-                "source": "kiwix", "language": book["language"] or cfg["language"], "title": art["title"],
-                "url": art["url"], "revision": book["name"], "topic": topic, "summary": summary,
-                "passages": passages(art["parts"], int(cfg["max_passages"])),
-                "links": art["links"][: int(cfg["links"])], "book": book["title"] or book["name"], "server": server.base,
-            }
-            print(json.dumps({"output": f"{summary}\n(Kiwix: {art['title']}, {book['title'] or book['name']})",
-                              "knowledge": knowledge}))
-            return
+            return knowledge_of(cfg, server, book, art, topic)
     if unreachable and unreachable == len(sources):
         raise Transient(f"no Kiwix server could be searched for '{topic}'")
     raise NotFound(f"no {'article mentioning' if full else 'article matching'} '{topic}' in "
                    f"{', '.join(b['name'] for _, b in sources)}")
 
 
-if __name__ == "__main__":
+def reply(request: dict) -> dict:
     try:
-        main()
+        return handle(request)
     except Transient as exc:
-        print(json.dumps({"error": str(exc), "transient": True}))
+        return {"error": str(exc), "transient": True}
     except NotFound as exc:
-        print(json.dumps({"error": str(exc), "not_found": True}))
+        return {"error": str(exc), "not_found": True}
     except Exception as exc:
-        print(json.dumps({"error": f"{type(exc).__name__}: {exc}"}))
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def serve() -> None:
+    """Stay running: a request a line on stdin (with an "id"), its answer a line on stdout, many at once."""
+    global POOL, FAN
+    POOL = Pool()
+    FAN = ThreadPoolExecutor(max_workers=8, thread_name_prefix="book")
+    work = ThreadPoolExecutor(max_workers=16, thread_name_prefix="request")
+    out = threading.Lock()
+
+    def answer(req: dict) -> None:
+        data = reply(req)
+        data["id"] = req.get("id")
+        line = json.dumps(data)
+        with out:
+            sys.stdout.write(line + "\n")
+            sys.stdout.flush()
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(req, dict):
+            work.submit(answer, req)
+    work.shutdown(wait=True)
+
+
+def main() -> None:
+    print(json.dumps(reply(json.load(sys.stdin))))
+
+
+if __name__ == "__main__":
+    if "--serve" in sys.argv[1:]:
+        serve()
+    else:
+        main()

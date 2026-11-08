@@ -316,7 +316,7 @@ def glance(s) -> dict:
     drafts = [d for d in s.toolsmith.drafts.values() if d.get("status") == "awaiting approval"] if s.toolsmith.enabled else []
     d = s.director
     last = d.history[-1] if d.history else None
-    facts = sum(len(n.facts()) for n in s.memory.nodes.values()) if s.memory.enabled else 0
+    facts = sum(len(n.facts()) for n in s.memory.fact_nodes()) if s.memory.enabled else 0
     g = {
         "mood": snap.get("mood", "steady"), "temperament": bool(s.affect.enabled),
         "feelings": {k: snap[k] for k in ("valence", "arousal", "confidence", "trust", "patience") if k in snap},

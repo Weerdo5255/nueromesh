@@ -8,6 +8,8 @@ every API call (the page itself holds no data and asks for the token).
 from __future__ import annotations
 
 import asyncio
+import re
+import time
 import json
 import os
 from dataclasses import asdict
@@ -100,6 +102,33 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
         if path == "/avatar":  # the avatar: its mind at a glance, and whether it has a voice
             from .avatar import glance
             return 200, {**glance(system), "enabled": system.directives.avatar.enabled, "voice": system.voice_tts.status()}
+        if path.startswith("/memory/tests/"):  # a node's tests, from the memory database
+            node = system.memory.nodes.get(path.rsplit("/", 1)[-1])
+            if node is None:
+                return 404, {"error": "no such memory node"}
+            data = system.memory.db.read(node.id) or {}
+            return 200, {"node": node.id, "own": node.own, "rev": node.rev, "text": system.memory.render_tests(node),
+                         "tests": data.get("tests", []) if not node.own else
+                         [{"ask": t.ask, "answer": t.answer, "learned": t.learned} for t in node.tests],
+                         "unknowns": data.get("unknowns", [])}
+        if path == "/mind/archive":  # ?tab=ego&at=<epoch seconds>&hours=6: what happened in its mind around then
+            try:
+                at = float(query.get("at") or time.time())
+                hours = float(query.get("hours") or 6)
+            except ValueError:
+                return 400, {"error": "at is seconds since 1970, hours a number"}
+            tab = query.get("tab") or None
+            return 200, system.journal.around(tab, at, hours, limit=int(query.get("limit", 200) or 200))
+        if path == "/mind/archive/days":  # ?tab=ego&tz=-300: the days that have entries (tz: getTimezoneOffset)
+            try:
+                tz = int(query.get("tz") or 0)
+            except ValueError:
+                tz = 0
+            return 200, {"tab": query.get("tab") or "", "days": system.journal.days(query.get("tab") or None, tz),
+                         "counts": system.journal.counts()}
+        if path == "/memory/own":  # its own statements, kept without tests
+            return 200, {"statements": system.memory.own_statements(about=query.get("about") or None,
+                                                                    limit=min(200, int(query.get("limit", 50) or 50)))}
         if path.startswith("/avatar/audio/"):  # what it said, as audio (only files it made)
             got = system.voice_tts.audio(path.rsplit("/", 1)[-1])
             return (200, Raw(*got)) if got else (404, {"error": "no such audio"})
@@ -323,9 +352,15 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                                        by=body.get("by", "api"), kind="people")
             return (200, {"node": made[0], "status": made[1]}) if made else (400, {"error": "not kept (memory off, or "
                                                                                            "not a question with an answer)"})
+        if path.startswith("/memory/tests/"):  # {"tests": [{"ask", "answer"}...], "unknowns": [...]}: a person's edit
+            nid = path.rsplit("/", 1)[-1]
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", nid) or not isinstance(body.get("tests"), list):
+                return 400, {"ok": False, "error": "send {\"tests\": [{\"ask\": ..., \"answer\": ...}, ...]}"}
+            res = system.memory.edit_tests(nid, body["tests"], body.get("unknowns"), by=body.get("by", "api"))
+            return (200 if res["ok"] else 400), res
         if path == "/memory/test":
-            system.memory.sync_files(force=True)
-            results = [await asyncio.to_thread(system.memory.run_tests, n) for n in list(system.memory.nodes.values())]
+            system.memory.sync_tests(force=True)
+            results = [await asyncio.to_thread(system.memory.run_tests, n) for n in system.memory.fact_nodes()]
             return 200, {"nodes": results, "passing": all(r["passed"] == r["total"] for r in results)}
         if path == "/challenge/fetch":  # {"benchmark": "gsm8k", "rows": 200, "split": "test"}
             try:

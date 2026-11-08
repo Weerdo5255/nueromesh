@@ -235,6 +235,7 @@ main { padding: 18px 24px 40px; }
 .m-champ { fill: var(--hema); }
 .m-champ-ring { fill: none; stroke: var(--hema); stroke-opacity: .25; stroke-width: 5; }
 .m-chall { fill: var(--eosin-soft); stroke: var(--eosin); stroke-width: 1.5; }
+.m-inst { fill: var(--hema); opacity: .55; stroke: var(--hema); stroke-width: 1.2; }
 .m-retired { fill: none; stroke: var(--ink-3); stroke-width: 1.2; stroke-dasharray: 2 2; }
 .m-none { fill: none; stroke: var(--ink-3); stroke-width: 1.4; stroke-dasharray: 3 3; }
 .m-tool { fill: var(--tool); }
@@ -541,3 +542,17 @@ dialog .row { margin-top: 14px; justify-content: flex-end; }
 .av-switch input { width: 28px; height: 16px; }
 .av-switch input::after { width: 12px; height: 12px; }
 .av-switch input:checked::after { transform: translateX(12px); }
+/* the Mind's archive: the last day in each tab, older behind a date and time lookup */
+.archive { border: 1px dashed var(--rule); border-radius: 10px; padding: 8px 12px; margin: 2px 0 14px; background: color-mix(in srgb, var(--panel) 70%, transparent); }
+.archive-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px; }
+.archive-head p { margin: 0; flex: 1 1 280px; }
+.archive-form { gap: 6px; flex-wrap: wrap; }
+.archive-form input[type=datetime-local] { width: auto; min-width: 0; max-width: 100%; font: inherit; font-size: 13.5px; padding: 4px 6px; }
+.archive-form select { font-size: 13.5px; }
+.day-chips { flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.day-chip { padding: 2px 8px !important; }
+.archive-results { margin-top: 8px; border-top: 1px solid var(--rule); padding-top: 6px; }
+.archive-results > p { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 4px; }
+.archive-rows { max-height: 360px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+.archive-rows li { padding: 4px 0; border-bottom: 1px solid color-mix(in srgb, var(--rule) 60%, transparent); font-size: 13.5px; overflow-wrap: anywhere; }
+.archive-rows time { margin-right: 6px; }

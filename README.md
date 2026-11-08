@@ -15,7 +15,7 @@ itself, questions it asks you, capabilities it proposes for you to adopt, and in
 it starts on its own with its tools and nodes. You can give it background tasks that it keeps
 working on continuously: study a topic, train a skill to a target, or repeat an order and tell
 you when the result changes. What it learns is compressed into memory nodes, small neural
-networks that each come with an external test file you can read and edit, and which it keeps
+networks that each come with tests you can read and edit (kept in the memory's own database), and which it keeps
 shrinking for as long as every test still passes. And it has initiative of its own: when no one
 has asked it for anything, a director decides what to learn or test next (sit an exam, practise,
 read up on a topic, train a weak skill, check its memory), steered by an agency node that learns
@@ -56,7 +56,7 @@ python -m neuromesh run       # live console: node network, lessons in progress,
 python -m neuromesh serve     # daemon + HTTP API + web interface on http://127.0.0.1:8765/
 python -m neuromesh bench     # CPU vs GPU speed for node training and inference
 python -m neuromesh teachers  # which teachers are available (Ollama, Claude); --test for a live lesson
-python -m neuromesh memory test   # run every memory node against its test file
+python -m neuromesh memory test   # run every memory node against its tests (state/memory.db)
 ```
 
 Requirements: Python 3.11+ and numpy. Optional: [Ollama](https://ollama.com) for a local
@@ -154,18 +154,20 @@ the answer. Facts come from:
 |---|---|
 | research | every retained article ("Tell me about Ada Lovelace"), and every answer it gave from retained or researched passages |
 | teachers | an LLM teacher's direct answer to a question (the source says it was a language model) |
-| people | `/memorize <question> :: <answer>`, `POST /memorize`, replying `answer: ...` when it asks what you meant, or a test file you write |
+| people | `/memorize <question> :: <answer>`, `POST /memorize`, replying `answer: ...` when it asks what you meant, or tests you add (`/memory set`, the API, SQLite) |
 | challenges | the practice answers of numeric, short-answer, yes/no and multiple-choice suites (never the exam's) |
 
 Skills and routes already live in skill nodes and the router; memory nodes hold the facts.
 
-**The tests.** As it compresses a fact, the mesh writes an external, human-readable test file
-for the node, `memory_tests/<node>.toml`:
+**The tests.** As it compresses a fact, the mesh writes the node's tests into the memory's own
+database, `state/memory.db` (separate from the mesh's main database; not files). Its `tests` table
+has a row for every test: the node, the question, the answer it must give (empty for a question it
+must not answer), the way of asking it is a variant of, where the answer came from and who taught
+it; its `nodes` table has each node's revision and a summary. `/memory tests mem-0001` (or `GET
+/memory/tests/mem-0001`) shows them in the layout earlier versions wrote to files:
 
 ```toml
-# Memory node mem-0001: what NeuroMesh has learned, compressed into a small neural network.
-# These tests are the contract: the node must give exactly these answers, and must not answer
-# the [[unknown]] questions. A smaller node replaces it only if it passes every test.
+# Memory node mem-0001: the tests it must pass (in the memory database).
 node = "mem-0001"
 facts = 10
 size = "440 bytes: 32 inputs, hidden none, 8-bit (first 265,260 bytes)"
@@ -229,9 +231,9 @@ memory nodes and tries to merge two of them, chosen at random (every `merge_ever
 2. **Fine-tune** the combined node on both nodes' tests, with each node's questions no longer
    counted as the other's unknowns.
 3. **Test** it against the answers of both nodes (and the questions neither should answer). If it
-   passes at least 90% (`merge_pass_rate`) it replaces both: their test files fold into one,
-   and their weights move to `state/memory/merged/`. Any tests it still fails are listed in
-   its file, those answers are not served, and it relearns until every test passes. Below 90%
+   passes at least 90% (`merge_pass_rate`) it replaces both: their tests fold into one node's,
+   and their weights move to `state/memory/merged/`. Any tests it still fails are listed with
+   it, those answers are not served, and it relearns until every test passes. Below 90%
    both nodes stay, and that pair is not tried again until one of them changes.
 4. **Compress** the combined node like any other. Combined nodes can be merged again with
    other combined nodes, so knowledge collects into fewer, denser nodes.
@@ -240,12 +242,27 @@ In the demo, three nodes of four, four and two facts (200, 200 and 120 bytes) me
 into one node of all ten facts. Each merge passes 100% of the answer tests, and the result
 compresses to 440 bytes. `/memory merge [node node]` tries a merge now.
 
-**People own the tests too.** The mesh checks the files every couple of seconds:
+**People own the tests too.** Change them with `/memory set mem-0001 <question> :: <answer>`,
+`PUT /memory/tests/mem-0001` (`{"tests": [{"ask", "answer"}, ...]}`), or any SQLite tool on
+`state/memory.db`: triggers bump the node's revision on every change, and the mesh checks the
+revisions every couple of seconds:
 - change an answer: the node is retrained to give the new one (the old answer is not served meanwhile);
-- add a `[[test]]` (ask + answer) or an `[[unknown]]`: it is learned;
-- delete a test: that fact is forgotten; delete the file: the node is forgotten (its weights are
-  moved to `state/memory/forgotten/`);
-- write a new `.toml` file in `memory_tests/`: a new node learns it.
+- add a test (ask + answer) or one it must not answer: it is learned;
+- delete a test: that fact is forgotten; delete the node's row in `nodes`: the node is forgotten
+  (its weights are moved to `state/memory/forgotten/`);
+- add tests for a node it does not have: a new node learns them.
+
+Test files from earlier versions (`memory_tests/<node>.toml`) are imported into the database the
+first time it starts, and the folder is moved aside to `memory_tests.imported/`.
+
+**Its own statements, in memory without tests.** Its opinions (when its view of something
+changes), every remark its ego makes and every disagreement its ego settles are kept in memory
+too: in the database's `own` table, and learned by **own-memory nodes** (`own-0001`, ...) that
+answer "What do you think about France?" with what it last said. Nothing tests them, because they
+are its own views, not facts: own-memory nodes are never checked, compressed or merged, and never
+answer a question about the world (`recall` skips them; the ego and its self-portrait read them).
+`/memory own [about]` and `GET /memory/own` list them; the Memory view shows them. Opinions about
+people stay private in the mind and are not kept there (P9).
 
 **Answering.** Memory nodes are asked first, before routing: when one is confident (0.6) the
 answer comes from it, with its source:
@@ -272,7 +289,7 @@ looks at its situation and picks a mode:
 | practise | sets itself a challenge task: practise on a benchmark suite (learning from every grade), then re-sit its exam |
 | examine | sits a benchmark exam now, to measure itself |
 | improve | sets itself an improve task for its weakest skill (the Trainer and the Architect work on it first) |
-| consolidate | runs every memory node against its test file, and relearns what fails |
+| consolidate | runs every memory node against its tests, and relearns what fails |
 | build | has the toolsmith write a tool for requests no tool could meet, and asks you for permission to use it (see [Tools it writes](#tools-it-writes-the-toolsmith-and-coder-nodes)) |
 | experiment | tries out a tool it wrote that you approved, and refines it if it falls short |
 | pursue | sets itself a long-term objective, chosen by its [curiosity](#curiosity-and-the-objectives-it-sets-itself): to find out what it lacks (a question it could not answer, an answer you marked wrong, a question an objective left open or its sources disagree on, a name it knows only from a mention) or to understand an area of interest (yours, a desire its thinking nodes hold, one people keep asking about, a topic it read up on). Every objective it sets itself says why (see [Objectives](#objectives-long-term-aims-it-pursues-by-asking-itself)) |
@@ -580,7 +597,7 @@ and limits (`max_questions`, `max_rounds`, `checks_per_round`, `follow_ups`, `me
 
 ### Thinking nodes: its own words, opinions and desires
 After its memory nodes come **thinking nodes**. Memory nodes hold facts: a question and its answer,
-each checked by a test file. Thinking nodes hold **thoughts**, one per topic it holds two or more
+each checked by its tests. Thinking nodes hold **thoughts**, one per topic it holds two or more
 facts about (or one, when it wants to know more):
 
 - **Understanding**: the facts about the topic put together and rephrased in its own words, topic
@@ -693,13 +710,53 @@ the balance a little, and it says so when it does ("I'm in good spirits").
 
 **A remark adds no fact (P18).** The node only chooses the kind of remark. The words are built
 from counts, dreams, moods and causes that are real. A remark is labelled as its ego's, shown after
-the answer and never in it ("@ its ego" in the console, "Its ego" on the web), and never stored as
-a fact, used as a source or offered for correction. Its ego is never about a person (P9).
+the answer and never in it ("@ its ego" in the console, "Its ego" on the web), and kept in memory
+only as its own statement (untested): never as a fact, a source, or offered for correction. Its ego is never about a person (P9).
 
 It also answers questions about **itself** from the same picture: "tell me about yourself", "how
 are you feeling?", "what did you dream about?", "what do you like?". `/ego` shows its mood, what it
 is curious about, its likes and dislikes, its ego nodes and what it said lately; `/ego off` and
 `/ego on` turn it off and on (or `[ego] enabled`, or the Ego tab in the web interface).
+
+**Every time the ego runs, it uses its memory.** On the way in it asks its memory nodes what they
+hold for the order, and its own-memory nodes what it said about it before (the trace says so:
+"ego (the outer layer): took it in a content mood; its memory: mem-0003 holds an answer"). On the
+way out it reads what it said about the topic before ("I'm still curious about Krakatoa", "Before,
+I said: ...") and keeps what it says in memory, untested (memory.py's own statements). Asked about
+itself, it counts the facts it holds and the things it has said.
+
+**The ultimate arbitrator.** When instances of the same kind of node disagree (see "Many
+instances" below), the ego decides whom to trust. It reads the split as single words (its mood,
+whether there is a majority, whether the champion is sure, which side the most accurate instance
+is on, and what its memory says it decided before for exactly this) and the ego node chooses:
+
+| | when (the ego policy) |
+|---|---|
+| trust-memory | it settled this before: the same way again |
+| trust-champion | it is wary or tense, or the champion is sure and the others split evenly |
+| trust-majority | most of its instances agree |
+| trust-confident | the side with the most accuracy and confidence behind it |
+
+The arbitration is in the trace ("instances disagreed; the ego arbitrated: trust-majority, most of
+its instances agree"), in `/ego` and the Ego tab, and kept in memory as its own statement. The ego
+policy teaches the ego node these too, from every disagreement.
+
+### Many instances of each node, at once and in concert
+Several instances of each kind of node run at the same time, and answer together:
+
+- **A capability's nodes.** The champion answers with up to `[nodes] instances - 1` (2) more
+  validated nodes of the same capability: runners-up that passed the held-out bar
+  (`serve_min_accuracy`) but did not beat the champion, and champions that were superseded but
+  still pass it. Instances are trained on new examples and evaluated like the champion; they are
+  retired when they fall below the bar or behind the champion's labels. When they agree, the answer
+  is theirs together ("node:sentiment-ab12cd with 2 instances agreeing"); when one is not sure, the
+  others still answer.
+- **Memory nodes.** Every memory node is asked at once; answers that say the same thing in other
+  words count as one.
+- **At most `[nodes] max_running` (8) at once.** Every node instance that answers (capability
+  nodes, memory nodes, the ego node) runs in one pool of that many workers, so several orders, and
+  several instances for one order, run in parallel. The header shows how many are running.
+- **When they disagree, the ego arbitrates** (above). A person's teaching still comes first (P1).
 
 ### Sleep and dreams: dream nodes, and imagination
 When no one has given it an order for a while (`sleep_after_idle_seconds`), the mesh **tosses a
@@ -1082,7 +1139,8 @@ All run concurrently (asyncio) and coordinate through a message bus, the registr
 | Researcher | reads up in the background (own hourly budget) on articles linked from what users asked about, and refreshes retained knowledge that has aged |
 | Investigator | the mesh's own initiative: re-forms opinions, drafts proposals, and investigates goals with its tools and nodes (own hourly budget); follows up on orders it couldn't fulfil |
 | TaskRunner | runs the background tasks you set (learn / improve / run), one at a time, on background capacity and its own hourly budget |
-| Compressor | compresses learned facts into memory nodes, writes their test files, keeps trying smaller nodes (accepted only if every test passes), and retrains to people's edits of the tests |
+| Compressor | compresses learned facts into memory nodes, writes their tests to the memory database, keeps trying smaller nodes (accepted only if every test passes), and retrains to people's edits of the tests; learns its own statements into own-memory nodes (untested) |
+| Reader | now and then opens a Kiwix book it has never read, or not for a long time, and learns something new from it |
 | Directors | director-0 and its duplicates: take every order before anything else touches it, review every result before you see it, decide what may enter long-term memory, give each other second opinions; keep director-0 running |
 | Director | independent agency (director-0): when idle, picks a mode (research, practise, examine, improve, consolidate, rest) with the agency node in front of it, sets itself tasks or sits exams, scores what each choice achieved and teaches the agency node from it |
 | Dreamer | when idle, may fall asleep and give all background capacity to dreaming: makes up questions and answers from what it holds, checks them on waking, evolves the dream nodes; an order wakes it |
@@ -1106,13 +1164,14 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P8 never lie | the temperament may withhold, delay, shorten or add context or a gentler tone, never change an answer; every change is disclosed; distressed people are never kept waiting (the honesty guard in `neuromesh/temperament.py`) |
 | P9 discretion | private notes and opinions are declined, never denied or faked; opinions about people are always private; the operator sees everything (`/mind`, audited) |
 | P10 human-adopted growth | the mesh proposes skills, labels and tools and asks questions; only a human adopts a proposal or approves a tool |
-| P11 tested memory | knowledge lives in a memory node checked by its external test file; a smaller node is accepted only if all its answers still match; a merged node only if it passes at least 90% of both nodes' tests, and the ones it fails are never served and are relearned; people's edits to the tests are retrained to |
+| P11 tested memory | knowledge lives in a memory node checked by its tests (in the memory database); a smaller node is accepted only if all its answers still match; a merged node only if it passes at least 90% of both nodes' tests, and the ones it fails are never served and are relearned; people's edits to the tests are retrained to |
 | P12 accountable initiative | the mesh takes initiative only when idle and within its own budget; every decision is audited and logged; the tasks it sets itself can be paused or removed; people can pin its mode or turn it off; it never adds capabilities or approves tools |
 | P14 directed orders | there is always at least one director node (director-0 never retires, and is restarted if it stops); every order passes a director on the way in and on the way out; nothing enters long-term memory without a director's review; duplicates stay within `max_directors`; a director only adds disclosed notes (P8), always keeps a person's word (P1), never stores imagination (P13); an unanswered order is tried other ways at most `max_attempts` times, and a reply that gives up says what was tried (P7) |
 | P15 self-made tools | no code the mesh wrote runs before a person approves it (the Explorer runs an `author = "neuromesh"` tool only if those exact files were approved, so changed code asks again); its code is standard library only and checked before it is offered (no files, network, processes, `eval` or `exec`); made tools never get permissions and are self-tested like any tool (P3); experiments run only when idle and within budget; every draft, approval, experiment and refinement is audited |
 | P16 honest objectives | objectives are pursued only when idle and within `steps_per_hour`, never while asleep, halted or paused; every question it asks itself passes a director; every answer keeps its source and confidence and says whether a second source confirmed it; disagreements are recorded and settled, not hidden; what it could not find out is written up as open; one question to a person at a time, and a person's answer stands; self-set objectives count against `max_self_objectives` and can be removed |
 | P17 own thoughts | thinking nodes recombine and rephrase only facts its memory nodes hold, and every thought is checked word by word against them (a draft that adds a word, name or number is turned down); a thought is labelled as its own thinking with its node and facts, shown beside an answer and never in it, never stored as a fact or used as a source; the opinions it states are ones its thinking nodes hold, from evidence they name, and opinions about people stay private; desires act only through the director's self-set objectives, within `max_self_objectives` and its budgets, each saying why |
-| P18 ego | the ego wraps every other node: it reads the mood an order is taken in, and on the way out its ego node only chooses the kind of remark (quiet, curious, dream, opinion, feeling, doubt); the words are built from what is so, so a remark adds no fact; a remark is labelled as its ego's, shown after the answer and never in it, never stored, used as a source or corrected; it stays quiet when the answer was held back or the person is upset, and is never about a person; what it is curious about raises that aim only within `max_self_objectives` and its budgets; people can turn it off |
+| P18 ego | the ego wraps every other node: it reads the mood an order is taken in, and on the way out its ego node only chooses the kind of remark (quiet, curious, dream, opinion, feeling, doubt); the words are built from what is so, so a remark adds no fact; a remark is labelled as its ego's, shown after the answer and never in it, kept in memory as its own statement (untested), never as a fact, a source, or offered for correction; it stays quiet when the answer was held back or the person is upset, and is never about a person; what it is curious about raises that aim only within `max_self_objectives` and its budgets; people can turn it off |
+| P19 ensembles | several instances of each kind of node answer together, at most `[nodes] max_running` at once; when instances of the same kind disagree (or memory nodes give answers that do not match) the ego node arbitrates - the champion, the majority, the most accurate and confident side, or what its memory says it decided before - and says so; a person's teaching comes first; every arbitration is kept in memory as its own statement, untested |
 | P13 dreams are not facts | dreaming uses only what the mesh already holds, never a research tool or a teacher; an imagined response always says so and names the dream node it came from; imagination is never stored as a fact or used to answer an ordinary question |
 
 **Goals** are measured continuously and shown on the scorecard (`/status`): competence
@@ -1198,6 +1257,7 @@ what is 12 * 7                      sentiment: the hotel was lovely but the staf
 /correct ord-3f2a91c0    /correct ord-3f2a91c0 yes    /correct ord-3f2a91c0 a2    /correct ord-3f2a91c0 none :: Canberra
 /thoughts    /thought Australia    /thought forget th-3    /think    /curiosity    /curiosity pursue
 /ego    /ego off    /ego on    /sleep off    /sleep on    /sleep flip
+/memory tests mem-0001    /memory set mem-0001 How tall is Everest? :: 8,849 metres.    /memory own France
 tell me about yourself    how are you feeling?    what did you dream about?    what do you like?
 /kiwix    /kiwix what does serendipity mean?
 what do you think of the Berlin Wall?    in your own words, what is Australia?    what do you want to find out?
@@ -1289,6 +1349,9 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
 - **Memory**: memory nodes with their size now and when first learned, teach a fact, run every
   test, and per node: what it knows, how it was compressed, the questions it must not answer;
   forget a fact.
+- **Nodes** also shows each capability's **instances** (they answer with the champion), and the
+  header how many node instances are **running at once** (of `[nodes] max_running`). The **Memory**
+  view shows where the tests are kept (the memory database) and **its own statements**, untested.
 - **Mind**: divided into tabs, each with its own address (`#mind/tools`), and the one you used
   last opens next time. Arrow keys move between them. **Questions** (with a count of what is
   waiting): its questions for you (reply) and its proposals (adopt or decline). **Ego** (with its
@@ -1312,6 +1375,11 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
   nodes, last night, recent dreams. **Temperament** (with its mood): the five dimensions against
   their baseline, what it decided, the answers it is holding (release them), reset its mood.
   **Opinions and notes**: investigate something, and the opinions and notes it shares.
+  **Every tab shows the last day.** Anything older is archived: the bar at the top of each tab says
+  how much, and looks it up by date and time (a moment, and within an hour, 6 hours, that day or
+  that week; this tab or all of its mind), with the days that have entries as shortcuts. What is
+  still open or active (a question waiting for you, an objective in progress) stays in the tab.
+  Everything that happens in its mind is kept for this, by date and time (journal.py).
 - **Logs**: the activity log (search, filter by kind, hide routine work), the audit log, every
   event, and the family tree of every node ever built.
 - **Status**: directive goals, approvals, teachers, tools, background tasks (add, pause,
@@ -1361,7 +1429,12 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | POST | `/challenge/fetch` | `{"benchmark": "gsm8k", "rows": 300, "split": "test"}` |
 | POST | `/task` | `{"id": "task-1", "action": "pause" \| "resume" \| "remove"}` |
 | POST | `/memorize` | `{"ask": "...", "answer": "..."}`: a fact for a memory node |
-| POST | `/memory/test` | run every memory node against its test file now |
+| POST | `/memory/test` | run every memory node against its tests now |
+| GET | `/memory/tests/<node>` | a node's tests from the memory database (rows, and as text) |
+| POST | `/memory/tests/<node>` | `{"tests": [{"ask", "answer"}, ...], "unknowns": [...]}`: a person rewrites its tests; it relearns |
+| GET | `/memory/own` | its own statements kept in memory without tests (`?about=France&limit=50`) |
+| GET | `/mind/archive` | what was in its mind around a moment: `?tab=ego&at=<seconds since 1970>&hours=6` (no tab: all of it) |
+| GET | `/mind/archive/days` | the days with entries (`?tab=ego&tz=<getTimezoneOffset()>`), and per tab how much is archived |
 | POST | `/command` | `{"line": "/status"}`: any console command; returns its output lines |
 | POST | `/halt`, `/resume`, `/pause`, `/rollback` | |
 | GET | `/status`, `/lineage`, `/events`, `/audit`, `/questions`, `/knowledge?q=...`, `/temperament`, `/why?order=...`, `/inquiries`, `/proposals`, `/opinions`, `/notes`, `/tasks`, `/challenges`, `/evolution`, `/memory` | |
@@ -1549,7 +1622,29 @@ gives up and **asks you**.
   outcome. `/kiwix` lists the books and the last searches, attempt by attempt. `/kiwix <question>`
   searches now. `kiwix_attempts = 1` brings back the single look-up.
 
-The kiwix tool changed for this (version 1.1.0), so approve it once more after updating (P3).
+**Fast.** Kiwix is many times faster to use than it was, so it learns faster:
+- **The tool stays running.** The kiwix tool is a persistent tool (`persistent = true` in its
+  manifest; `[tools] workers`): it is started once, in the same sandbox as before, as `tool.py
+  --serve`, and takes requests as JSON lines, many at once. No Python start-up per search, and
+  the book catalog is read once and kept (`catalog_seconds`). Its CPU limit becomes a budget for
+  many requests (`worker_cpu_seconds`); when it is spent the worker stops and a fresh one starts.
+- **Kept-alive connections and a cache.** Every thread keeps its connection to each server open,
+  and the pages it reads (searches, suggestions, articles) are cached, so a page is fetched once.
+- **Everything at once.** Every book of one search is searched at the same time (the best book's
+  article still wins), and `kiwix_parallel` (4) searches of one question run together; the first
+  in the plan that answers is used.
+
+In the tests, five look-ups take a third of the time or less with the worker than with a fresh
+process each (in practice, against a real server, the cache and kept-alive connections save more).
+
+**Browsing: something new from a book it has not opened.** Every `browse_every_seconds` (300) the
+**Reader** may pick a Kiwix book it has never read from, or not for `browse_stale_days` (7) days,
+read `browse_articles` (2) random articles from it (`/random` on kiwix-serve) and learn them: they
+are retained, and memory nodes keep a fact for each. It notes when it last read from every book
+(searches and look-ups count too), skips books it opened lately, and stays within the background
+research budgets. `/kiwix` shows when each book was last read and what it browsed.
+
+The kiwix tool changed for this (version 1.2.0), so approve it once more after updating (P3).
 ### Adding a tool
 Drop a folder into `plugins/`. The Explorer finds it within seconds.
 ```
@@ -1687,7 +1782,7 @@ capabilities.toml        seed skills
 plugins/                 installed tools (calculator with mathsolver.py, word_stats, wikipedia, kiwix), and
                          tools it wrote once you approve them (drafts wait in state/workshop/)
 challenges/              challenge suites (small samples; fetched benchmarks go to state/challenges/)
-memory_tests/            the memory nodes' test files (written by the mesh, editable by people)
+memory_tests.imported/   test files of earlier versions, once imported into state/memory.db
 examples/incoming_plugins/  tools the demo installs at runtime
 neuromesh/
   runtime.py             System: wiring, cascade, learning, tool activation, status
@@ -1709,7 +1804,10 @@ neuromesh/
   background.py          background tasks: learn a topic, improve a skill, repeat an order, practise a challenge
   challenges.py          open-source LLM benchmarks: suites, Hugging Face fetch, grading, the challenge teacher
   evolution.py           the genetic algorithm: genome operators (grow/shrink neurons and layers), selection, judging
-  memory.py              memory nodes: facts compressed into small networks, their test files, compression (P11)
+  memory.py              memory nodes: facts compressed into small networks, their tests, compression (P11); own memories
+  memdb.py               the memory's own database: memory nodes' tests (with triggers), its own statements (untested)
+  ensemble.py            many instances of each node at once ([nodes] max_running); the champion and its instances
+  journal.py             the Mind's archive: everything in its mind by date and time
   agency.py              independent agency: the Director, its modes, the drive policy and the agency node (P12)
   directors.py           the directors: intake, review, second opinions, the memory gate, duplicates, the stance (P14)
   toolsmith.py           the toolsmith: the coder teacher, writing, checking and offering tools, approval, experiments, refinement (P15)
@@ -1726,12 +1824,12 @@ neuromesh/
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   245 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   255 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
                          evolution (exact growth, pruning, growth bias, promotion rules, a node
-                         that evolves larger in a running system), memory nodes (test files,
+                         that evolves larger in a running system), memory nodes (tests in the memory database, files imported, own statements untested,
                          compression that never accepts a failing node, merging (exact stacking, the
                          90% rule, relearning what fails), people's edits, answers),
                          the web interface (its files, the endpoints it uses, the token), independent

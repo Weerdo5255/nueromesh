@@ -42,6 +42,11 @@ from .teachers import Lesson, Teacher
 
 EGO = "ego"
 KINDS = ("quiet", "curious", "dream", "opinion", "feeling", "doubt")
+# the ego as the ultimate arbitrator, when instances of the same kind of node disagree (ensemble.py)
+ARB_KINDS = ("trust-champion", "trust-majority", "trust-confident", "trust-memory")
+ARB_FEATURES = ("amood", "asplit", "achamp", "amemory", "abest")
+ARB_VALUES = {"amood": ("steady", "upbeat", "content", "alert", "tense", "subdued", "wary"), "asplit": ("even", "majority"),
+              "achamp": ("sure", "unsure"), "amemory": ("none", "champion", "other"), "abest": ("champion", "other")}
 MOODS = ("steady", "upbeat", "content", "alert", "tense", "subdued", "wary")
 FEATURES = ("mood", "tone", "outcome", "topic", "dreamt", "view", "spoke")
 VALUES = {"mood": MOODS, "tone": ("neutral", "friendly", "frustrated", "hostile", "distressed"),
@@ -138,9 +143,48 @@ def feasible(f: dict) -> set[str]:
     return out
 
 
+def arb_text(f: dict) -> str:
+    """An arbitration as single words ("arbitrate amoodcontent asplitmajority ...")."""
+    return "arbitrate " + " ".join(f"{k}{f.get(k, ARB_VALUES[k][0])}" for k in ARB_FEATURES)
+
+
+def parse_arb(text: str) -> dict:
+    words = str(text).split()
+    if not words or words[0] != "arbitrate":
+        return {}
+    out = {}
+    for word in words[1:]:
+        for k in ARB_FEATURES:
+            if word.startswith(k) and word[len(k):] in ARB_VALUES[k]:
+                out[k] = word[len(k):]
+                break
+    return out
+
+
+def arb_policy(f: dict, exclude: tuple = ()) -> tuple[str, str]:
+    """Whom the ego trusts when instances disagree. Its memory first, then its mood decides a lot."""
+    rules = []
+    if f.get("amemory") in ("champion", "other"):
+        rules.append(("trust-memory", "its memory: it settled this before, the same way"))
+    if f.get("amood") in ("wary", "tense"):
+        rules.append(("trust-champion", f"{f.get('amood')}: it trusts its proven node"))
+    if f.get("asplit") == "majority" and f.get("amood") != "subdued":
+        rules.append(("trust-majority", "most of its instances agree"))
+    if f.get("abest") == "other" and f.get("achamp") == "unsure":
+        rules.append(("trust-confident", "its most accurate instance is not the champion, and the champion is unsure"))
+    if f.get("achamp") == "sure":
+        rules.append(("trust-champion", "its champion is sure"))
+    rules.append(("trust-confident", "the side with the most accuracy and confidence behind it"))
+    for kind, why in rules:
+        if kind not in exclude:
+            return kind, why
+    return "trust-champion", "its proven node"
+
+
 class EgoTeacher(Teacher):
     """The ego policy as a teacher: it labels situations for the ego node and writes practice situations
-    for every kind of remark. A specialist, asked only by the ego capability."""
+    for every kind of remark, and for every way of settling a disagreement between instances. A specialist,
+    asked only by the ego capability."""
     name = "ego"
     specialist = True
 
@@ -154,6 +198,12 @@ class EgoTeacher(Teacher):
     async def label(self, spec, text):
         if spec.name != EGO or not self.enabled():
             return None
+        a = parse_arb(text)
+        if a:
+            if len(a) < len(ARB_FEATURES):
+                return None
+            kind, why = arb_policy(a)
+            return Lesson(kind, 0.9, self.name, why)
         f = parse_situation(text)
         if len(f) < len(FEATURES):
             return None
@@ -164,15 +214,21 @@ class EgoTeacher(Teacher):
         if spec.name != EGO or not self.enabled():
             return []
         out: list[str] = []
+        arb = label in ARB_KINDS
         for _ in range(n * 300):
-            f = {k: self.rng.choice(v) for k, v in VALUES.items()}
-            if policy(f)[0] == label:
-                text = situation_text(f)
+            f = {k: self.rng.choice(v) for k, v in (ARB_VALUES if arb else VALUES).items()}
+            if (arb_policy(f) if arb else policy(f))[0] == label:
+                text = arb_text(f) if arb else situation_text(f)
                 if text not in out:
                     out.append(text)
             if len(out) >= n:
                 break
         return out
+
+
+def a_mood(mood: str) -> str:
+    """ "a content mood", "an upbeat mood" """
+    return f"{'an' if str(mood)[:1].lower() in 'aeiou' else 'a'} {mood} mood"
 
 
 def first_person(text: str) -> str:
@@ -210,7 +266,9 @@ class Ego:
         self.fascinated: dict[str, dict] = st.get("fascinated", {})   # area key -> {"name", "times", "why", "ts"}
         self.shift: dict = st.get("shift", {})                        # the last time its mood changed, and why
         self.last_spoke: int = int(st.get("last_spoke", -10))
+        self.arbitrations: deque = deque(st.get("arbitrations", []), maxlen=60)  # how it settled disagreements
         self.taken: dict[str, dict] = {}                               # order id -> the mood it was taken in
+        self._before: list = []                                        # what it said before about a topic (memory)
         teacher = system.teachers.teachers.get(EGO)
         if teacher is not None:
             teacher.enabled = lambda: self.enabled
@@ -222,7 +280,8 @@ class Ego:
     def save(self) -> None:
         self.sys.store.set_kv("ego.state", json.dumps({
             "enabled": self.override, "remarks": list(self.remarks), "stats": dict(self.stats),
-            "fascinated": self.fascinated, "shift": self.shift, "last_spoke": self.last_spoke}))
+            "fascinated": self.fascinated, "shift": self.shift, "last_spoke": self.last_spoke,
+            "arbitrations": list(self.arbitrations)}))
 
     def set_enabled(self, on: bool, by: str) -> str:
         self.override = bool(on)
@@ -245,13 +304,42 @@ class Ego:
             return {"mood": "steady", "valence": 0.0, "arousal": 0.5, "confidence": 0.5, "trust": 0.5, "patience": 0.5}
 
     def before(self, order) -> None:
-        """On the way in: the mood it takes the order in."""
+        """On the way in: the mood it takes the order in, and what its memory holds for it."""
         if not self.enabled:
             return
         snap = self.mood()
-        self.taken[order.id] = {"mood": snap["mood"], "valence": snap.get("valence", 0.0), "ts": time.time()}
+        self.taken[order.id] = {"mood": snap["mood"], "valence": snap.get("valence", 0.0), "ts": time.time(),
+                                "memory": self.consult(order.text)}
         while len(self.taken) > 500:
             self.taken.pop(next(iter(self.taken)))
+
+    def consult(self, text: str) -> dict:
+        """Its memory, every time the ego runs: the fact a memory node holds for this, and what it said before."""
+        mem = self.sys.memory
+        out = {"fact": None, "said": None}
+        if not mem.enabled:
+            return out
+        try:
+            r = mem.recall(text, quiet=True)
+            if r is not None:
+                out["fact"] = {"node": r.node.id, "answer": r.answer[:160], "confidence": round(r.confidence, 3)}
+            o = mem.recall_own(text, threshold=0.5)
+            if o is not None:
+                out["said"] = {"node": o.node.id, "text": o.answer[:200]}
+        except Exception:
+            pass
+        self.stats["memory reads"] += 1
+        return out
+
+    def remember(self, kind: str, text: str, about: str = "", mood: str = "", source: str = "") -> dict | None:
+        """What its ego said, kept in memory (untested: memory.py's own statements)."""
+        try:
+            kept = self.sys.memory.remember_own(kind, text, about=about, mood=mood, source=source)
+        except Exception:
+            return None
+        if kept:
+            self.stats["memory writes"] += 1
+        return kept
 
     def situation(self, order, res) -> tuple[dict, dict]:
         s = self.sys
@@ -282,7 +370,11 @@ class Ego:
             return None
         taken = self.taken.pop(order.id, None)
         if taken:
-            res.trace.insert(0, f"ego (the outer layer): took it in a {taken['mood']} mood")
+            m = taken.get("memory") or {}
+            seen = ([f"{m['fact']['node']} holds an answer"] if m.get("fact") else []) + \
+                   ([f"{m['said']['node']} recalls what it said before"] if m.get("said") else [])
+            res.trace.insert(0, f"ego (the outer layer): took it in {a_mood(taken['mood'])}; its memory: "
+                                + (", ".join(seen) if seen else "nothing on this yet"))
         if not self.pol.express or order.background or str(order.source).startswith(("challenge:", "objective", "task:")):
             return None
         route = res.route or ""
@@ -294,6 +386,8 @@ class Ego:
         if not (is_question(order.text) or route == DIRECT or knowledge):
             return None
         f, ctx = self.situation(order, res)
+        ctx["memory"] = (taken or {}).get("memory") or {}
+        ctx["before"] = self.sys.memory.own_statements(about=ctx["name"], limit=3) if ctx["name"] else []
         text = situation_text(f)
         how, node, prov, conf = "the ego policy", "", "policy:ego", None
         if EGO in s.capabilities:
@@ -339,11 +433,84 @@ class Ego:
         self.last_spoke = s.order_count
         if kind == "curious" and ctx["name"] and self.pol.fascinate:
             self.fascinate(ctx["name"], f"its ego said it was curious about it ({order.id})")
+        kept = self.remember(f"ego:{kind}", text, about=ctx["name"] or "", mood=mood, source=order.id)
+        rem["memory"] = (kept or {}).get("node") or ("kept" if kept else "")
         self.save()
-        res.trace.append(f"ego: {kind} ({why}; decided by {how}), in a {mood} mood")
+        res.trace.append(f"ego: {kind} ({why}; decided by {how}), in {a_mood(mood)}"
+                         + (f"; kept in memory ({rem['memory']}, untested)" if kept else ""))
         s.bus.publish("ego.spoke", order=order.id, kind=kind, mood=mood, about=(ctx["name"] or "")[:80], node=rem["node"],
                       text=text[:200])
         return rem
+
+    # ------------------------------------------------------------- the ultimate arbitrator
+    def arbitrate(self, kind: str, text: str, votes: list[dict], same=None) -> dict:
+        """Instances of the same kind of node (a capability's nodes, or memory nodes) answered differently: the
+        ego decides whom to trust. votes: [{"node", "label", "conf", "acc", "champion"}]; same(a, b) says whether
+        two answers match (memory answers in other words). Returns {"label", "node", "strategy", "why", "by"}."""
+        s = self.sys
+        same = same or (lambda a, b: a == b)
+        sides: list[list[dict]] = []
+        for v in votes:
+            side = next((g for g in sides if same(g[0]["label"], v["label"])), None)
+            (side.append(v) if side is not None else sides.append([v]))
+        weight = [sum(v["acc"] * v["conf"] for v in g) for g in sides]
+        champ = next((v for v in votes if v.get("champion")), max(votes, key=lambda v: v["conf"]))
+        champ_side = next(i for i, g in enumerate(sides) if champ in g)
+        counts = [len(g) for g in sides]
+        top = [i for i, c in enumerate(counts) if c == max(counts)]
+        best = max(votes, key=lambda v: (v["acc"], v["conf"]))
+        akey = f"{kind}: {' '.join(str(text).split())[:100]}"
+        prior = None
+        try:  # its memory: how it settled exactly this before
+            rows = s.memory.own_statements(about=akey, kind="arbitration", limit=1)
+            prior = rows[0]["source"].split("=", 1)[1] if rows and "=" in rows[0]["source"] else None
+        except Exception:
+            prior = None
+        mem_side = next((i for i, g in enumerate(sides) if prior is not None and same(g[0]["label"], prior)), None)
+        mood = self.mood().get("mood", "steady")
+        f = {"amood": mood if mood in ARB_VALUES["amood"] else "steady", "asplit": "majority" if len(top) == 1 else "even",
+             "achamp": "sure" if champ["conf"] >= 0.8 else "unsure",
+             "amemory": "none" if mem_side is None else ("champion" if mem_side == champ_side else "other"),
+             "abest": "champion" if best in sides[champ_side] else "other"}
+        sit = arb_text(f)
+        strategy, why = arb_policy(f)
+        by = "the ego policy"
+        node = s.registry.champion(EGO) if EGO in s.capabilities and kind != EGO else None
+        if (node is not None and set(ARB_KINDS) <= set(node.labels)
+                and (node.metrics.get("holdout_acc") or 0.0) >= s.directives.nodes.serve_min_accuracy):
+            label, conf = node.predict(s.encode(sit), frozenset(KINDS))  # the ego node decides
+            if label in ARB_KINDS and (label != "trust-memory" or mem_side is not None):
+                if label != strategy:
+                    why = f"its ego node chose to {label.replace('-', ' ')} ({conf:.0%} sure)"
+                strategy, by = label, f"ego node {node.id}"
+        if EGO in s.capabilities and kind != EGO:
+            s.learn(EGO, sit, arb_policy(f)[0], EGO)  # the policy keeps teaching the ego node to arbitrate
+        if strategy == "trust-memory" and mem_side is not None:
+            i = mem_side
+        elif strategy == "trust-champion":
+            i = champ_side
+        elif strategy == "trust-majority":
+            i = top[0] if len(top) == 1 else max(top, key=lambda j: weight[j])
+        else:
+            i = max(range(len(sides)), key=lambda j: weight[j])
+        chosen = max(sides[i], key=lambda v: (v.get("champion", False), v["acc"] * v["conf"]))
+        rec = {"ts": round(time.time(), 1), "kind": kind, "text": " ".join(str(text).split())[:160],
+               "sides": [{"label": str(g[0]["label"])[:120], "nodes": [v["node"].id for v in g],
+                          "weight": round(weight[j], 3)} for j, g in enumerate(sides)],
+               "label": str(chosen["label"])[:160], "node": chosen["node"].id, "strategy": strategy, "why": why, "by": by,
+               "mood": mood, "situation": sit}
+        self.arbitrations.append(rec)
+        self.stats["arbitrations"] += 1
+        statement = (f"When my {kind} nodes disagreed on \"{rec['text'][:90]}\", I went with {rec['label'][:80]} "
+                     f"({strategy.replace('-', ' ')}: {why}).")
+        try:
+            s.memory.remember_own("arbitration", statement, about=akey, mood=mood, source=f"{kind}={chosen['label']}")
+        except Exception:
+            pass
+        self.save()
+        s.bus.publish("ego.arbitrated", kind=kind, text=rec["text"][:120], label=rec["label"][:120], strategy=strategy,
+                      why=why[:160], by=by, sides=len(sides), node=chosen["node"].id)
+        return {"label": chosen["label"], "node": chosen["node"].id, "strategy": strategy, "why": why, "by": by}
 
     # ------------------------------------------------------------- what it makes of a topic
     def topic_of(self, text: str):
@@ -352,12 +519,13 @@ class Ego:
         cur = self.sys.curiosity
         if not cur.enabled:
             return "", None
+        common = cur.common_words()  # a word people write in lower case is not a name ("Meeting", "Overall")
         openers = set(re.findall(r"(?:^|[.:;!?]\s+)[\"'“(]?([A-Z][\w'’-]*)", str(text).strip()))
         for t in topics_in(text):
             a = cur.area(t)
             if a is None:  # only what its curiosity knows (it has noted what this order asks about by now)
                 continue
-            if " " not in t and t in openers and not (a.facts or a.read or a.people):
+            if " " not in t and (t in openers or norm(t) in common) and not (a.facts or a.read or a.people):
                 continue
             return a.name, a
         return "", None
@@ -469,7 +637,7 @@ class Ego:
     # ------------------------------------------------------------- curious about it: it wants to understand it
     def fascinate(self, name: str, why: str) -> None:
         k = norm(name)
-        if len(k) < 3:
+        if len(k) < 3 or (" " not in k and self.sys.curiosity.enabled and k in self.sys.curiosity.common_words()):
             return
         rec = self.fascinated.get(k) or {"name": name, "times": 0, "why": why}
         rec["times"] = int(rec.get("times", 0)) + 1
@@ -486,11 +654,13 @@ class Ego:
         if not self.enabled:
             return {}
         cutoff = time.time() - self.pol.fascination_days * 86400
-        return {k: v for k, v in self.fascinated.items() if v.get("ts", 0) >= cutoff}
+        common = self.sys.curiosity.common_words() if self.sys.curiosity.enabled else set()
+        return {k: v for k, v in self.fascinated.items() if v.get("ts", 0) >= cutoff and not (" " not in k and k in common)}
 
     # ------------------------------------------------------------- the words
     def build(self, kind: str, f: dict, ctx: dict, res=None) -> tuple[str, list] | None:
         mood = ctx["snap"]["mood"]
+        self._before = ctx.get("before") or []
         name = ctx["name"]
         if kind == "curious":
             return self._curious(name, ctx["area"], mood, failed=f["outcome"] in ("failed", "unsure"))
@@ -515,6 +685,8 @@ class Ego:
                 why = [w for w in why if "couldn't answer" not in w]
         lead = {"upbeat": f"I'm really curious about {name}!", "content": f"I'm curious about {name}."}.get(
             mood, f"I'd like to understand {name} better." if mood in LOW else f"I'm curious about {name}.")
+        if any(r["kind"] == "ego:curious" for r in self._before):  # its memory: it said so before
+            lead = f"I'm still curious about {name}."
         out = lead + (f" ({_cap(_and(why))}.)" if why else "")
         if failed:
             out += " I couldn't answer that well, and I want to find out."
@@ -550,7 +722,11 @@ class Ego:
             reasons = v["against"][:3]
         if v.get("colour"):
             reasons = reasons + [v["colour"]]
-        return f"{lead}: {_and(reasons)}.", reasons
+        out = f"{lead}: {_and(reasons)}."
+        prev = next((r for r in self._before if r["kind"] in ("ego:opinion", "opinion") and r["text"] != out), None)
+        if prev is not None:  # its memory: what it said before about this
+            out += f" (Before, I said: \"{_cut(prev['text'], 90)}\")"
+        return out, reasons
 
     def _feeling(self, snap: dict):
         mood = snap.get("mood", "steady")
@@ -650,8 +826,12 @@ class Ego:
         if v["dislikes"]:
             out.append("I'm not fond of " + "; ".join(f"{x['name']} ({_and(x['against'][:2])})" for x in v["dislikes"][:3]) + ".")
         if not out:
-            out.append("I haven't formed likes or dislikes yet - I need more experience: questions, answers you mark right "
-                       "or wrong, things I read and dream about.")
+            said = self.sys.memory.own_statements(kind=("opinion", "ego:opinion"), limit=2)  # its memory of its views
+            if said:
+                out.append("What I said lately: " + " ".join(f"\"{_cut(r['text'], 100)}\"" for r in said))
+            else:
+                out.append("I haven't formed likes or dislikes yet - I need more experience: questions, answers you mark "
+                           "right or wrong, things I read and dream about.")
         fasc = sorted(self.fascinations().values(), key=lambda r: -r.get("ts", 0))[:3]
         if fasc:
             out.append("I'm curious about " + _and([r["name"] for r in fasc]) + ".")
@@ -682,7 +862,17 @@ class Ego:
                 "working_on": [{"id": o.id, "text": o.text, "self_set": o.self_set} for o in mine[:4]],
                 "wants": [x["want"] for x in (s.thinking.desires() if s.thinking.enabled else [])[:3]],
                 "remarks": list(self.remarks)[-12:], "stats": dict(self.stats),
+                "memory": self._memory_counts(),
+                "arbitrations": list(self.arbitrations)[-12:],
                 "nodes": self.nodes(), "shift": self.shift}
+
+    def _memory_counts(self) -> dict:
+        mem = self.sys.memory
+        if not mem.enabled:
+            return {"facts": 0, "own": 0, "said": []}
+        st = mem.db.counts()
+        return {"facts": sum(len(n.facts()) for n in mem.fact_nodes()), "own": st["own"],
+                "said": mem.own_statements(kind=("opinion", "ego:opinion", "ego:curious", "arbitration"), limit=6)}
 
     def nodes(self) -> list[dict]:
         s = self.sys
@@ -717,6 +907,9 @@ class Ego:
             out.append(f"I'm working on {'an objective I set myself' if o['self_set'] else 'your objective'}: {o['text']}.")
         if p["wants"]:
             out.append(p["wants"][0] + ".")
+        m = p["memory"]
+        if m["facts"] or m["own"]:
+            out.append(f"I hold {m['facts']} facts in memory, and {m['own']} things I've said or thought myself.")
         out.append(f"(That's {LABEL}: how I see myself, from my temperament, curiosity, dreams and what my thinking nodes "
                    f"hold - not a fact about the world.)")
         return " ".join(out)
@@ -742,6 +935,10 @@ class Ego:
             out.append(f"  likes {x['name']}: {_and(x['for'][:3])}")
         for x in v["dislikes"][:3]:
             out.append(f"  not fond of {x['name']}: {_and(x['against'][:3])}")
+        if p["arbitrations"]:
+            out.append(f"  disagreements it settled between instances of its nodes: {p['stats'].get('arbitrations', 0)}")
+            out += [f"    {a['kind']}: \"{_cut(a['text'], 60)}\" -> {_cut(a['label'], 50)} ({a['strategy']}, {a['by']}; "
+                    f"{_cut(a['why'], 70)})" for a in p["arbitrations"][-4:][::-1]]
         if p["remarks"]:
             out.append("  lately it said:")
             out += [f"    [{r['kind']}, {r['mood']}] {_cut(r['text'], 150)}" for r in p["remarks"][-5:][::-1]]

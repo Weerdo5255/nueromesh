@@ -241,7 +241,8 @@ class ChallengeSystemTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res.answer.startswith(asked.answer[0]), res.answer)  # recalled from what practice retained
         self.assertEqual(res.knowledge, "recalled")
         t = s.tasks.add("challenge sample-sentiment every 0.3s practice 10")
-        self.assertTrue(await wait_for(lambda: t.runs >= 2 and "exam" in t.progress, timeout=30), t.note)
+        exams = lambda: sum(1 for h in self.ch.history if h["suite"] == "sample-sentiment" and h["mode"] == "exam")  # noqa: E731
+        self.assertTrue(await wait_for(lambda: t.runs >= 2 and "exam" in t.progress and exams() >= 2, timeout=30), t.note)
         self.assertTrue(any(n.text.startswith("sample-sentiment exam:") for n in s.mind.notes.values()
                             if n.kind == "update"))
         code, body = await _route(s, "GET", "/challenges", {}, {})
