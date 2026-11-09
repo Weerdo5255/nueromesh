@@ -97,6 +97,8 @@ class Inquiry:
     created_at: float = field(default_factory=time.time)
     answered_at: float = 0.0
     about: str = ""           # objective: which objective and question ("obj-1:q3")
+    by: str = ""              # who answered it, when not a person (e.g. "the web (the ollama teacher)")
+    sources: list = field(default_factory=list)  # where that answer came from (title, url)
 
 
 @dataclass
@@ -510,8 +512,11 @@ class Mind:
         """A human's answer to an inquiry."""
         s = self.sys
         q = self.inquiries.get(inquiry_id)
-        if q is None or q.status != "open":
+        web = q is not None and q.status == "answered" and q.by.startswith("the web")  # a person may still answer it (P1)
+        if q is None or (q.status != "open" and not web):
             return False, [f"  no open question {inquiry_id} (/inquiries lists them)"]
+        if web:  # a person's answer replaces the web's
+            q.status, q.by, q.sources = "open", "", []
         a = answer.strip()
         low = a.lower().rstrip(".!")
         if not a:
@@ -808,11 +813,22 @@ class Mind:
         return note
 
     # ================================================================ status
+    def _web(self, q) -> dict | None:
+        """Will this question be searched on the web if nobody answers it (websearch.py)?"""
+        ws = getattr(self.sys, "websearch", None)
+        if ws is None or not ws.enabled:
+            return None
+        ok, why = ws.eligible(q)
+        return {"ok": ok, "why": "" if ok else why, "at": q.created_at + ws.pol.answer_after_minutes * 60,
+                "tried": q.id in ws.tried, "tool": ws.tool() is not None}
+
     def status(self) -> dict:
         kinds = Counter(n.kind for n in self.notes.values())
         return {"enabled": self.enabled, "note_counts": dict(kinds), "private": len(self.private_notes()),
                 "opinions": len(self.opinions()),
-                "inquiries": [asdict(q) for q in self.open_inquiries()],
+                "inquiries": [{**asdict(q), "web": self._web(q)} for q in self.open_inquiries()],
+                "web_answers": [asdict(q) for q in sorted((q for q in self.inquiries.values() if q.status == "answered"
+                                                           and q.by.startswith("the web")), key=lambda q: -q.answered_at)[:8]],
                 "proposals": [asdict(p) for p in self.open_proposals()],
                 "goals": [g.text for g in self.goals], "unmet": len(self.unmet),
                 "investigations": {**self.sys.guardian.investigation_usage(), "total": self.investigations}}

@@ -477,11 +477,20 @@ class Orchestrator(Agent):
                "example": f"adapted from {o['examples'][0]['repo']}/{o['examples'][0]['path']} on Gitea" if o.get("examples") else ""
                }.get(o.get("how"), o.get("how", ""))
         runs = s.scratch.runnable(item["language"])
+        ran = item["runs"][-1] if item.get("auto_run") and item.get("runs") else None
+        if ran is not None:  # auto-run is on: it ran straight away
+            out = (ran["stdout"] or ran["stderr"]).strip()
+            then = (f"It ran by itself (auto-run: {item['auto_run']['mode']}, switched on by {item['auto_run']['set_by']}): "
+                    + ("ok" if ran["ok"] else "timed out" if ran.get("timeout") else f"exit {ran['exit']}")
+                    + (f". It printed:\n{out[:1500]}" if out else ", and printed nothing."))
+            res.trace.append(f"auto-run ({item['auto_run']['mode']}): ran {item['id']} without asking")
+        elif runs and item["check"]["ok"] is not False:
+            why = s.scratch.auto_runs(item)[1] if s.scratch.mode("auto_run") != "ask" else ""
+            then = f"It runs only once you approve it: /code approve {item['id']}." + (f" (Auto-run: {why}.)" if why else "")
+        else:
+            then = "It cannot run here." if not runs else "Fix it before it can run: /code show " + item["id"] + "."
         res.output = (f"I wrote it in my scratch pad as {item['id']} ({item['language']}, {how}). {s.scratch.say_check(item)[:1].upper()}"
-                      f"{s.scratch.say_check(item)[1:]}. "
-                      + (f"It runs only once you approve it: /code approve {item['id']}." if runs and item["check"]["ok"] is not False
-                         else "It cannot run here." if not runs else "Fix it before it can run: /code show " + item["id"] + ".")
-                      + "\n\n" + item["code"].rstrip())
+                      f"{s.scratch.say_check(item)[1:]}. " + then + "\n\n" + item["code"].rstrip())
         res.trace.append(f"scratch pad {item['id']}: written {how}; validator: {item['check']['checker']} "
                          f"({'ok' if item['check']['ok'] else 'problems' if item['check']['ok'] is False else 'not checked'})")
         if o.get("kind"):

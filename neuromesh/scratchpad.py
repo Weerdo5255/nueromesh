@@ -13,6 +13,14 @@
           web page); then, and only then, it runs: in a fresh folder, with a CPU, memory and time limit and no
           keys in its environment, and the output is kept with it. Changing the code withdraws the approval.
 
+Auto-run ([code] auto_run, or the switch in the Code view; only a person changes it): "ask" (the default) is the
+above. "harmless": code it writes itself runs straight away, without asking, when it checks out and reaches for
+nothing (no files, network, other programs or modules beyond the basics); anything else still asks. "always": code
+it writes itself runs straight away whenever it checks out. Either way it runs within the same limits, and the run
+says it ran by itself and who switched that on. Code people put in the scratch pad always waits for approval.
+
+Its own code as tools: Python code that ran can become a tool it uses (codetools.py, [code] make_tools).
+
 Practice: when idle (gitea.py's Apprentice) it takes the purpose of a function people wrote, writes code for it
 without looking at theirs, checks it, and compares the two (does it check out, is it the same kind of code, how
 much do they share). Practice drafts never run.
@@ -35,6 +43,19 @@ from pathlib import Path
 
 from . import codelib
 from .gitea import CODEKIND, functions_in, kind_of
+
+AUTO_RUN = ("ask", "harmless", "always")
+MAKE_TOOLS = ("off", "ask", "auto")
+_MODE_WORDS = {"auto_run": {"off": "ask", "no": "ask", "safe": "harmless", "on": "always", "yes": "always", "all": "always"},
+               "make_tools": {"no": "off", "offer": "ask", "on": "auto", "yes": "auto"}}
+_NOT_PEOPLE = ("teacher:", "self", "node", "agency", "director", "neuromesh", "mesh", "auto", "tutor", "foreman",
+               "toolsmith", "searcher", "the web")
+
+
+def is_person(by: str) -> bool:
+    """Switches only people may change: not a teacher, a node, a director or the mesh itself."""
+    b = str(by or "").strip().lower()
+    return bool(b) and not b.startswith(_NOT_PEOPLE)
 
 LANGS = ("python", "javascript", "typescript", "shell", "go", "rust", "ruby", "java", "c", "cpp", "json", "toml")
 EXT = {"python": "py", "javascript": "js", "typescript": "ts", "shell": "sh", "go": "go", "rust": "rs", "ruby": "rb",
@@ -245,6 +266,9 @@ class ScratchPad:
         self.root = system.state_dir / "scratch"
         self.rng = random.Random()
         self._running: set[str] = set()
+        self.modes = {"auto_run": {"mode": self.pol.auto_run, "by": "directives.toml", "ts": 0},
+                      "make_tools": {"mode": self.pol.make_tools, "by": "directives.toml", "ts": 0},
+                      **st.get("modes", {})}
 
     @property
     def enabled(self) -> bool:
@@ -260,7 +284,70 @@ class ScratchPad:
             self.sys.store.delete_record("scratch", old["id"])
 
     def _state(self) -> None:
-        self.sys.store.set_kv("scratch.state", json.dumps({"stats": dict(self.stats), "practice": list(self.practice_log)}))
+        self.sys.store.set_kv("scratch.state", json.dumps({"stats": dict(self.stats), "practice": list(self.practice_log),
+                                                          "modes": self.modes}))
+
+    # ------------------------------------------------------------------ the switches
+    def mode(self, which: str) -> str:
+        allowed = AUTO_RUN if which == "auto_run" else MAKE_TOOLS
+        m = str(self.modes.get(which, {}).get("mode", ""))
+        return m if m in allowed else ("ask" if which in ("auto_run", "make_tools") else allowed[0])
+
+    def set_mode(self, which: str, mode: str, by: str) -> tuple[bool, str]:
+        """auto_run (ask | harmless | always) or make_tools (off | ask | auto): a person's decision, audited."""
+        if which not in ("auto_run", "make_tools"):
+            return False, "the switches are auto_run and make_tools"
+        allowed = AUTO_RUN if which == "auto_run" else MAKE_TOOLS
+        m = str(mode or "").strip().lower()
+        m = _MODE_WORDS[which].get(m, m)
+        if m not in allowed:
+            return False, f"{which} is one of: {', '.join(allowed)}"
+        if not is_person(by):
+            return False, "only a person changes that switch (P20)"
+        was = self.mode(which)
+        self.modes[which] = {"mode": m, "by": by, "ts": round(time.time(), 1)}
+        self._state()
+        self.sys.guardian.audit(by, "code.mode", which, mode=m, was=was)
+        self.sys.bus.publish("code.mode", which=which, mode=m, was=was, by=by)
+        return True, {("auto_run", "ask"): "code it writes waits for your approval before it runs",
+                      ("auto_run", "harmless"): "code it writes runs by itself when it checks out and reaches for nothing; "
+                                                "anything else still asks",
+                      ("auto_run", "always"): "code it writes runs by itself whenever it checks out (in a fresh folder, "
+                                              "within limits, without keys); code you put in still asks",
+                      ("make_tools", "off"): "it doesn't turn its code into tools (you still can: Make it a tool)",
+                      ("make_tools", "ask"): "it offers code worth keeping as a tool, and you approve it",
+                      ("make_tools", "auto"): "it installs code it judges useful as a tool by itself (Python, standard "
+                                              "library only, nothing reaching outside; tested like any tool)"}[(which, m)]
+
+    def auto_runs(self, item: dict) -> tuple[bool, str]:
+        """May this code run without asking? Only code it wrote itself, that checks out, as the switch allows."""
+        mode = self.mode("auto_run")
+        if mode == "ask":
+            return False, "auto-run is off: it asks"
+        if (item.get("origin") or {}).get("how") in (None, "", "person"):
+            return False, "code people put in always asks"
+        if not self.runnable(item["language"]):
+            return False, f"{item['language']} code does not run here"
+        check = item.get("check") or {}
+        if check.get("ok") is not True:
+            return False, "it does not check out"
+        if mode == "harmless" and check.get("touches"):
+            return False, f"it reaches for {'; '.join(check['touches'])}, so it asks"
+        return True, mode
+
+    async def auto_run(self, item: dict) -> dict | None:
+        """Run code it wrote, without asking, because a person switched auto-run on (and say so)."""
+        ok, mode = self.auto_runs(item)
+        if not ok:
+            return None
+        who = self.modes["auto_run"].get("by", "")
+        item["approved_digest"], item["approval"], item["status"] = item["digest"], None, "approved"
+        item["auto_run"] = {"mode": mode, "set_by": who, "ts": round(time.time(), 1)}
+        self._save(item)
+        by = f"auto-run: {mode}, switched on by {who}"
+        self.sys.guardian.audit(by, "code.auto_approved", item["id"], digest=item["digest"], mode=mode,
+                                touches=(item.get("check") or {}).get("touches", []))
+        return await self.run(item["id"], by)
 
     def get(self, item_id: str) -> dict | None:
         return self.items.get(item_id)
@@ -377,6 +464,8 @@ class ScratchPad:
         self._state()
         self.sys.bus.publish("code.written", id=item["id"], title=item["title"], language=lang, how=origin.get("how"),
                              ok=item["check"]["ok"], by=by)
+        if self.auto_runs(item)[0]:  # a person switched auto-run on: it runs now, without asking
+            await self.auto_run(item)
         return item
 
     def add(self, code: str, lang: str, title: str, by: str) -> dict:
@@ -631,7 +720,9 @@ class ScratchPad:
                 "stats": dict(self.stats), "practice": list(self.practice_log)[-12:][::-1],
                 "practice_summary": {"practised": n, "ok": (self.stats.get("practice ok", 0) / n) if n else None,
                                      "same_kind": (self.stats.get("practice same kind", 0) / n) if n else None},
-                "waiting": [i["id"] for i in items if i["status"] == "awaiting approval"]}
+                "waiting": [i["id"] for i in items if i["status"] == "awaiting approval"],
+                "auto_run": self.mode("auto_run"), "make_tools": self.mode("make_tools"),
+                "modes": {k: dict(v, mode=self.mode(k)) for k, v in self.modes.items()}}
 
     def lines(self, item_id: str | None = None) -> list[str]:
         if item_id:
@@ -648,14 +739,20 @@ class ScratchPad:
                    f"  {self.say_check(item)}"]
             out += ["  " + line for line in item["code"].splitlines()[:80]]
             for r in item.get("runs", [])[-2:]:
-                out.append(f"  ran {time.strftime('%H:%M:%S', time.localtime(r['ts']))} (approved by {r['by']}): "
+                out.append(f"  ran {time.strftime('%H:%M:%S', time.localtime(r['ts']))} "
+                           + (f"(by itself: {r['by']}): " if str(r["by"]).startswith("auto-run") else f"(approved by {r['by']}): ")
                            + ("ok" if r["ok"] else "timed out" if r.get("timeout") else f"exit {r['exit']}"))
                 out += ["    " + x for x in (r["stdout"] or r["stderr"]).splitlines()[:20]]
             return out
         st = self.status()
         ps = st["practice_summary"]
-        out = [f"Scratch pad: {st['count']} item(s); code runs only once you approve it (P20). Runs here: "
-               f"{', '.join(st['runnable']) or 'nothing'}. /code write <what>, /code show <id>, /code approve <id>."]
+        run_say = {"ask": "code runs only once you approve it (P20)",
+                   "harmless": "code it writes runs by itself when it reaches for nothing; the rest waits for you",
+                   "always": "code it writes runs by itself whenever it checks out; yours waits for you"}[st["auto_run"]]
+        out = [f"Scratch pad: {st['count']} item(s); {run_say}. Runs here: "
+               f"{', '.join(st['runnable']) or 'nothing'}. /code write <what>, /code show <id>, /code approve <id>.",
+               f"  auto-run: {st['auto_run']} (set by {self.modes['auto_run'].get('by')}); its code as tools: {st['make_tools']} "
+               f"(/code autorun ask|harmless|always, /code tools off|ask|auto, /code tool <id>)"]
         for i in st["items"][:12]:
             out.append(f"  {i['id']:<8} {i['status']:<17} {i['language']:<10} {i['title'][:60]}")
         if ps["practised"]:

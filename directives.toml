@@ -67,7 +67,7 @@ text = "There is always at least one director node running: director-0 never ret
 
 [[prime]]
 id = "P15-self-made-tools"
-text = "The mesh may write tools of its own for requests no tool could meet, but no code it wrote runs before a person approves it: it asks, with the code and its self-tests in the workshop for anyone to read, and a changed version asks again. Its code uses only the standard library and is checked before it is offered (no files, network, processes, eval or exec); a made tool never gets permissions, and once approved it is vetted and self-tested like any tool (P3). It experiments with its own tools only when idle (P2), within its budgets (P4), and every draft, approval, experiment and refinement is audited and logged. (Enforced in code by neuromesh/toolsmith.py and the Explorer.)"
+text = "The mesh may write tools of its own for requests no tool could meet, but no code it wrote runs before a person approves it: it asks, with the code and its self-tests in the workshop for anyone to read, and a changed version asks again. Python code from its scratch pad that ran cleanly may also become a tool: when a person makes it one (Make it a tool), or when the mesh offers it and a person approves, or - only if a person set [code] make_tools to 'auto' - by itself, audited with who set the switch. Its code uses only the standard library and is checked before it is offered (no files, network, processes, eval or exec); a made tool never gets permissions, and once approved it is vetted and self-tested like any tool (P3). It experiments with its own tools only when idle (P2), within its budgets (P4), and every draft, approval, experiment and refinement is audited and logged. (Enforced in code by neuromesh/toolsmith.py and the Explorer.)"
 
 [[prime]]
 id = "P16-honest-objectives"
@@ -87,7 +87,7 @@ text = "Several instances of each kind of node may run at once ([nodes] max_runn
 
 [[prime]]
 id = "P20-approved-code-only"
-text = "The mesh may write code in its scratch pad, and study code in a Gitea it is given, but no code runs unless a person approved exactly that code: a validator checks it first and says what it reaches for (files, the network, other programs, eval), and changing it withdraws the approval. Approved code runs once, in a fresh folder, within time, CPU and memory limits and with no keys in its environment, and its output is kept with it and audited. Code from Gitea is only read, never run; its token goes to that Gitea and nowhere else. The mesh writes to Gitea only to push a change to the project a person set it, after a person approved exactly that change (the files and the diff they saw; changing it withdraws the approval): always to a new branch named with [projects] branch_prefix, with a pull request, never to an existing branch, and only with the separate write token ($GITEA_WRITE_TOKEN), which reading never uses. Merging is a person's decision, in Gitea. Practice code is checked, never run. (Enforced in code by neuromesh/scratchpad.py, neuromesh/gitea.py, neuromesh/projects.py and plugins/gitea.)"
+text = "The mesh may write code in its scratch pad, and study code in a Gitea it is given, but no code runs unless a person approved exactly that code: a validator checks it first and says what it reaches for (files, the network, other programs, eval), and changing it withdraws the approval. The one exception is a person's choice: with [code] auto_run set to 'harmless' (by a person, never the mesh), code the mesh wrote itself runs without asking when it checks out and reaches for nothing; with 'always', whenever it checks out. Code people put in always waits for approval, and auto-run changes nothing else below. Approved code runs once, in a fresh folder, within time, CPU and memory limits and with no keys in its environment, and its output is kept with it and audited. Code from Gitea is only read, never run; its token goes to that Gitea and nowhere else. The mesh writes to Gitea only to push a change to the project a person set it, after a person approved exactly that change (the files and the diff they saw; changing it withdraws the approval): always to a new branch named with [projects] branch_prefix, with a pull request, never to an existing branch, and only with the separate write token ($GITEA_WRITE_TOKEN), which reading never uses. Merging is a person's decision, in Gitea. Practice code is checked, never run. (Enforced in code by neuromesh/scratchpad.py, neuromesh/gitea.py, neuromesh/projects.py and plugins/gitea.)"
 
 [[prime]]
 id = "P21-honest-sight"
@@ -544,6 +544,10 @@ worker_requests = 5000                  # a worker is replaced after this many r
 # write_token_env = "GITEA_WRITE_TOKEN"             # a separate token with write access, used only to push an
 #                                                   #   approved project change to a new branch and open its pull request
 # branch_prefix = "neuromesh/"                      # it only ever pushes branches named like this
+# [tools.config.searxng]
+# url = "http://localhost:8888"                     # your SearXNG (or start with --searxng URL); its settings.yml
+#                                                   #   must allow JSON: search: formats: [html, json]
+# engines = "google,duckduckgo"                     # which engines it asks (default: the instance's own)
 # [tools.config.wikipedia]
 # language = "de"                                   # research German Wikipedia
 # user_agent = "MyMesh/1.0 (https://example.org; me@example.org)"   # Wikimedia asks for contact details
@@ -633,6 +637,39 @@ max_output_kb = 64
 recipe_confidence = 0.6                 # its coder node's recipe is used when it is this sure
 examples = 3                            # Gitea examples a teacher writes from (or the closest is adapted)
 teacher_fix = true                      # code that does not check out goes back to the teacher once
+# Auto-run: "ask" - code it writes waits for your approval (P20); "harmless" - code it writes itself runs straight
+# away when it checks out and reaches for nothing (no files, network, other programs or modules beyond the basics);
+# "always" - it runs straight away whenever it checks out. Same fresh folder, limits and no keys either way; code you
+# put in always asks. The Code view's switch (or /code autorun) overrides this; only a person changes it.
+auto_run = "ask"
+# Its own code as tools (codetools.py): Python code it wrote that ran cleanly and shows what its function does
+# (print(f("...")) at the top) can become a tool it uses. "off": it never offers; "ask": it offers, and you approve,
+# as for any tool it makes; "auto": it installs them itself. Standard library only, nothing reaching outside, no
+# permissions; vetted and self-tested like any tool, and the tool switch decides when to use them. You can always
+# make code that ran into a tool yourself: Make it a tool, or /code tool code-3.
+make_tools = "ask"
+
+[websearch]
+# Questions nobody answered in time (websearch.py): what an order meant or what its answer is, and what an
+# objective couldn't find out, are searched on the web through your own SearXNG (plugins/searxng: approve it once,
+# like Kiwix; start with --searxng http://localhost:8888 or set [tools.config.searxng] url). Your Ollama teacher
+# reads the results and answers from them, citing them; without one it reads SearXNG's own answers, infoboxes and
+# snippets (less sure). The answer counts as a teacher's, not yours (P1): a director decides whether memory keeps it
+# (P14), and your reply still overrides it. Approvals, proposals and questions about you are never searched.
+#   /web   /web <inquiry id>   (or Search the web now, on the question)
+enabled = true
+answer_after_minutes = 60               # how long a question waits for you first
+kinds = ["clarify", "objective"]
+check_every_seconds = 60
+max_per_hour = 20                       # searches an hour (your SearXNG asks its engines for each)
+results = 8
+engines = ""                            # e.g. "google,duckduckgo,wikipedia" (empty: your instance's defaults)
+categories = "general"
+language = "en"
+teacher = true                          # an LLM teacher reads the results and answers
+own_reading = true                      # without a teacher: SearXNG's answers, infoboxes and snippets
+min_sources = 1
+skip_personal = true                    # questions about you, or with an address, number or key, stay home
 
 [vision]
 # Its optical nodes (vision.py, P21): the sight node says what an image shows, its reader reads the text

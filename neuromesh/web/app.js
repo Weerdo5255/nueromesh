@@ -1360,6 +1360,15 @@ it decides whether to say something of its own after an answer, and what`))
         h("div", {}, h("h3", {}, "Recent dreams"), recent.length ? h("ul", { class: "rows" }, recent) : h("p", { class: "dim" }, "None yet."))));
   }
 
+  // a question nobody answered in time is searched on the web (websearch.py): when, and Search the web now
+  function webNote(q) {
+    const w = q.web;
+    if (!w || !w.ok) return null;
+    return h("div", { class: "row web-note" },
+      h("span", { class: "dim small" }, w.tried ? "It searched the web for this and found no answer." : `If nobody answers by ${clock(w.at)}, it searches the web (your SearXNG).`),
+      h("button", { type: "button", class: "small quiet", disabled: !w.tool, title: w.tool ? "" : "Approve the searxng tool first",
+        onclick: e => act(e.target, () => api("/websearch", { inquiry: q.id, by: "web" }), r => r.message) }, "Search the web now"));
+  }
   function questionsPanel(md) {
     const inquiries = md?.inquiries || [];
     const proposals = (md?.proposals || []).map(p => {
@@ -1373,8 +1382,15 @@ it decides whether to say something of its own after an answer, and what`))
     });
     return h("div", { class: "cols" },
       h("div", { class: "section" }, h("h2", {}, "Questions for you"),
-        inquiries.length ? inquiries.map(q => h("div", { class: "ask" }, h("p", {}, q.question), q.why ? h("p", { class: "why" }, `Why it asks: ${q.why}`) : null, replyForm(q.id, q.kind === "clarify" ? [] : q.options)))
-          : h("p", { class: "dim" }, "No questions right now. It asks when it could not fulfil an order, when it wants to know your interests, and before a tool it wrote may run.")),
+        inquiries.length ? inquiries.map(q => h("div", { class: "ask" }, h("p", {}, q.question), q.why ? h("p", { class: "why" }, `Why it asks: ${q.why}`) : null,
+          webNote(q), replyForm(q.id, q.kind === "clarify" ? [] : q.options)))
+          : h("p", { class: "dim" }, "No questions right now. It asks when it could not fulfil an order, when it wants to know your interests, and before a tool it wrote may run."),
+        (md?.web_answers || []).length ? h("div", {}, h("h3", {}, "Answered from the web"),
+          h("p", { class: "dim small" }, "Questions nobody answered in time, searched with your SearXNG. A web answer counts as a teacher's, not yours: reply to correct it, and yours stands."),
+          md.web_answers.map(q => h("div", { class: "ask" }, h("p", {}, h("b", {}, cut(q.question, 160))),
+            h("p", {}, q.answer), h("p", { class: "why small" }, `${q.by}, ${dateTime(q.answered_at)}`),
+            (q.sources || []).length ? h("ul", { class: "web-sources small" }, q.sources.map(x => h("li", {}, x.url ? h("a", { href: x.url, target: "_blank", rel: "noopener" }, x.title || x.url) : x.title))) : null,
+            fold(`web:${q.id}`, "Correct it", replyForm(q.id, []))))) : null),
       h("div", { class: "section" }, h("h2", {}, "Proposals"),
         proposals.length ? proposals : h("p", { class: "dim" }, "Nothing proposed. It proposes skills, labels and tools when it notices a need; nothing changes until you adopt it.")));
   }
@@ -1929,6 +1945,22 @@ it decides whether to say something of its own after an answer, and what`))
       c.problems?.length ? h("ul", { class: "small no" }, c.problems.map(p => h("li", {}, p))) : null,
       c.touches?.length ? h("p", { class: "small" }, "It reaches for: ", c.touches.map(t => h("span", { class: "kind-chip touch-chip" }, t))) : null);
   }
+  // the scratch pad's two switches: auto-run, and its code as tools (only a person changes them)
+  const AUTORUN_SAY = { ask: "Code it writes waits for you: nothing runs until you approve exactly that code.",
+    harmless: "Code it writes runs by itself when it checks out and reaches for nothing (no files, network, other programs or unusual modules). Anything else waits for you.",
+    always: "Code it writes runs by itself whenever it checks out: in a fresh folder, within the time, CPU and memory limits, without keys. Code you put in still waits for you." };
+  const MAKETOOLS_SAY = { off: "It doesn't turn its code into tools. You still can: Make it a tool, on Python code that ran.",
+    ask: "When Python code it wrote runs cleanly and is worth keeping, it offers it as a tool; you approve it like any tool it makes.",
+    auto: "When Python code it wrote runs cleanly and is worth keeping, it installs it as a tool by itself: standard library only, nothing reaching outside, self-tested like any tool." };
+  function codeSwitch(which, label, options, say, mode, setBy) {
+    const set = (btn, m) => act(btn, () => api("/code", { [which]: m, by: "web" }), r => r.message);
+    return h("div", { class: "tool-switch" },
+      h("span", { class: "switch-label" }, label),
+      h("div", { class: "seg", role: "group", "aria-label": label },
+        options.map(([m, text]) => h("button", { type: "button", "aria-pressed": String(mode === m), class: mode === m ? "on" : "",
+          onclick: e => { if (mode !== m) set(e.currentTarget, m); } }, text))),
+      h("p", { class: "dim small" }, (say[mode] || "") + (setBy && setBy !== "directives.toml" ? ` Set by ${setBy}.` : "")));
+  }
   function codeItem(item, sp) {
     const runs = sp.runnable.includes(item.language);
     const area = h("textarea", { class: "code-edit", spellcheck: "false", "data-free": "1", readonly: true, rows: Math.min(18, Math.max(6, item.code.split("\n").length + 1)),
@@ -1940,6 +1972,8 @@ it decides whether to say something of its own after an answer, and what`))
       act(e.target, () => api("/code", { id: item.id, code: area.value, by: "web" }), r => r.message).then(() => { area.readOnly = true; area.dataset.free = "1"; });
     } }, "Edit");
     const last = (item.runs || []).slice(-1)[0];
+    const ranClean = item.language === "python" && (item.runs || []).some(r => r.ok && r.digest === item.digest);
+    const tool = item.tool;
     return h("div", { class: "code-detail" },
       h("div", { class: "row", style: "justify-content:space-between;align-items:baseline" },
         h("h3", { style: "margin:0" }, `${item.id}: ${cut(item.title, 70)}`),
@@ -1953,13 +1987,16 @@ it decides whether to say something of its own after an answer, and what`))
           item.approved_digest ? "Run it again" : "Approve and run") : h("span", { class: "dim small" }, `${item.language} does not run here`),
         edit,
         h("button", { type: "button", class: "small quiet", onclick: e => act(e.target, () => api("/code", { id: item.id, action: "check", by: "web" }), r => r.message) }, "Check again"),
+        ranClean && !(tool && tool.status !== "declined") ? h("button", { type: "button", class: "small", title: "Keep it as a tool the mesh can use (Python code that ran)",
+          onclick: e => act(e.target, () => api("/code", { id: item.id, action: "tool", by: "web" }), r => r.message) }, "Make it a tool") : null,
         item.status === "awaiting approval" ? h("button", { type: "button", class: "small quiet", onclick: e => act(e.target, () => api("/code", { id: item.id, action: "decline", by: "web" }), r => r.message) }, "Decline") : null,
         h("button", { type: "button", class: "small quiet", onclick: e => act(e.target, () => api("/code", { id: item.id, action: "remove", by: "web" }), r => { S.codeSel = null; return r.message; }) }, "Remove")),
+      tool ? h("p", { class: "small" }, "It is the tool ", h("b", {}, tool.name), ` v${tool.version}: ${tool.status === "awaiting approval" ? "waiting for your approval" : tool.status}. The tool switch decides when it is worth using.`) : null,
       h("p", { class: "dim small" }, "Approving runs exactly this code once, in a fresh folder with a time, CPU and memory limit and no keys in its environment. Changing it withdraws the approval."),
       area,
       last ? h("div", { class: "code-run" },
         h("p", { class: "small" }, h("b", {}, last.ok ? "Ran" : last.timeout ? "Timed out" : `Failed (exit ${last.exit})`),
-          h("span", { class: "dim" }, ` at ${clock(last.ts)} in ${took(last.ms / 1000)}, approved by ${last.by}`)),
+          h("span", { class: "dim" }, ` at ${clock(last.ts)} in ${took(last.ms / 1000)}, ${String(last.by).startsWith("auto-run") ? `by itself (${last.by})` : `approved by ${last.by}`}`)),
         h("pre", { class: "block code-out" }, (last.stdout || "") + (last.stderr ? (last.stdout ? "\n" : "") + last.stderr : "") || "(no output)")) : null);
   }
   function renderCode(force) {
@@ -1992,7 +2029,9 @@ it decides whether to say something of its own after an answer, and what`))
     fill(host,
       projectPanel(S.extra.projects),
       h("div", { class: "section" }, h("h2", {}, "Scratch pad"),
-        h("p", { class: "lede" }, `It writes code here: from a recipe in its code library, with a teacher following the closest code it studied in your Gitea, or by adapting that code. A validator checks every piece (${Object.entries(sp.checkers || {}).map(([l, c]) => `${l}: ${c}`).join("; ")}). Nothing runs until you approve exactly that code. Runs here: ${sp.runnable.join(", ") || "nothing"}.`),
+        h("p", { class: "lede" }, `It writes code here: from a recipe in its code library, with a teacher following the closest code it studied in your Gitea, or by adapting that code. A validator checks every piece (${Object.entries(sp.checkers || {}).map(([l, c]) => `${l}: ${c}`).join("; ")}). Runs here: ${sp.runnable.join(", ") || "nothing"}.`),
+        codeSwitch("auto_run", "Run code it writes", [["ask", "Ask me"], ["harmless", "When harmless"], ["always", "Always"]], AUTORUN_SAY, sp.auto_run || "ask", sp.modes?.auto_run?.by),
+        codeSwitch("make_tools", "Its code as tools", [["off", "Off"], ["ask", "Offer them"], ["auto", "Install them"]], MAKETOOLS_SAY, sp.make_tools || "ask", sp.modes?.make_tools?.by),
         write,
         h("div", { class: "code-cols" }, h("div", {}, list), sel ? codeItem(sel, sp) : h("div", {}))),
       h("div", { class: "cols" },

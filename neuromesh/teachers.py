@@ -479,6 +479,25 @@ class LLMTeacher(Teacher):
             content_out = fence.group(1)
         return {"content": content_out[:200000], "summary": str(data.get("summary", ""))[:300]}
 
+    async def answer_from_web(self, question: str, results: list[dict]) -> dict | None:
+        """Answer a question from numbered web search results only (websearch.py), citing the ones it used."""
+        schema = {"type": "object", "required": ["found", "answer", "sources"],
+                  "properties": {"found": {"type": "boolean"}, "answer": {"type": "string"},
+                                 "sources": {"type": "array", "items": {"type": "integer"}}}}
+        listing = "\n".join(f"[{i + 1}] {r.get('title', '')} ({r.get('url', '')})\n    {' '.join(str(r.get('content', '')).split())[:600]}"
+                            for i, r in enumerate(results[:10]))
+        system = ("You answer a question using only the numbered web search results given, never what you know "
+                  "otherwise. Start with the answer itself, in your own words, at most three sentences. List the numbers "
+                  "of the results that support it. If the results do not answer the question, or disagree, say so with "
+                  "found=false. Reply with a single JSON object and nothing else.")
+        user = (f"Question: {question[:500]}\n\nSearch results:\n{listing}\n\n"
+                'JSON: {"found": true|false, "answer": "<the answer>", "sources": [<numbers of the results you used>]}')
+        data = _extract_json(await self._ask(system, user, schema) or "")
+        if not data or not data.get("found") or not str(data.get("answer", "")).strip():
+            return None
+        used = sorted({int(n) for n in data.get("sources") or [] if str(n).isdigit() and 1 <= int(n) <= len(results[:10])})
+        return {"answer": " ".join(str(data["answer"]).split())[:900], "sources": used}
+
     async def plan(self, objective: str, strategy: str, skills: list[str], tools: list[str]) -> dict | None:
         """Draft the questions a long-term objective needs answered, each one it can ask itself."""
         schema = {"type": "object", "required": ["questions"],
@@ -794,6 +813,17 @@ class TeacherPool:
                 continue
             with self._track(teacher, f"writing {language}: {' '.join(request.split())[:60]}"):
                 made = await teacher.write_code(request, language, examples, previous, problems)
+            if made:
+                return made, teacher.name
+        return None
+
+    async def answer_from_web(self, question: str, results: list[dict]) -> tuple[dict, str] | None:
+        """Have the first available LLM teacher answer a question from web search results (None offline)."""
+        for teacher in self.ranked():
+            if not isinstance(teacher, LLMTeacher):
+                continue
+            with self._track(teacher, f"reading web results: {' '.join(question.split())[:70]}"):
+                made = await teacher.answer_from_web(question, results)
             if made:
                 return made, teacher.name
         return None

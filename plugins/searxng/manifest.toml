@@ -1,0 +1,34 @@
+name = "searxng"
+version = "1.0.0"
+description = "Searches the web through your own SearXNG (a metasearch engine that asks Google, DuckDuckGo, Bing and others at once and returns their results). The mesh uses it to answer questions nobody answered in time (websearch.py); asked an order (\"search the web for ...\") it lists what it found."
+entrypoint = "tool.py"
+permissions = ["network"]      # HTTP to your SearXNG -> needs a human's approval once (P3)
+provides = "web"               # search results: read to answer a question, not kept as articles
+keywords = ["search the web", "web search", "google", "searxng", "search online", "look online", "on the internet",
+            "on the web"]
+timeout_s = 30
+persistent = true              # it stays running (tool.py --serve): kept-alive connections, searches at once
+
+templates = ["search the web for {topic}", "google {topic}", "look up {topic} online", "search online for {topic}",
+             "what does the web say about {topic}", "find {topic} on the internet"]
+
+[fillers]
+topic = ["the James Webb telescope", "sourdough starters", "the tallest bridge in Europe", "Rust async runtimes",
+         "the 2026 Winter Olympics", "how tides work", "Python 3.13 changes", "the Voynich manuscript"]
+
+# Passed to the tool on every run; override in directives.toml [tools.config.searxng], or start NeuroMesh with
+# --searxng http://host:port. SearXNG must allow JSON: in its settings.yml, search: formats: [html, json].
+[config]
+url = "http://localhost:8888"  # where your SearXNG listens (a prefix such as http://host/searx works too)
+engines = ""                   # e.g. "google,duckduckgo,wikipedia" (empty: the instance's own defaults)
+categories = "general"
+language = "en"
+safesearch = 1                 # 0 off, 1 moderate, 2 strict
+results = 8                    # results returned for a search
+use_proxy = false              # talk to SearXNG directly, even if HTTP(S)_PROXY is set
+
+# Self-test: SearXNG answers, and answers in JSON (no assumption about which engines it has).
+[[examples]]
+input = "__selftest__"
+expect = "searxng ok"
+route = false                  # not a routing example for orders

@@ -123,7 +123,10 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                 return 404, {"error": "no such image"}
             return 200, Raw(*got)
         if path == "/code":  # Gitea study, the scratch pad and its practice
-            return 200, {"gitea": system.code_study.status(), "scratch": system.scratch.status()}
+            return 200, {"gitea": system.code_study.status(), "scratch": system.scratch.status(),
+                         "tools": system.codetools.status()}
+        if path == "/websearch":  # questions nobody answered in time, searched with your SearXNG
+            return 200, system.websearch.status()
         if path == "/code/item":  # ?id=code-3
             item = system.scratch.get(str(query.get("id", "")))
             return (200, item) if item is not None else (404, {"error": "no such scratch pad item"})
@@ -342,6 +345,11 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             else:
                 return 400, {"error": "say what to do: focus, clear, objective, objective_id+action, work, change+action"}
             return (200 if ok else 400), {"ok": ok, "message": msg, **p.status()}
+        if path == "/websearch":  # {"inquiry": "inq-3"}: search the web for that question now
+            rec = await system.websearch.now(str(body.get("inquiry", "")), str(body.get("by") or "web"))
+            msg = (f"answered {rec.get('inquiry')}: {rec['answer'][:160]}" if rec.get("ok") else
+                   f"no answer from the web: {rec.get('why', '')}")
+            return (200 if rec.get("ok") else 400), {**rec, "message": msg}
         if path == "/lessons":  # {"kind": "question"|...}: a teacher sets it a lesson now
             rec = await system.tutor.lesson(by=str(body.get("by") or "web"), kind=body.get("kind"))
             if rec is None:
@@ -359,8 +367,13 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, {"glyphs": made, "message": f"it drew and learned {made} glyph(s)" if made else
                          "it could not draw glyphs (it needs Pillow and fonts)"}
         if path == "/code":  # {"write": "...", "language"} | {"add": code, "language", "title"} | {"id", "code"} |
-            #                  {"id", "action": ask|approve|decline|remove|check} | {"study": true, "repo"} | {"practice": true}
+            #                  {"id", "action": ask|approve|decline|remove|check|tool} | {"study": true, "repo"} | {"practice": true}
+            #                  {"auto_run": "ask"|"harmless"|"always"} | {"make_tools": "off"|"ask"|"auto"}
             sp, by = system.scratch, str(body.get("by") or "web")
+            for which in ("auto_run", "make_tools"):
+                if body.get(which):
+                    ok, msg = sp.set_mode(which, str(body[which]), by)
+                    return (200 if ok else 400), {"ok": ok, "message": msg, which: sp.mode(which)}
             if body.get("write"):
                 item = await sp.write(str(body["write"]), by=by, lang=str(body.get("language") or ""))
                 return (200 if item.get("id") else 400), item
@@ -377,6 +390,9 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                         return 404, {"error": "no such scratch pad item"}
                     sp.validate(item)
                     return 200, {"ok": True, "message": f"{iid}: {sp.say_check(item)}", "item": item}
+                if act == "tool":  # a person makes this code a tool the mesh can use
+                    ok, msg = system.codetools.make(iid, by, how="person")
+                    return (200 if ok else 400), {"ok": ok, "message": msg, "item": sp.get(iid)}
                 fn = {"ask": sp.ask, "approve": sp.approve, "decline": sp.decline, "remove": sp.remove}.get(act)
                 if fn is None:
                     return 400, {"error": f"unknown action {act}"}

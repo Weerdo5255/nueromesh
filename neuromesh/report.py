@@ -293,7 +293,19 @@ def describe_event(ev: Event) -> str | None:
         return f"[code]     {d['id']} waits for approval {d['approval']} before it runs: {_cut(d['title'], 70)}"
     if t == "code.ran":
         how = "timed out" if d.get("timeout") else "ran" if d["ok"] else f"failed (exit {d['exit']})"
-        return f"[code]     {d['id']} {how} in {d['ms']:.0f} ms, approved by {d['by']}: {_cut(d.get('output', ''), 90)}"
+        who = f"by itself ({d['by']})" if str(d.get("by", "")).startswith("auto-run") else f"approved by {d['by']}"
+        return f"[code]     {d['id']} {how} in {d['ms']:.0f} ms, {who}: {_cut(d.get('output', ''), 90)}"
+    if t == "code.mode":
+        say = {"auto_run": "auto-run (code it writes)", "make_tools": "its code as tools"}.get(d["which"], d["which"])
+        return f"[code]     {d['by']} set {say} to {d['mode']} (was {d['was']})"
+    if t == "code.tool":
+        made = "waits for approval" if d.get("status") == "awaiting approval" else "installed"
+        return f"[code]     {d['id']} became the tool {d['tool']} v{d['version']} ({d['how']}, {d['by']}): {made}"
+    if t == "web.answered":
+        return (f"[web]      {d['inquiry']} answered from the web, read by {d['read_by']} ({d['sources']} source(s)): "
+                f"'{_cut(d['question'], 60)}' -> {_cut(d['answer'], 90)}")
+    if t == "web.unanswered":
+        return f"[web]      {d['inquiry']}: the web didn't answer '{_cut(d['question'], 60)}' ({_cut(d['why'], 80)})"
     if t == "code.practised":
         ok = {True: "it checked out", False: "it did not check out", None: "it had nothing to write it from"}.get(d.get("ok"))
         same = "" if d.get("same_kind") is None else f"; {'the same' if d['same_kind'] else 'a different'} kind of code as theirs"

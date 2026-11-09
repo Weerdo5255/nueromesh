@@ -71,6 +71,14 @@ class StaticFileTests(unittest.TestCase):
                      'get("lessons", "/lessons")', "Approve and run", "Let it decide", "/images/file?sha="):
             self.assertIn(part, script)
 
+    def test_code_switches_tools_and_web_answers(self):
+        script = (web.WEB_DIR / "app.js").read_text()
+        for part in ('api("/code", { [which]: m, by: "web" })', 'codeSwitch("auto_run"', 'codeSwitch("make_tools"',
+                     'api("/code", { id: item.id, action: "tool", by: "web" })', '"Make it a tool"',
+                     'api("/websearch", { inquiry: q.id, by: "web" })', '"Search the web now"', "md?.web_answers",
+                     '"Correct it"'):
+            self.assertIn(part, script)
+
     def test_rewards_and_the_project(self):
         script = (web.WEB_DIR / "app.js").read_text()
         for part in ('api("/reward", { target, value: v', 'get("rewards", "/rewards")', 'get("projects", "/projects")',

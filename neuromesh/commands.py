@@ -24,6 +24,11 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /code write <what it should do> have it write code (a recipe, a teacher with Gitea examples, or the closest example)
   /code show|check|approve|decline|remove <id>   approve: it runs that exact code once (P20)
   /code practice                  practise now: write code for a function's purpose without looking, and compare
+  /code autorun ask|harmless|always   code it writes: wait for approval, run by itself when harmless, or always
+  /code tool <id>                 make Python code that ran into a tool it can use
+  /code tools off|ask|auto        its code as tools: never, offer them for you to approve, or install them itself
+  /web                            questions searched on the web (your SearXNG) when nobody answered in time
+  /web <inquiry id>               search the web for that question now
   /reward <what> [1-3] [why]      reward it: last (its last answer), ord-12, log:123 (a line of the activity log),
                                   a node, a tool, code-3, img-2, lesson-4, ch-1, or a direction in words
   /punish <what> [1-3] [why]      punish it, the same way        /rewards   the directions people push it
@@ -691,9 +696,20 @@ async def code_lines(system, rest: str) -> list[str]:
             return [f"  no scratch pad item {arg}"]
         sp.validate(item)
         return [f"  {arg}: {sp.say_check(item)}"]
+    if sub in ("autorun", "auto-run", "auto_run", "tools"):
+        which = "make_tools" if sub == "tools" else "auto_run"
+        if not arg:
+            return [f"  {which}: {sp.mode(which)} (set by {sp.modes[which].get('by')}); "
+                    + ("/code autorun ask|harmless|always" if which == "auto_run" else "/code tools off|ask|auto")]
+        ok, msg = sp.set_mode(which, arg, "console")
+        return [f"  {msg}" if ok else f"  {msg}"]
+    if sub == "tool":
+        ok, msg = system.codetools.make(arg, "console", how="person")
+        return [f"  {msg}"]
     fn = {"approve": sp.approve, "ask": sp.ask, "decline": sp.decline, "remove": sp.remove}.get(sub)
     if fn is None:
-        return ["  usage: /code [write <what>|show <id>|check <id>|approve <id>|decline <id>|remove <id>|practice]"]
+        return ["  usage: /code [write <what>|show <id>|check <id>|approve <id>|decline <id>|remove <id>|practice|"
+                "autorun <mode>|tool <id>|tools <mode>]"]
     ok, msg = fn(arg, "console")
     out = [f"  {msg}"]
     if ok and sub == "approve":
@@ -861,6 +877,14 @@ async def execute(system, line: str) -> Output:
             out = await project_lines(system, rest)
         elif cmd == "lessons":
             out = system.tutor.lines()
+        elif cmd == "web":
+            if rest.strip():
+                rec = await system.websearch.now(rest.strip(), "console")
+                out = ([f"  answered {rec['inquiry']}: {rec['answer']}", f"  read by {rec['read_by']}; sources: "
+                        + "; ".join(x["url"] or x["title"] for x in rec["sources"][:4])] if rec.get("ok")
+                       else [f"  no answer from the web: {rec.get('why', '')}"])
+            else:
+                out = system.websearch.lines()
         elif cmd == "lesson":
             rec = await system.tutor.lesson(by="console", kind=rest or None)
             out = ([f"  {rec['id']}: the {rec['teacher']} teacher set {rec['kind']}: \"{rec['order']}\"",

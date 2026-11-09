@@ -194,6 +194,27 @@ class ToolPolicy:
 
 
 @dataclass
+class WebSearchPolicy:
+    """Questions nobody answered in time are searched on the web through your own SearXNG (websearch.py)."""
+    enabled: bool = True
+    answer_after_minutes: float = 60.0  # how long a question waits for a person before it searches the web
+    kinds: tuple = ("clarify", "objective")  # which questions: what an order meant / what it should answer, and what an
+                                        # objective couldn't find out (never approvals, proposals or questions about you)
+    check_every_seconds: float = 60.0
+    max_per_hour: int = 20              # searches an hour (your SearXNG asks Google and others for each)
+    results: int = 8                    # results read for each question
+    engines: str = ""                   # SearXNG engines, e.g. "google,duckduckgo" (empty: your instance's defaults)
+    categories: str = "general"
+    language: str = "en"
+    teacher: bool = True                # an LLM teacher (Ollama) reads the results and answers, citing them
+    own_reading: bool = True            # with no teacher: answer from SearXNG's own answers and infoboxes, or a snippet
+                                        # that covers the question (it says so; it is less sure)
+    min_sources: int = 1                # results an answer must cite
+    skip_personal: bool = True          # questions about you or your things ("my", "I") are never sent to the web
+    keep: int = 300
+
+
+@dataclass
 class ResearchPolicy:
     enabled: bool = True                # research tools (wikipedia) may be used at all
     recall_threshold: float = 0.8       # how well retained knowledge must match to answer from memory
@@ -571,6 +592,13 @@ class CodePolicy:
     teacher_fix: bool = True            # code that does not check out goes back to the teacher once, with the problems
     keep_items: int = 200
     keep_practice: int = 60
+    auto_run: str = "ask"               # code it writes itself: "ask" (a person approves each piece), "harmless" (it runs
+                                        # by itself when it reaches for nothing: no files, network, other programs or
+                                        # modules beyond the basics), "always" (it runs by itself whenever it checks out).
+                                        # Code people put in the scratch pad always asks. Only a person changes this.
+    make_tools: str = "ask"             # its own code as tools (codetools.py): "off", "ask" (it offers Python code worth
+                                        # keeping as a tool and a person approves), "auto" (it installs it by itself).
+                                        # A person can make any code that ran into a tool (Make it a tool).
 
 
 @dataclass
@@ -663,6 +691,7 @@ class Directives:
     tutor: TutorPolicy = field(default_factory=TutorPolicy)
     rewards: RewardPolicy = field(default_factory=RewardPolicy)
     projects: ProjectPolicy = field(default_factory=ProjectPolicy)
+    websearch: WebSearchPolicy = field(default_factory=WebSearchPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -700,6 +729,7 @@ class Directives:
             tutor=build(TutorPolicy, d.get("tutor")),
             rewards=build(RewardPolicy, d.get("rewards")),
             projects=build(ProjectPolicy, d.get("projects")),
+            websearch=build(WebSearchPolicy, d.get("websearch")),
         )
 
     @classmethod

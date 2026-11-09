@@ -34,10 +34,11 @@ def work_trace(res) -> list[str]:
     return [t for t in res.trace if not t.startswith(("director-", "reviewed by director", "ego (the outer layer)", "ego: "))]
 
 
-def make_root(tmp: Path, wikipedia: bool = False, kiwix: bool = False, gitea: bool = False) -> Path:
+def make_root(tmp: Path, wikipedia: bool = False, kiwix: bool = False, gitea: bool = False, searxng: bool = False) -> Path:
     for name in ("directives.toml", "capabilities.toml"):
         shutil.copy(ROOT / name, tmp / name)
-    skip = tuple(n for n, keep in (("wikipedia", wikipedia), ("kiwix", kiwix), ("gitea", gitea)) if not keep)  # network tools wait for approval
+    skip = tuple(n for n, keep in (("wikipedia", wikipedia), ("kiwix", kiwix), ("gitea", gitea), ("searxng", searxng))
+                 if not keep)  # network tools wait for approval
     shutil.copytree(ROOT / "plugins", tmp / "plugins", ignore=shutil.ignore_patterns(*skip))
     return tmp
 

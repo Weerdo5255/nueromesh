@@ -25,7 +25,9 @@ from .vision import GlyphTeacher, Looker, SightTeacher, VisionBank, VisionTeache
 from .imaging import glyph_vector
 from .tutor import Schoolroom, Tutor
 from .rewards import Rewards
+from .codetools import CodeTools
 from .projects import Foreman, Projects
+from .websearch import Searcher, WebSearch
 from .anatomy import record as record_firing
 from .directors import DirectorPool
 from .dreams import DreamBank, Dreamer
@@ -152,6 +154,9 @@ class System:
         self.rewards = Rewards(self)          # people reward and punish what it does, and steer it (P23)
         self.projects = Projects(self)        # a coding project in Gitea, with objectives people set (P20)
         self.bus.listen(self.projects.on_event)
+        self.codetools = CodeTools(self)      # its own code, kept as tools it can use
+        self.bus.listen(self.codetools.on_event)
+        self.websearch = WebSearch(self)      # questions nobody answered in time, searched with your SearXNG
         self.bus.listen(self.scratch.on_event)
         self.bus.listen(self.journal.on_event)
         for cap in self.capabilities:  # what people taught, exactly as they put it, stands (P1)
@@ -178,7 +183,7 @@ class System:
         self.dreamer = Dreamer(self)    # idle: the coin flip (an objective, or sleep), and dreaming
         self.agents = [self.directors, self.orchestrator, Architect(self), Trainer(self), Evaluator(self), Curator(self),
                        Explorer(self), self.researcher, self.investigator, TaskRunner(self), Compressor(self),
-                       self.director, self.dreamer, Ruminator(self), Thinker(self), Reader(self), Apprentice(self), Looker(self), Schoolroom(self), Foreman(self), Sentinel(self)]
+                       self.director, self.dreamer, Ruminator(self), Thinker(self), Reader(self), Apprentice(self), Looker(self), Schoolroom(self), Foreman(self), Searcher(self), Sentinel(self)]
 
     # ------------------------------------------------------------- lifecycle
     async def start(self) -> "System":
@@ -714,7 +719,11 @@ class System:
             "tool_switch": {"mode": self.tool_switch.mode, "set_by": self.tool_switch.set_by},
             "tutor": {"enabled": self.tutor.enabled, "count": self.tutor.stats.get("lessons", 0),
                       "right": self.tutor.stats.get("right", 0), "teachers": len(self.tutor.teachers())},
-            "scratch": {"items": len(self.scratch.items), "gitea": self.code_study.state, "examples": self.code_study.count()},
+            "scratch": {"items": len(self.scratch.items), "gitea": self.code_study.state, "examples": self.code_study.count(),
+                        "auto_run": self.scratch.mode("auto_run"), "make_tools": self.scratch.mode("make_tools")},
+            "websearch": {"tool": (self.tools.tools["searxng"].state if "searxng" in self.tools.tools else "missing"),
+                          "answered": self.websearch.counts.get("answered", 0), "due": len(self.websearch.due()),
+                          "after_minutes": self.websearch.pol.answer_after_minutes},
             "vision": {"images": len(self.vision.records), "glyphs": self.store.count("glyphs")},
             "rewards": {"rewards": sum(1 for r in self.rewards.given if r["value"] > 0),
                         "punishments": sum(1 for r in self.rewards.given if r["value"] < 0)},

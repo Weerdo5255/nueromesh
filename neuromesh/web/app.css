@@ -650,3 +650,9 @@ pre.diff .d-add { color: var(--good); background: color-mix(in srgb, var(--good)
 pre.diff .d-del { color: var(--bad); background: color-mix(in srgb, var(--bad) 9%, transparent); display: inline-block; min-width: 100%; }
 pre.diff .d-hunk { color: var(--tool); }
 pre.diff .d-file { color: var(--ink-2); font-weight: 600; }
+
+/* the scratch pad's switches, and questions answered from the web */
+.switch-label { font-size: 14px; color: var(--ink-2); min-width: 9.5em; }
+.web-note { gap: 8px 12px; margin: 4px 0 6px; }
+.web-sources { margin: 4px 0 0; padding-left: 18px; }
+.web-sources li { margin: 2px 0; overflow-wrap: anywhere; }

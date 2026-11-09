@@ -70,7 +70,9 @@ def _teacher_overrides(args, root: Path) -> dict | None:
     model, url = getattr(args, "ollama", None), getattr(args, "ollama_url", None)
     kiwix = getattr(args, "kiwix", None)
     gitea = getattr(args, "gitea", None)
-    tool_config = {**({"kiwix": {"url": kiwix}} if kiwix else {}), **({"gitea": {"url": gitea}} if gitea else {})}
+    searxng = getattr(args, "searxng", None)
+    tool_config = {**({"kiwix": {"url": kiwix}} if kiwix else {}), **({"gitea": {"url": gitea}} if gitea else {}),
+                   **({"searxng": {"url": searxng}} if searxng else {})}
     extra: dict = {"tools": {"config": tool_config}} if tool_config else {}
     if not model and not url:
         return extra or None
@@ -293,6 +295,8 @@ def main(argv: list[str] | None = None) -> None:
                        help="Ollama server (default: $OLLAMA_HOST or http://localhost:11434)")
         p.add_argument("--kiwix", metavar="URL", default=None,
                        help="local Kiwix server (kiwix-serve) to research with, e.g. http://localhost:8080")
+        p.add_argument("--searxng", metavar="URL", default=None,
+                       help="your SearXNG, to search the web for questions nobody answered in time, e.g. http://localhost:8888")
         p.add_argument("--gitea", metavar="URL", default=None,
                        help="local Gitea its coder nodes learn from, e.g. http://localhost:3000 (token: $GITEA_TOKEN)")
     for p in (p_run, p_serve, p_demo, p_bench):

@@ -461,7 +461,10 @@ class Toolsmith:
             out.append({"input": text, "expect": str(want if want is not None else got)})
         return out
 
-    def _offer(self, name, version, recipe_id, title, source, manifest, tests, texts, why, by, params, asked) -> dict | None:
+    def _offer(self, name, version, recipe_id, title, source, manifest, tests, texts, why, by, params, asked,
+               auto_by: str = "") -> dict | None:
+        """Write a tool's files and ask a person to approve them - or, with auto_by (a person made their own code a
+        tool, or switched [code] make_tools to "auto"), install it now; it is vetted and self-tested either way."""
         s = self.sys
         about = (texts or [asked])[0]
         problems = check_code(source)
@@ -474,6 +477,20 @@ class Toolsmith:
         (folder / "tool.py").write_text(source)
         (folder / "manifest.toml").write_text(manifest)
         (folder / "TESTS.md").write_text(_tests_md(name, version, title, recipe_id, why, texts, asked, tests))
+        if auto_by:
+            old = self.drafts.get(name)
+            record = {"name": name, "version": version, "recipe": recipe_id, "title": title, "params": params,
+                      "needs": texts[:10], "asked": asked, "why": why, "by": by, "status": "awaiting approval",
+                      "approval": None, "folder": str(folder), "made_at": round(time.time(), 1), "tests": tests,
+                      "experiments": (old or {}).get("experiments", []), "score": None, "live": None, "previous": None,
+                      "auto": auto_by}
+            self.drafts[name] = record
+            self._log("drafted", about, f"{name} v{version} ({recipe_id}): {len(tests)} tests; installed without asking: {auto_by}", by)
+            s.guardian.audit(by, "tool.drafted", name, version=version, recipe=recipe_id, folder=str(folder), auto=auto_by)
+            s.bus.publish("tool.drafted", tool=name, version=version, recipe=recipe_id, approval="", by=by,
+                          why=why[:160], need=about[:120], title=title)
+            self.install(record, auto_by)
+            return record
         approval = s.guardian.request_approval("tool.made", name, {
             "version": version, "recipe": recipe_id, "purpose": title, "why": why, "made_by": by,
             "for": [t[:120] for t in texts[:5]] or [asked[:120]], "tests": len(tests), "folder": str(folder),
@@ -805,7 +822,7 @@ def _templates(recipe: Recipe) -> tuple[list[str], dict]:
 
 def _tests_md(name, version, title, recipe, why, texts, asked, tests) -> str:
     lines = [f"# {name} v{version}", "", f"{title[0].upper()}{title[1:]}.", "",
-             f"Written by NeuroMesh's toolsmith ({'recipe ' + recipe if recipe != 'custom' else 'by an LLM teacher'}) "
+             f"Written by NeuroMesh's toolsmith ({'from its own code, ' + recipe[5:] if recipe.startswith('code:') else 'recipe ' + recipe if recipe != 'custom' else 'by an LLM teacher'}) "
              f"because {why}.", "", "It made it for:", ""] + [f"- {t}" for t in texts[:8]] + (
         [f"- a person asked for a tool that {asked}"] if asked else []) + [
         "", "It runs only after a person approves it (P15), in the sandbox, with no permissions. It will then be",

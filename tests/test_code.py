@@ -118,6 +118,98 @@ class ApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(s.guardian.approval_for(waiting["approval"], "project-change", "ch-99"))
 
 
+class AutoRunAndToolTests(unittest.IsolatedAsyncioTestCase):
+    """The auto-run switch for code it writes, and its own code kept as tools (codetools.py)."""
+
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.system = System(make_root(Path(self.tmp.name)), overrides=FAST, seed=5)
+        await self.system.start()
+
+    async def asyncTearDown(self):
+        if not self.system.stopping:
+            await self.system.stop()
+        self.tmp.cleanup()
+
+    async def test_auto_run(self):
+        s, sp = self.system, self.system.scratch
+        self.assertEqual(sp.mode("auto_run"), "ask")
+        self.assertFalse(sp.set_mode("auto_run", "always", "neuromesh")[0])       # only a person switches it
+        self.assertFalse(sp.set_mode("auto_run", "always", "teacher:ollama")[0])
+        self.assertFalse(sp.set_mode("auto_run", "sometimes", "tester")[0])
+        item = await sp.write("write a python function that reverses the word hello", by="tester")
+        self.assertEqual((item["status"], item["runs"]), ("valid", []))         # ask: it waits
+        ok, msg = sp.set_mode("auto_run", "harmless", "tester")
+        self.assertTrue(ok, msg)
+        res = await s.submit("write a python function that reverses the word stressed")
+        self.assertIn("It ran by itself (auto-run: harmless, switched on by tester)", res.output)
+        made = sp.get(res.output.split(" as ")[1].split(" ")[0])
+        self.assertIn(f"It printed:\n{made['runs'][-1]['stdout'].strip()}", res.output)
+        self.assertEqual(made["status"], "ran")
+        self.assertTrue(made["runs"][-1]["by"].startswith("auto-run"))
+        self.assertTrue(any(e.topic == "code.mode" for e in s.bus.recent("code.*", 40)))
+        reach = sp._new("fetch a page", "import urllib.request\nprint(urllib.request.urlopen('http://x').read())\n",
+                        "python", "tester", origin={"how": "teacher", "teacher": "ollama"})
+        ok, why = sp.auto_runs(reach)
+        self.assertFalse(ok)                                                    # harmless only: it asks
+        self.assertIn("the network", why)
+        sp.set_mode("auto_run", "always", "tester")
+        self.assertTrue(sp.auto_runs(reach)[0])                                 # always: it would run
+        mine = sp.add('print("hi")\n', "python", "mine", "tester")
+        self.assertFalse(sp.auto_runs(mine)[0])                                 # people's code always asks
+        self.assertEqual(mine["status"], "valid")
+        status, body = await _route(s, "POST", "/code", {}, {"auto_run": "ask", "by": "tester"})
+        self.assertEqual((status, body["auto_run"]), (200, "ask"))
+        self.assertFalse(sp.auto_runs(reach)[0])
+
+    async def test_its_code_becomes_a_tool(self):
+        s, sp, ct = self.system, self.system.scratch, self.system.codetools
+        mine = sp.add('def add(a, b):\n    """Add two numbers."""\n    return a + b\n\n\nprint(add(2, 3))\nprint(add(10, -4))\n',
+                      "python", "add two numbers", "tester")
+        ok, msg = ct.make(mine["id"], "tester")
+        self.assertFalse(ok)
+        self.assertIn("hasn't run", msg)                                       # it shows what it does first
+        sp.approve(mine["id"], "tester")
+        self.assertTrue(await wait_for(lambda: mine["status"] == "ran", 30))
+        p, why = ct.candidate(mine)
+        self.assertEqual(p["examples"], [{"input": "2, 3", "expect": "5"}, {"input": "10, -4", "expect": "6"}])
+        ok, msg = ct.make(mine["id"], "tester")                                 # a person makes it a tool: installed
+        self.assertTrue(ok, msg)
+        self.assertTrue(await wait_for(lambda: s.tools.tools.get("add") is not None and s.tools.tools["add"].state == "active", 30),
+                        s.tools.tools.get("add") and s.tools.tools["add"].note)
+        self.assertEqual(s.tools.tools["add"].manifest.permissions, ())        # made tools get no permissions
+        res = await s.submit("tool add: 40, 2")
+        self.assertEqual(str(res.output), "42")
+        self.assertEqual(mine["tool"]["name"], "add")
+        # it offers code it wrote itself ([code] make_tools = "ask"): a person approves
+        sp.set_mode("auto_run", "harmless", "tester")
+        item = await sp.write("write a python function that reverses the word hello", by="tester")
+        self.assertEqual(item["status"], "ran")
+        self.assertTrue(await wait_for(lambda: item["id"] in ct.made, 10))
+        name = ct.made[item["id"]]["tool"]
+        draft = s.toolsmith.drafts[name]
+        self.assertEqual(draft["status"], "awaiting approval")
+        s.guardian.decide(draft["approval"], True, by="tester")
+        self.assertTrue(await wait_for(lambda: s.tools.tools.get(name) is not None and s.tools.tools[name].state == "active", 30),
+                        s.tools.tools.get(name) and s.tools.tools[name].note)
+        res = await s.submit(f"tool {name}: stressed")
+        self.assertEqual(str(res.output), "desserts")
+        # code that can't be a tool says why
+        bare = sp.add("print(sum(range(10)))\n", "python", "a sum", "tester")
+        sp.approve(bare["id"], "tester")
+        self.assertTrue(await wait_for(lambda: bare["status"] == "ran", 30))
+        self.assertIn("no function", ct.make(bare["id"], "tester")[1])
+        net = sp.add("import socket\n\n\ndef host(name):\n    return socket.gethostbyname(name)\n\n\nprint(host('localhost'))\n",
+                     "python", "host", "tester")
+        sp.approve(net["id"], "tester")
+        self.assertTrue(await wait_for(lambda: net["status"] in ("ran", "failed"), 30))
+        if net["status"] == "ran":
+            self.assertIn("a tool may not", ct.make(net["id"], "tester")[1])  # reaching outside: never a tool
+        self.assertFalse(sp.set_mode("make_tools", "auto", "neuromesh")[0])
+        status, body = await _route(s, "POST", "/code", {}, {"make_tools": "auto", "by": "tester"})
+        self.assertEqual((status, body["make_tools"]), (200, "auto"))
+
+
 class CodeSystemTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.gitea = MockGitea()

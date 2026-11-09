@@ -1,5 +1,5 @@
 """Small stand-ins for the servers the mesh talks to in these tests: an Ollama server (with a vision model) whose
-replies a test decides, and a Gitea with a few repositories."""
+replies a test decides, a Gitea with a few repositories, and a SearXNG whose results a test sets."""
 import json
 import threading
 import urllib.parse
@@ -248,3 +248,46 @@ class MockGitea(_Server):
 
     def commit(self, name: str) -> str:
         return f"{abs(hash(json.dumps(self.repos[name], sort_keys=True))) % 10**12:012x}"
+
+
+# ----------------------------------------------------------------------------- SearXNG
+class _SearXNG(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def _send(self, payload, code=200):
+        data = json.dumps(payload).encode()
+        self.send_response(code)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        owner = self.server.owner
+        u = urllib.parse.urlsplit(self.path)
+        q = dict(urllib.parse.parse_qsl(u.query))
+        owner.requests.append({"path": u.path, "query": q, "agent": self.headers.get("user-agent", "")})
+        if u.path == "/config":
+            return self._send({"instance_name": "Home SearXNG", "version": "2026.10.1",
+                               "engines": [{"name": n, "enabled": True, "categories": ["general"]} for n in ("google", "duckduckgo", "wikipedia")]})
+        if u.path == "/search":
+            if q.get("format") != "json" or not owner.json:
+                return self._send({"message": "format not allowed"}, 403)
+            hit = next((v for k, v in owner.answers.items() if k.lower() in q.get("q", "").lower()), None)
+            return self._send({"query": q.get("q"), "number_of_results": len((hit or {}).get("results", [])),
+                               "results": [dict(r, engine=r.get("engines", ["google"])[0]) for r in (hit or {}).get("results", [])],
+                               "answers": (hit or {}).get("answers", []), "infoboxes": (hit or {}).get("infoboxes", []),
+                               "suggestions": [], "unresponsive_engines": []})
+        self._send({"message": "not found"}, 404)
+
+
+class MockSearXNG(_Server):
+    """A SearXNG: /config, and /search?format=json with the results set in .answers ({words in the query: {"results":
+    [{title, url, content, engines}], "answers": [...], "infoboxes": [...]}}). .json = False refuses JSON (403)."""
+
+    def __init__(self):
+        self.answers: dict = {}
+        self.requests: list[dict] = []
+        self.json = True
+        super().__init__(_SearXNG)

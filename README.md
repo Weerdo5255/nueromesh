@@ -56,7 +56,10 @@ idle, its Ollama teachers set it orders and mark its answers, and it learns from
 turns its tools on, off, or lets it decide each time whether a tool is worth using. You can reward or
 punish anything it does, or a direction in words, and the rewards steer what it chooses next. And you
 can give it a coding project in your Gitea, with objectives for what it should do: it drafts the
-changes, and once you approve one it opens a pull request on a new branch.
+changes, and once you approve one it opens a pull request on a new branch. A switch lets the code it
+writes run by itself (when harmless, or always), and Python code of its own that ran can become a
+tool it uses. Questions it asks you that nobody answers in time are searched on the web through your
+own SearXNG, and read by your Ollama teacher.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
@@ -74,7 +77,8 @@ or CuPy to run the nodes on a GPU (see [Running on a GPU](#running-on-a-gpu)). F
 (JPEG, GIF and WebP, and glyphs to practise reading with), tesseract (a teacher for its reader), and
 a vision model on Ollama (`ollama pull llava`). For code: a Gitea (`--gitea URL`), and Node.js to
 check and run JavaScript; for it to open pull requests on its project, a Gitea token with write access in
-`$GITEA_WRITE_TOKEN`.
+`$GITEA_WRITE_TOKEN`. For the web: your own SearXNG (`--searxng URL`) with JSON allowed in its
+`settings.yml` (`search: formats: [html, json]`).
 
 ---
 
@@ -542,6 +546,35 @@ and JavaScript (with Node.js) run once approved; other languages are checked onl
 and tools it wrote that were waiting ask again when it starts, with new numbers. Approval numbers carry
 on from the last run (`apv-57`, not `apv-1` again), and each approval acts only on the thing it was asked
 for (its kind and subject), so approving one thing never runs, pushes or installs another.
+
+**Auto-run.** A switch in the Code view (`/code autorun`, `[code] auto_run`) decides what happens to code it
+writes itself. **Ask me** (the default): it waits for your approval, as above. **When harmless**: it runs
+straight away, without asking, when it checks out and reaches for nothing (no files, network, other
+programs or modules beyond the basics); anything else still waits. **Always**: it runs straight away
+whenever it checks out. Either way it runs in a fresh folder within the same limits and without keys;
+the run, the order's answer and the log say it ran by itself and who switched that on. Code you put in
+always waits for you, and only a person changes the switch (the mesh, a teacher or a director can't).
+
+**Its own code as tools.** Python code that ran cleanly and shows what its function does - a top-level
+`print(f(...))`, which recipe and teacher code has - can become a tool it uses from then on (`codetools.py`):
+
+```
+code-3:  def reverse_words(sentence): ...         print(reverse_words("the cat sat"))  -> eht tac tas
+  -> tool.py: the code without its demonstration, and a wrapper that hands the function an order's
+     words (after "reverse_words:", if the order names it), split at commas and typed like the
+     demonstration's arguments (numbers as numbers, lists as lists), and prints its answer
+  -> manifest.toml: its self-tests are what the demonstration printed; its routing examples and
+     templates ("reverse_words: {x}") teach the router the orders it meets
+  -> checked like any tool it makes: standard library only, nothing reaching outside, no permissions
+```
+
+**Make it a tool** in the Code view (or `/code tool code-3`) installs it straight away: you chose it. On its
+own, after code it wrote runs cleanly, it decides whether the code is worth keeping (a function that takes
+something, no tool like it yet, not one people discouraged), and `[code] make_tools` says what it may do:
+**Off** (never), **Offer them** (an approval, like any tool it makes; the default) or **Install them**
+(by itself). Installed tools are vetted and self-tested like any tool, the toolsmith experiments with them,
+and the tool switch decides each time whether one is worth using. Code that is not Python, reaches outside,
+takes nothing or never showed what it does stays in the scratch pad, and it says why.
 
 **Practice.** When it is idle it takes the purpose of a function people wrote, writes code for it
 without looking at theirs, checks it, and compares the two: does it check out, is it the same kind of
@@ -1075,6 +1108,44 @@ one, lessons favour rewarded kinds, and its project takes rewarded objectives fi
 a reward changed its mind. A reward never overrides a directive, a person's approval or what a person
 taught, and never makes an answer true or false.
 
+### Questions nobody answered: the web, through your SearXNG
+When it asks you something it could find out - what an order it couldn't fulfil meant or what its answer
+is, or what an objective couldn't find out - and nobody answers within `[websearch] answer_after_minutes`
+(60 by default), it searches the web for it through your own SearXNG (`websearch.py`, `plugins/searxng`):
+
+```
+"how tall is the Eiffel Tower"   asked in the Mind's Questions, unanswered for an hour
+  -> it stays home if it is about you or your things ("my", "I", "our"), or has anything like an
+     address, a long number or a key in it; approvals and proposals are only ever yours
+  -> the searxng tool: GET /search?q=...&format=json on your SearXNG, which asks its engines
+     (Google, DuckDuckGo, ... as you set it up, or [websearch] engines) at once
+  -> your Ollama teacher reads the results and answers from them only, citing them by number,
+     or says they don't answer it; with no teacher, SearXNG's own answers and infoboxes, or a
+     snippet that covers the question and gives what was asked (less sure, and it says so)
+  -> the question is answered "by the web (the ollama teacher)", with its sources; for an order,
+     a director decides whether a memory node keeps it (P14) and the order is tried again; for an
+     objective, it carries on with it
+```
+
+The web's answer is a teacher's, not yours (P1): **Correct it** under "Answered from the web" in the Mind's
+Questions (or `/reply inq-3 answer: ...`) and yours replaces it. Each question is searched once on its own;
+**Search the web now** on a question (or `/web inq-3`) searches it straight away. `[websearch] max_per_hour`
+caps the searches (your SearXNG asks its engines for each). `/web` lists what it searched and found.
+
+**Setting it up.** Run SearXNG yourself (its Docker image is the quickest) and allow JSON in its
+`settings.yml` (`search: formats: [html, json]`); a public instance usually refuses JSON. Start the mesh with
+`--searxng http://localhost:8888` (or `[tools.config.searxng] url`), and approve the searxng tool once, like
+Kiwix. Its self-test checks that SearXNG answers in JSON. If SearXNG's limiter blocks it (429), turn the
+limiter off for your own instance or add the mesh's address to `pass_ip`. Asked an order ("search the web
+for ...", "google ..."), the tool lists what it found. It never opens the pages it finds, and its user
+agent is a plain `neuromesh`.
+
+**Why not Google directly.** Google has no API for its AI Overviews (only third-party scrapers offer them);
+its Programmable Search JSON API is closed to new customers and ends on 1 January 2027; and Gemini's
+Grounding with Google Search, which does give an AI answer built from Google's results, does not allow a
+program to store or learn from those answers. SearXNG can ask Google among its engines; whether that is
+allowed is between your instance and the engines it uses.
+
 ### Was it right? Corrections and the next most likely answers
 Every answer (in the web interface, under the answer and in the closer look's orders) asks *Was
 this right?*
@@ -1337,6 +1408,7 @@ All run concurrently (asyncio) and coordinate through a message bus, the registr
 | Directors | director-0 and its duplicates: take every order before anything else touches it, review every result before you see it, decide what may enter long-term memory, give each other second opinions; keep director-0 running |
 | Director | independent agency (director-0): when idle, picks a mode (research, practise, examine, improve, consolidate, rest) with the agency node in front of it, sets itself tasks or sits exams, scores what each choice achieved and teaches the agency node from it |
 | Dreamer | when idle, may fall asleep and give all background capacity to dreaming: makes up questions and answers from what it holds, checks them on waking, evolves the dream nodes; an order wakes it |
+| Searcher | questions nobody answered in time ([websearch] answer_after_minutes) are searched on the web through your SearXNG and answered from what it finds |
 | Foreman | when idle, works on its project's next objective (drafts and checks a change, asks you to approve it), and watches its pull requests for a merge or a close |
 | Sentinel | watches the kill switch, re-checks local teacher servers (Ollama), lets the mood settle and saves it, publishes heartbeats with the directive scorecard |
 
@@ -1361,12 +1433,12 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P11 tested memory | knowledge lives in a memory node checked by its tests (in the memory database); a smaller node is accepted only if all its answers still match; a merged node only if it passes at least 90% of both nodes' tests, and the ones it fails are never served and are relearned; people's edits to the tests are retrained to |
 | P12 accountable initiative | the mesh takes initiative only when idle and within its own budget; every decision is audited and logged; the tasks it sets itself can be paused or removed; people can pin its mode or turn it off; it never adds capabilities or approves tools |
 | P14 directed orders | there is always at least one director node (director-0 never retires, and is restarted if it stops); every order passes a director on the way in and on the way out; nothing enters long-term memory without a director's review; duplicates stay within `max_directors`; a director only adds disclosed notes (P8), always keeps a person's word (P1), never stores imagination (P13); an unanswered order is tried other ways at most `max_attempts` times, and a reply that gives up says what was tried (P7) |
-| P15 self-made tools | no code the mesh wrote runs before a person approves it (the Explorer runs an `author = "neuromesh"` tool only if those exact files were approved, so changed code asks again); its code is standard library only and checked before it is offered (no files, network, processes, `eval` or `exec`); made tools never get permissions and are self-tested like any tool (P3); experiments run only when idle and within budget; every draft, approval, experiment and refinement is audited |
+| P15 self-made tools | no code the mesh wrote runs before a person approves it (the Explorer runs an `author = "neuromesh"` tool only if those exact files were approved, so changed code asks again); its code is standard library only and checked before it is offered (no files, network, processes, `eval` or `exec`); made tools never get permissions and are self-tested like any tool (P3); Python code from its scratch pad that ran can become a tool when a person makes it one, approves its offer, or set `[code] make_tools = "auto"`; experiments run only when idle and within budget; every draft, approval, experiment and refinement is audited |
 | P16 honest objectives | objectives are pursued only when idle and within `steps_per_hour`, never while asleep, halted or paused; every question it asks itself passes a director; every answer keeps its source and confidence and says whether a second source confirmed it; disagreements are recorded and settled, not hidden; what it could not find out is written up as open; one question to a person at a time, and a person's answer stands; self-set objectives count against `max_self_objectives` and can be removed |
 | P17 own thoughts | thinking nodes recombine and rephrase only facts its memory nodes hold, and every thought is checked word by word against them (a draft that adds a word, name or number is turned down); a thought is labelled as its own thinking with its node and facts, shown beside an answer and never in it, never stored as a fact or used as a source; the opinions it states are ones its thinking nodes hold, from evidence they name, and opinions about people stay private; desires act only through the director's self-set objectives, within `max_self_objectives` and its budgets, each saying why |
 | P18 ego | the ego wraps every other node: it reads the mood an order is taken in, and on the way out its ego node only chooses the kind of remark (quiet, curious, dream, opinion, feeling, doubt); the words are built from what is so, so a remark adds no fact; a remark is labelled as its ego's, shown after the answer and never in it, kept in memory as its own statement (untested), never as a fact, a source, or offered for correction; it stays quiet when the answer was held back or the person is upset, and is never about a person; what it is curious about raises that aim only within `max_self_objectives` and its budgets; people can turn it off |
 | P19 ensembles | several instances of each kind of node answer together, at most `[nodes] max_running` at once; when instances of the same kind disagree (or memory nodes give answers that do not match) the ego node arbitrates - the champion, the majority, the most accurate and confident side, or what its memory says it decided before - and says so; a person's teaching comes first; every arbitration is kept in memory as its own statement, untested |
-| P20 approved code only | no code runs unless a person approved exactly that code (checked by the validator first; editing it withdraws approval); approved code runs once, in a fresh folder, within limits and without keys; Gitea is read for study, and written to only to push a project change a person approved, to a new `branch_prefix` branch with a pull request, never an existing branch, with the separate write token |
+| P20 approved code only | no code runs unless a person approved exactly that code (checked by the validator first; editing it withdraws approval) - or a person switched auto-run to "harmless" (code it wrote itself that reaches for nothing runs without asking) or "always" (code it wrote itself runs whenever it checks out); people's code always asks; approved code runs once, in a fresh folder, within limits and without keys; Gitea is read for study, and written to only to push a project change a person approved, to a new `branch_prefix` branch with a pull request, never an existing branch, with the separate write token |
 | P21 honest sight | what it says it sees or reads in an image names who said so; a person's word stands; its reading is measured against tesseract, a teacher or a person |
 | P22 lessons are lessons | idle-time orders from its teachers run on background capacity within budgets, pass the directors, teach as a teacher (never as a person), and don't count as people's orders |
 | P23 rewards steer | only people reward or punish; rewards steer preferences only (initiative, curiosity, remarks, the idle coin, the tool switch, lessons, evolution, its project) and fade; they never override a prime, the guardian, an approval or a person's teaching, never make an answer true or false, and are all audited |
@@ -1477,6 +1549,7 @@ make a tool that reverses text    /toolsmith    /toolsmith build count the vowel
 write a python function that counts vowels    /code    /code show code-1    /code approve code-1    /code practice    /gitea    /gitea study ann/textkit
 /image ~/Pictures/sign.png    /images    /image show img-1    /image is img-1 street sign    /image says img-1 Harbour 2 km    what does img-1 say?
 /lessons    /lesson question    /lesson code
+/code autorun harmless    /code autorun always    /code autorun ask    /code tool code-3    /code tools auto    /web    /web inq-3
 /reward last 2 a clear answer    /punish calculator    /reward reading about astronomy 3    /rewards
 /project focus ann/textkit    /project objective add docstrings to stats.py    /project    /project work    /project show ch-1    /project approve ch-1
 /traces    /anatomy dispatch :: what is 12 * 7    /anatomy sentiment :: the hotel was lovely    /anatomy mem-0001 :: what is the capital of Australia?
@@ -1558,7 +1631,9 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
   view shows where the tests are kept (the memory database) and **its own statements**, untested.
 - **Mind**: divided into tabs, each with its own address (`#mind/tools`), and the one you used
   last opens next time. Arrow keys move between them. **Questions** (with a count of what is
-  waiting): its questions for you (reply) and its proposals (adopt or decline). **Ego** (with its
+  waiting): its questions for you (reply; when it will search the web for one, and **Search the web
+  now**), what it answered from the web (with its sources; **Correct it**), and its proposals (adopt or
+  decline). **Ego** (with its
   mood): how it feels, what it is curious about, its likes and dislikes with its reasons, its ego
   nodes and what it said lately; ask it about itself, turn it off or on. **Thinking** (with
   how many thoughts it holds): each thought in its own words, its view and what it wants to find
@@ -1591,7 +1666,9 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
   Everything that happens in its mind is kept for this, by date and time (journal.py).
 - **Code** (with a count of code waiting for your approval): the scratch pad - ask it to write
   code, each piece with how it was written, the validator's verdict and what it reaches for, edit
-  it, check it again, **Approve and run** it, and its output; what it studies in Gitea
+  it, check it again, **Approve and run** it, **Make it a tool** (Python code that ran), and its
+  output; the two switches: **Run code it writes** (Ask me, When harmless, Always) and **Its code as
+  tools** (Off, Offer them, Install them); what it studies in Gitea
   (repositories, kinds of code, recent visits, Study now); and how its practice is going. At the top,
   **its project**: the repository it focuses on, its objectives (add one; work on it now, done, drop,
   reopen), and the changes it proposed, each with its diff file by file, the validator's verdict,
@@ -1685,7 +1762,9 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | POST | `/tools/switch` | `{"mode": "on" \| "off" \| "decide"}` for all tools; `{"tool": "kiwix", "mode": "on" \| "off" \| "decide" \| "default"}` for one |
 | GET | `/code` | Gitea (state, repositories, kinds of code, recent visits) and the scratch pad (items, checkers, practice) |
 | GET | `/code/item`, `/code/examples` | `?id=code-3`: one scratch pad item with its code, check and runs; `?q=&kind=&lang=`: functions it studied |
-| POST | `/code` | `{"write": "...", "language": "python"}` writes code; `{"add": "<code>", "language", "title"}` puts yours in; `{"id", "code"}` changes it; `{"id", "action": "ask" \| "approve" \| "decline" \| "remove" \| "check"}`; `{"study": true, "repo": "owner/name"}`; `{"practice": true}` |
+| POST | `/code` | `{"write": "...", "language": "python"}` writes code; `{"add": "<code>", "language", "title"}` puts yours in; `{"id", "code"}` changes it; `{"id", "action": "ask" \| "approve" \| "decline" \| "remove" \| "check" \| "tool"}` (`tool`: make Python code that ran into a tool); `{"auto_run": "ask" \| "harmless" \| "always"}`; `{"make_tools": "off" \| "ask" \| "auto"}`; `{"study": true, "repo": "owner/name"}`; `{"practice": true}` |
+| GET | `/websearch` | questions searched on the web: what it searched, what it found and who read it, what is due, its budget |
+| POST | `/websearch` | `{"inquiry": "inq-3"}`: search the web for that question now |
 | GET | `/images` | what its optical nodes took in: each image, what it sees, the text it read, its reader and sight nodes, its teachers |
 | GET | `/images/file` | `?id=img-3` (or `?sha=`): the image itself |
 | POST | `/images` | `{"name", "data": "<base64 or a data: URL>"}`, or the image itself with `content-type: image/png` (`?name=`) |
@@ -2042,7 +2121,7 @@ derivations, moving weights between devices). They are skipped where no GPU libr
 ```
 directives.toml          constitution: prime directives, goals, policy
 capabilities.toml        seed skills
-plugins/                 installed tools (calculator with mathsolver.py, word_stats, wikipedia, kiwix, gitea), and
+plugins/                 installed tools (calculator with mathsolver.py, word_stats, wikipedia, kiwix, gitea, searxng), and
                          tools it wrote once you approve them (drafts wait in state/workshop/)
 challenges/              challenge suites (small samples; fetched benchmarks go to state/challenges/)
 memory_tests.imported/   test files of earlier versions, once imported into state/memory.db
@@ -2080,6 +2159,8 @@ neuromesh/
   tutor.py               lessons: its Ollama teachers set it orders when idle and mark them (P22)
   rewards.py             rewards and punishments: the ledger of directions, the reward node, their effects and pull (P23)
   projects.py            its project in Gitea: objectives, drafting and checking changes, approval, pull requests, the Foreman (P20)
+  codetools.py           its own code as tools: the demonstration's examples, the wrapper, offering or installing (P15)
+  websearch.py           questions nobody answered in time, searched with your SearXNG and read by a teacher; the Searcher
   agency.py              independent agency: the Director, its modes, the drive policy and the agency node (P12)
   directors.py           the directors: intake, review, second opinions, the memory gate, duplicates, the stance (P14)
   toolsmith.py           the toolsmith: the coder teacher, writing, checking and offering tools, approval, experiments, refinement (P15)
@@ -2096,7 +2177,7 @@ neuromesh/
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   279 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   286 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -2143,7 +2224,14 @@ tests/                   279 tests: nodes, guardian, LLM wire formats and a mock
                          switch, the idle coin and its ego), its project (objectives, a change drafted with
                          and without a teacher, its diff, nothing pushed before approval or without the write
                          token, a new branch and a pull request on a mock Gitea, never an existing branch,
-                         merged and closed pull requests)
+                         merged and closed pull requests), auto-run (only people switch it; harmless code it
+                         wrote runs by itself, code reaching for the network asks, people's code always asks),
+                         its code as tools (examples from what its demonstration printed, a person's tool
+                         installed and used, its own offer approved, code that can't be a tool says why),
+                         web search (a mock SearXNG through the approved searxng plugin: the question
+                         searched, read by a mock Ollama teacher, answered with its sources and kept by
+                         memory; questions about you never sent; a person's answer replacing the web's;
+                         reading the results itself without a teacher; its budget)
 ```
 
 State lives in `state/` (SQLite database, node weights, log). Delete it to start fresh.
