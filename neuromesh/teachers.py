@@ -453,6 +453,32 @@ class LLMTeacher(Teacher):
             code = fence.group(1)
         return {"code": code[:30000], "explanation": str(data.get("explanation", ""))[:300]}
 
+    async def change_file(self, objective: str, path: str, content: str, language: str, new: bool = False,
+                          source: str = "", previous: str = "", problems: list[str] | None = None) -> dict | None:
+        """Change one file of a project for an objective a person set (projects.py), or write a new one (a test for
+        source, say). A person reads the change and approves it before it goes anywhere."""
+        schema = {"type": "object", "required": ["content"],
+                  "properties": {"content": {"type": "string"}, "summary": {"type": "string"}}}
+        system = ("You improve a software project carefully, one file at a time, doing only what the objective asks and "
+                  "keeping everything else exactly as it is. A person reviews your change before it is used. Reply with "
+                  "a single JSON object and nothing else.")
+        user = (f"The objective for this project: {objective[:600]}\n"
+                + (f"Write the new {language} file {path} for it."
+                   + (f" It is for this file:\n{source[:6000]}\n" if source else "\n") if new else
+                   f"The file {path} ({language}) as it is now:\n{content[:12000]}\n"
+                   "Return the whole file with the objective applied to it (unchanged where the objective does not apply).\n")
+                + (f"Your previous attempt did not check out:\n{previous[:6000]}\nProblems: {'; '.join(problems or [])}\nFix them.\n"
+                   if previous else "")
+                + 'JSON: {"content": "<the whole file>", "summary": "<one sentence: what you changed>"}')
+        data = _extract_json(await self._ask(system, user, schema) or "")
+        if not data or not isinstance(data.get("content"), str) or not data["content"].strip():
+            return None
+        content_out = data["content"]
+        fence = re.match(r"^\s*```[\w+-]*\n(.*?)\n```\s*$", content_out, re.S)
+        if fence:
+            content_out = fence.group(1)
+        return {"content": content_out[:200000], "summary": str(data.get("summary", ""))[:300]}
+
     async def plan(self, objective: str, strategy: str, skills: list[str], tools: list[str]) -> dict | None:
         """Draft the questions a long-term objective needs answered, each one it can ask itself."""
         schema = {"type": "object", "required": ["questions"],
@@ -744,6 +770,18 @@ class TeacherPool:
                 continue
             with self._track(teacher, f"writing a tool for {len(requests)} requests"):
                 made = await teacher.write_tool(requests)
+            if made:
+                return made, teacher.name
+        return None
+
+    async def change_file(self, objective: str, path: str, content: str, language: str, new: bool = False,
+                          source: str = "", previous: str = "", problems: list[str] | None = None) -> tuple[dict, str] | None:
+        """Have the first available LLM teacher change a project's file for an objective (None offline)."""
+        for teacher in self.ranked():
+            if not isinstance(teacher, LLMTeacher):
+                continue
+            with self._track(teacher, f"changing {path} for: {' '.join(objective.split())[:50]}"):
+                made = await teacher.change_file(objective, path, content, language, new, source, previous, problems)
             if made:
                 return made, teacher.name
         return None

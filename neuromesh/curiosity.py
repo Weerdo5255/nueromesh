@@ -332,6 +332,14 @@ class Curiosity:
             a.interest, a.lack = round(min(1.0, i), 3), round(min(1.0, lack), 3)
             a.why_interest, a.why_lack = why_i, why_l
             a.score = round(p.interest_weight * a.interest + p.lack_weight * a.lack + p.both_weight * a.interest * a.lack, 3)
+            rw = getattr(self.sys, "rewards", None)
+            if rw is not None and rw.enabled and a.score > 0:  # people rewarded (or punished) curiosity about it
+                pull = max(rw.direction("curiosity", a.key), rw.direction("reading", a.key), rw.direction("research", a.key),
+                           key=abs) + rw.pol.node_weight * rw.predict(f"curiosity {a.name}") * (1 if rw.pol.use_node else 0)
+                if abs(pull) > 0.02:
+                    a.score = round(max(0.0, a.score + rw.pol.curiosity_weight * pull), 3)
+                    (a.why_interest if pull > 0 else a.why_lack).append(
+                        f"people {'encouraged' if pull > 0 else 'discouraged'} curiosity about it ({pull:+.2f})")
         self._cache = (now, areas)
         return areas
 

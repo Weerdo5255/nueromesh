@@ -53,7 +53,10 @@ checks it and nothing runs until you approve exactly that code. Its optical node
 a sight node says what an image shows, and a reader with its own glyph node reads the text in it,
 both learning from you, a teacher that can see, tesseract and glyphs it draws itself. When it is
 idle, its Ollama teachers set it orders and mark its answers, and it learns from the marks. A switch
-turns its tools on, off, or lets it decide each time whether a tool is worth using.
+turns its tools on, off, or lets it decide each time whether a tool is worth using. You can reward or
+punish anything it does, or a direction in words, and the rewards steer what it chooses next. And you
+can give it a coding project in your Gitea, with objectives for what it should do: it drafts the
+changes, and once you approve one it opens a pull request on a new branch.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
@@ -70,7 +73,8 @@ teacher model (see [LLM teachers](#llm-teachers-local-models-ollama-and-claude))
 or CuPy to run the nodes on a GPU (see [Running on a GPU](#running-on-a-gpu)). For images: Pillow
 (JPEG, GIF and WebP, and glyphs to practise reading with), tesseract (a teacher for its reader), and
 a vision model on Ollama (`ollama pull llava`). For code: a Gitea (`--gitea URL`), and Node.js to
-check and run JavaScript.
+check and run JavaScript; for it to open pull requests on its project, a Gitea token with write access in
+`$GITEA_WRITE_TOKEN`.
 
 ---
 
@@ -528,8 +532,8 @@ validator checks it and nothing runs until you approve exactly that code (P20).
 that Gitea answers. It lists repositories (all it can see, or `[tools.config.gitea] repos`), reads a
 branch's file tree, and reads many files in one call. The tool switch applies to it: switched off, it
 studies nothing. Asked an order ("tool gitea: textkit", "what repositories are on gitea") it lists
-the repositories that match. Gitea is only read: nothing is written to it, and code from Gitea never
-runs. A tool is given only the secrets its manifest lists, never a teacher's API key, and a tool that
+the repositories that match. Studying only reads, and code from Gitea never runs. The one thing it
+writes is a change to its project that you approved (next section), with a separate write token. A tool is given only the secrets its manifest lists, never a teacher's API key, and a tool that
 lists a secret always needs your approval. Changing code in the scratch pad (Edit in the Code view, `POST /code
 {"id", "code"}`) withdraws its approval. Python and JavaScript (with Node.js) run once approved; other
 languages are checked only.
@@ -542,6 +546,39 @@ code, how many names they share. Practice code never runs. The Code view shows h
 and how many files it reads at once; `[gitea]` sets what it studies (file types, files per visit), how
 often it studies and practises; `[code]` sets what may run, the limits, and how many examples a
 teacher is given.
+
+### Its project: a repository in your Gitea, and objectives you set it
+Focus it on one repository and tell it what it should do to it. It works on that in its spare time,
+and nothing reaches Gitea until you approve the change (P20).
+
+```
+/project focus ann/textkit            (or the Project section of the Code view; a branch is optional)
+/project objective add docstrings to textkit/stats.py
+/project objective write tests for parse_settings in config.py
+   each objective gets a kind from its words: docs, tests, fix, feature, refactor, cleanup
+when idle (every [projects] work_every_seconds), the next open objective (rewarded kinds first):
+     -> it studies the repository if it hasn't lately, and finds the files the objective is about
+        (paths and names it mentions, then the files whose functions match its words)
+     -> each file is changed: by an LLM teacher, given the objective, the file and its own examples;
+        or, with no teacher, by itself where no judgement is needed (docstrings from what a function
+        does, tidying whitespace and imports)
+     -> the validator checks every file; a file that does not check out goes back to the teacher once
+     -> the change waits for you: its files, each one's diff, the validator's verdict, who wrote it
+/project show ch-1      /project approve ch-1      /project decline ch-1      (or Approve on the page)
+     -> approved: the gitea tool pushes a new branch, neuromesh/<objective>-ch-1, from the branch it
+        read (one commit through Gitea's change-files API) and opens a pull request against it
+     -> it never writes to an existing branch; merging is yours, in Gitea
+     -> it watches its pull requests: merged finishes the objective and counts as a reward; closed
+        reopens it and counts as a punishment; a declined change is a mild punishment
+/project done po-1    /project drop po-2    /project reopen po-2    /project work    /project clear
+```
+
+**Writing needs its own token.** Reading uses `$GITEA_TOKEN`; pushing a change uses
+`$GITEA_WRITE_TOKEN` (`[tools.config.gitea] write_token_env`), which the gitea tool's manifest lists
+and you see on its approval. Without it, the mesh still drafts changes and shows you the diffs, and
+says it cannot push them. The tool refuses any branch that doesn't start with `branch_prefix`, or that is
+the branch it read from. A change you approved is pushed exactly as you saw it: its digest is checked
+before the push, and a change edited since is not pushed.
 
 ### Tools it writes: the toolsmith and coder nodes
 When requests go unmet, the mesh can write a tool for them. Nothing it writes runs until a person
@@ -1003,6 +1040,36 @@ Teacher-set orders don't count as people's orders, so it stays idle (it may stil
 Lessons tab lists every lesson with its mark and what it learned, with a button to set one now;
 `/lessons` and `/lesson [kind]` do the same in the console.
 
+### Rewards and punishments: steering it
+Everything it does has a **+** and a **−** beside it on the web page: an answer, each line of its
+activity, a node, a tool, a piece of code, an image, a lesson, a change to its project. **+** rewards
+it, **−** punishes it. The Mind's **Rewards** tab takes stronger ones (1 to 3), a reason, and
+directions in words ("reading about astronomy", "short answers", "building tools"). In the console:
+
+```
+/reward last 2 a clear answer          /punish log:812 not now          /reward mem-0003 3
+/punish calculator work it out yourself        /reward reading about astronomy 3        /rewards
+```
+
+Only people give them (P23): not a teacher, a node or the mesh itself. Each one:
+
+- moves a **direction** in its ledger (answers by route, its ego's kinds of remark, initiative modes,
+  areas of curiosity, tools, kinds of objective...), fading with `[rewards] half_life_days` unless you
+  repeat it;
+- teaches its **reward node** (an internal capability) what people encourage, so once validated it
+  can guess how you'd feel about something new;
+- is **felt** (spirits and trust move a little) and **remembered** by its ego ("Ann rewarded me
+  for...");
+- **reinforces or weakens** what produced it: an answer's route and steps, a node's reward score (which
+  counts in its evolutionary fitness), a tool's standing with the tool switch.
+
+The directions then **pull** on its choices: its initiative leans towards modes people rewarded, its
+curiosity towards rewarded areas, the idle coin towards objectives or sleep, its ego keeps quiet about a
+kind of remark people punished, the tool switch (deciding) skips a punished tool and uses a rewarded
+one, lessons favour rewarded kinds, and its project takes rewarded objectives first. Each says so when
+a reward changed its mind. A reward never overrides a directive, a person's approval or what a person
+taught, and never makes an answer true or false.
+
 ### Was it right? Corrections and the next most likely answers
 Every answer (in the web interface, under the answer and in the closer look's orders) asks *Was
 this right?*
@@ -1265,6 +1332,7 @@ All run concurrently (asyncio) and coordinate through a message bus, the registr
 | Directors | director-0 and its duplicates: take every order before anything else touches it, review every result before you see it, decide what may enter long-term memory, give each other second opinions; keep director-0 running |
 | Director | independent agency (director-0): when idle, picks a mode (research, practise, examine, improve, consolidate, rest) with the agency node in front of it, sets itself tasks or sits exams, scores what each choice achieved and teaches the agency node from it |
 | Dreamer | when idle, may fall asleep and give all background capacity to dreaming: makes up questions and answers from what it holds, checks them on waking, evolves the dream nodes; an order wakes it |
+| Foreman | when idle, works on its project's next objective (drafts and checks a change, asks you to approve it), and watches its pull requests for a merge or a close |
 | Sentinel | watches the kill switch, re-checks local teacher servers (Ollama), lets the mood settle and saves it, publishes heartbeats with the directive scorecard |
 
 Background agents yield whenever an order is in flight and stay within a compute duty cycle.
@@ -1293,6 +1361,10 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P17 own thoughts | thinking nodes recombine and rephrase only facts its memory nodes hold, and every thought is checked word by word against them (a draft that adds a word, name or number is turned down); a thought is labelled as its own thinking with its node and facts, shown beside an answer and never in it, never stored as a fact or used as a source; the opinions it states are ones its thinking nodes hold, from evidence they name, and opinions about people stay private; desires act only through the director's self-set objectives, within `max_self_objectives` and its budgets, each saying why |
 | P18 ego | the ego wraps every other node: it reads the mood an order is taken in, and on the way out its ego node only chooses the kind of remark (quiet, curious, dream, opinion, feeling, doubt); the words are built from what is so, so a remark adds no fact; a remark is labelled as its ego's, shown after the answer and never in it, kept in memory as its own statement (untested), never as a fact, a source, or offered for correction; it stays quiet when the answer was held back or the person is upset, and is never about a person; what it is curious about raises that aim only within `max_self_objectives` and its budgets; people can turn it off |
 | P19 ensembles | several instances of each kind of node answer together, at most `[nodes] max_running` at once; when instances of the same kind disagree (or memory nodes give answers that do not match) the ego node arbitrates - the champion, the majority, the most accurate and confident side, or what its memory says it decided before - and says so; a person's teaching comes first; every arbitration is kept in memory as its own statement, untested |
+| P20 approved code only | no code runs unless a person approved exactly that code (checked by the validator first; editing it withdraws approval); approved code runs once, in a fresh folder, within limits and without keys; Gitea is read for study, and written to only to push a project change a person approved, to a new `branch_prefix` branch with a pull request, never an existing branch, with the separate write token |
+| P21 honest sight | what it says it sees or reads in an image names who said so; a person's word stands; its reading is measured against tesseract, a teacher or a person |
+| P22 lessons are lessons | idle-time orders from its teachers run on background capacity within budgets, pass the directors, teach as a teacher (never as a person), and don't count as people's orders |
+| P23 rewards steer | only people reward or punish; rewards steer preferences only (initiative, curiosity, remarks, the idle coin, the tool switch, lessons, evolution, its project) and fade; they never override a prime, the guardian, an approval or a person's teaching, never make an answer true or false, and are all audited |
 | P13 dreams are not facts | dreaming uses only what the mesh already holds, never a research tool or a teacher; an imagined response always says so and names the dream node it came from; imagination is never stored as a fact or used to answer an ordinary question |
 
 **Goals** are measured continuously and shown on the scorecard (`/status`): competence
@@ -1400,6 +1472,8 @@ make a tool that reverses text    /toolsmith    /toolsmith build count the vowel
 write a python function that counts vowels    /code    /code show code-1    /code approve code-1    /code practice    /gitea    /gitea study ann/textkit
 /image ~/Pictures/sign.png    /images    /image show img-1    /image is img-1 street sign    /image says img-1 Harbour 2 km    what does img-1 say?
 /lessons    /lesson question    /lesson code
+/reward last 2 a clear answer    /punish calculator    /reward reading about astronomy 3    /rewards
+/project focus ann/textkit    /project objective add docstrings to stats.py    /project    /project work    /project show ch-1    /project approve ch-1
 /traces    /anatomy dispatch :: what is 12 * 7    /anatomy sentiment :: the hotel was lovely    /anatomy mem-0001 :: what is the capital of Australia?
 objective: understand the Berlin Wall    /objectives    /objective show obj-1    /objective report obj-1    /objective think obj-1    /objective obj-1 ask when was it built    /ruminate
 solve x^2 - 5x + 6 = 0    derivative of ln(x^2+1)    integrate x^2 from 0 to 3    is 91 prime
@@ -1500,7 +1574,10 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
   nodes, last night, recent dreams. **Temperament** (with its mood): the five dimensions against
   their baseline, what it decided, the answers it is holding (release them), reset its mood.
   **Lessons** (with how many it got right): the orders its teachers set it while it was idle, its
-  answers, their marks and what it learned; set a lesson now.
+  answers, their marks and what it learned; set a lesson now. **Rewards** (with how many): encourage
+  or discourage a direction in words (a little, some, a lot, with a reason), where it is pushed (each
+  direction's pull, fading), its reward node, and the rewards and punishments people gave lately
+  with what each one did.
   **Opinions and notes**: investigate something, and the opinions and notes it shares.
   **Every tab shows the last day.** Anything older is archived: the bar at the top of each tab says
   how much, and looks it up by date and time (a moment, and within an hour, 6 hours, that day or
@@ -1510,7 +1587,12 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
 - **Code** (with a count of code waiting for your approval): the scratch pad - ask it to write
   code, each piece with how it was written, the validator's verdict and what it reaches for, edit
   it, check it again, **Approve and run** it, and its output; what it studies in Gitea
-  (repositories, kinds of code, recent visits, Study now); and how its practice is going.
+  (repositories, kinds of code, recent visits, Study now); and how its practice is going. At the top,
+  **its project**: the repository it focuses on, its objectives (add one; work on it now, done, drop,
+  reopen), and the changes it proposed, each with its diff file by file, the validator's verdict,
+  **Approve and open a pull request** or Decline, and the pull request's link once it is open.
+- **Rewards everywhere**: a **+** and **−** beside each answer, each line of the activity log (on
+  hover or focus), each champion node, tool, piece of code, image, lesson and project change.
 - **Images**: give it images (choose or drop them), its reader (the glyph node's accuracy, how
   well its readings agree with tesseract, a teacher or you, Practise reading) and sight node, its
   teachers, and every image with what it sees and the text it read; teach it what an image shows
@@ -1518,7 +1600,7 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
 - **Logs**: the activity log (search, filter by kind, hide routine work), the audit log, every
   event, and the family tree of every node ever built.
 - **Status**: directive goals, approvals (code to run shows what it reaches for, with a link to read
-  it first), teachers, tools with **the tool switch** (On, Off, Let it decide) and each tool's own
+  it first; a project change shows its files and size, with a link to its diff), teachers, tools with **the tool switch** (On, Off, Let it decide) and each tool's own
   setting, background tasks (add, pause, remove), challenges (practise, sit the exam), retained
   knowledge.
 - **Command bar**: any order or `/command`. The answer appears below it first, then its sources,
@@ -1606,6 +1688,11 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | POST | `/images/practice`, `/images/forget` | draw and learn glyphs now; `{"id": "img-3"}` forgets an image |
 | GET | `/lessons` | orders its teachers set it while idle, its answers, their marks, and what it learned |
 | POST | `/lessons` | `{"kind": "question" \| "skill" \| "maths" \| "tool" \| "code"}`: a teacher sets it a lesson now |
+| POST | `/reward` | `{"target": "last" \| "ord-..." \| "log:812" \| a node, tool, `code-3`, `img-2`, `lesson-4`, `ch-1` \| a direction in words, "value": -3..3, "why": "..."}` (`"kind": "direction"` to take the target as words) |
+| GET | `/rewards` | rewards and punishments people gave, with what each did; the directions and their pull; its reward node |
+| GET | `/projects` | its project: the repository, objectives, the changes it proposed (files, diffs, checks, pull requests), whether it can write |
+| GET | `/projects/change` | `?id=ch-1`: one change with each file's diff |
+| POST | `/projects` | `{"focus": "owner/name", "branch"}` or `{"clear": true}`; `{"objective": "..."}`; `{"objective_id": "po-1", "action": "done" \| "drop" \| "reopen"}`; `{"work": true}`; `{"change": "ch-1", "action": "approve" \| "decline"}` |
 
 ```
 python -m neuromesh order "convert 10 km to miles"
@@ -1912,6 +1999,15 @@ derivations, moving weights between devices). They are skipped where no GPU libr
   "text" and "blank"; what it can name comes from you and a teacher that can see.
 - **A teacher's mark is a teacher's opinion.** Lessons teach as a teacher (weighted below a person),
   facts a teacher gives go through a director's review, and what a person taught stands (P1).
+- **Rewards steer, they don't teach truth.** A reward makes it more likely to choose something again;
+  it never makes an answer right. Rewarding an answer reinforces the route that produced it, so
+  rewarding a wrong answer teaches the router a wrong route: use "Was this right?" for facts, and +/−
+  for how you'd like it to behave. Its reward node generalises from the words of what you rewarded,
+  so it is a rough guess until it has seen a good number of them.
+- **Its project changes are drafts for review.** Without an LLM teacher it only adds docstrings and
+  tidies; with one, a change is as good as that model. The validator checks syntax, not behaviour,
+  and tests it writes are not run. Every change arrives as a pull request on its own branch, so your
+  usual review (and CI) is the safeguard; read the diff before you approve it and before you merge.
 - **Research reaches the internet** only through the approved wikipedia tool, within hourly
   budgets, and background curiosity stays within `max_depth` of what users asked. The kiwix tool
   talks only to the server you configure; it is exempt from the budgets because that server is yours. Retained
@@ -1977,6 +2073,8 @@ neuromesh/
   imaging.py             images without dependencies: PNG/BMP/PPM decoding, what the sight node sees, lines and glyphs
   vision.py              its optical nodes: the sight node, the reader and its glyph node, their teachers, the Looker (P21)
   tutor.py               lessons: its Ollama teachers set it orders when idle and mark them (P22)
+  rewards.py             rewards and punishments: the ledger of directions, the reward node, their effects and pull (P23)
+  projects.py            its project in Gitea: objectives, drafting and checking changes, approval, pull requests, the Foreman (P20)
   agency.py              independent agency: the Director, its modes, the drive policy and the agency node (P12)
   directors.py           the directors: intake, review, second opinions, the memory gate, duplicates, the stance (P14)
   toolsmith.py           the toolsmith: the coder teacher, writing, checking and offering tools, approval, experiments, refinement (P15)
@@ -1993,7 +2091,7 @@ neuromesh/
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   272 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   278 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -2033,7 +2131,13 @@ tests/                   272 tests: nodes, guardian, LLM wire formats and a mock
                          unapproved, changed code withdraws the approval, a teacher's code fixed once,
                          practice), images (PNG decoding by hand, a mock Ollama vision model, a person's
                          label standing, a glyph node that learns to read a note), lessons (a mock Ollama
-                         teacher sets orders and marks them; a teacher's fact is a teacher's, not a person's)
+                         teacher sets orders and marks them; a teacher's fact is a teacher's, not a person's),
+                         rewards (anything rewarded or punished: felt, remembered, taught to the reward node,
+                         its route reinforced; only people; fading; the pull on its initiative, the tool
+                         switch, the idle coin and its ego), its project (objectives, a change drafted with
+                         and without a teacher, its diff, nothing pushed before approval or without the write
+                         token, a new branch and a pull request on a mock Gitea, never an existing branch,
+                         merged and closed pull requests)
 ```
 
 State lives in `state/` (SQLite database, node weights, log). Delete it to start fresh.

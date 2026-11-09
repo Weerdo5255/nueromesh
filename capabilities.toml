@@ -200,6 +200,19 @@ teachers = ["human", "toolgate"]  # people, and the gate policy
 use = "run the tool for this order"
 skip = "answer another way: its memory, what it has read, or a teacher"
 
+[reward]
+answer = "I expect people would say that is {label}."
+description = "The reward node: given what it did (an answer, a remark, an initiative, a tool it used, a book it read, code it wrote, a change to a project) in words, predict whether people would encourage it or discourage it. It learns only from people's rewards and punishments, and steers what it chooses next where it chooses (rewards.py)."
+labels = ["encouraged", "discouraged"]
+open_labels = false
+internal = true
+kind = "reward"
+teachers = ["human"]                      # people only: their rewards and punishments
+
+[reward.label_descriptions]
+encouraged = "people would reward it"
+discouraged = "people would punish it"
+
 [sight]
 answer = "That image shows {label}."
 description = "The sight node, its first optical node: given an image (its colours, edges and shapes), say what it mainly shows. Its labels grow as people, an LLM teacher that can see, and its own measures name what images show (vision.py)."

@@ -71,6 +71,16 @@ class StaticFileTests(unittest.TestCase):
                      'get("lessons", "/lessons")', "Approve and run", "Let it decide", "/images/file?sha="):
             self.assertIn(part, script)
 
+    def test_rewards_and_the_project(self):
+        script = (web.WEB_DIR / "app.js").read_text()
+        for part in ('api("/reward", { target, value: v', 'get("rewards", "/rewards")', 'get("projects", "/projects")',
+                     'rewardButtons(`log:${e.seq}`', "rewardButtons(orderId", "rewardButtons(ch.id", "rewardButtons(c.id",
+                     'api("/projects", { change: c.id, action: "approve"', '"Approve and open a pull request"', 'a.kind === "project-change"',
+                     'api("/projects", { focus:', 'api("/projects", { objective:', 'kind: "direction"'):
+            self.assertIn(part, script)
+        for name in ("Reward it", "Punish it"):  # every reward button says what it does
+            self.assertIn(f'"aria-label": "{name}"', script)
+
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_the_script_parses(self):
         out = subprocess.run(["node", "--check", str(web.WEB_DIR / "app.js")], capture_output=True, text=True)

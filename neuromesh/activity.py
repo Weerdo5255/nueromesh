@@ -77,6 +77,7 @@ class LogEntry:
     text: str
     level: str   # info | good | warn | bad | lesson | order | tool | teacher | work
     topic: str
+    data: dict = field(default_factory=dict)  # the event's data (so a line can be rewarded or punished: rewards.py)
 
 
 def _snip(text: str, n: int = 48) -> str:
@@ -165,6 +166,7 @@ class ActivityLog:
     def on_event(self, ev: Event) -> None:
         entry = format_event(ev)
         if entry is not None:
+            entry.data = ev.data
             self.add(entry)
 
     def add(self, entry: LogEntry) -> None:

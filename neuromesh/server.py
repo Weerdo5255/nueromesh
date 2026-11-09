@@ -101,6 +101,15 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, system.tool_switch.status()
         if path == "/lessons":  # orders its teachers set it while it was idle, how it answered, how they marked it
             return 200, system.tutor.status()
+        if path == "/rewards":  # people's rewards and punishments, the directions they push, its reward node
+            return 200, system.rewards.status()
+        if path == "/projects":  # its coding project in Gitea: objectives, proposed changes, pull requests
+            return 200, system.projects.status()
+        if path == "/projects/change":  # ?id=ch-3: one proposed change with its diffs
+            ch = system.projects.changes.get(str(query.get("id", "")))
+            if ch is None:
+                return 404, {"error": "no such change"}
+            return 200, {k: v for k, v in ch.items() if k != "files"} | {"files": [{k: v for k, v in f.items() if k != "after"} for f in ch["files"]]}
         if path == "/images":  # what its optical nodes took in: what each image shows, the text it read
             return 200, system.vision.status()
         if path == "/images/file":  # ?id=img-3 or ?sha=...: the image itself
@@ -305,6 +314,34 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             except ValueError as exc:
                 return 400, {"error": str(exc)}
             return 200, rec
+        if path == "/reward":  # {"target": "ord-12" | "last" | "log:123" | a node | a tool | code-3 | img-2 | lesson-4 |
+            #                    ch-1 | "a direction in words", "value": -3..3, "why": "..."}
+            ok, msg, rec = system.rewards.give(str(body.get("target", "")), body.get("value", 1), str(body.get("by") or "web"),
+                                               str(body.get("why") or ""), str(body.get("kind") or ""))
+            return (200 if ok else 400), {"ok": ok, "message": msg, "reward": rec}
+        if path == "/projects":  # {"focus": "owner/name", "branch"} | {"clear": true} | {"objective": "..."} |
+            #                      {"objective_id", "action": done|drop|reopen} | {"work": true} | {"change", "action": approve|decline}
+            p, by = system.projects, str(body.get("by") or "web")
+            if body.get("focus"):
+                ok, msg = p.set_focus(str(body["focus"]), str(body.get("branch") or ""), by)
+            elif body.get("clear"):
+                ok, msg = p.clear(by)
+            elif body.get("objective"):
+                ok, msg, _ = p.add_objective(str(body["objective"]), by)
+            elif body.get("objective_id"):
+                ok, msg = p.set_objective(str(body["objective_id"]), str(body.get("action", "")), by)
+            elif body.get("work"):
+                res = await p.work(by=by)
+                ok = bool(res and res.get("ok"))
+                msg = f"{res['change']['id']}: {res['change']['status']}" if ok else (res or {}).get("why", "nothing to do")
+            elif body.get("change"):
+                fn = {"approve": p.approve, "decline": p.decline}.get(str(body.get("action", "")))
+                if fn is None:
+                    return 400, {"error": "a change is approved or declined"}
+                ok, msg = fn(str(body["change"]), by)
+            else:
+                return 400, {"error": "say what to do: focus, clear, objective, objective_id+action, work, change+action"}
+            return (200 if ok else 400), {"ok": ok, "message": msg, **p.status()}
         if path == "/lessons":  # {"kind": "question"|...}: a teacher sets it a lesson now
             rec = await system.tutor.lesson(by=str(body.get("by") or "web"), kind=body.get("kind"))
             if rec is None:

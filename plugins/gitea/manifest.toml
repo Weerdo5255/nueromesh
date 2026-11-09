@@ -1,10 +1,11 @@
 name = "gitea"
-version = "1.0.0"
-description = "Reads code from a local Gitea, for the mesh's coder nodes to learn from (gitea.py): its repositories, their file trees and source files. Only reads: it never writes to Gitea. Asked an order (\"what repositories are on gitea\"), it lists the repositories that match."
+version = "1.1.0"
+description = "Reads code from a local Gitea, for the mesh's coder nodes to learn from (gitea.py): its repositories, their file trees and source files. It writes only to propose a change to a project a person approved (projects.py): a new branch and a pull request, never an existing branch, and only with a separate write token. Asked an order (\"what repositories are on gitea\"), it lists the repositories that match."
 entrypoint = "tool.py"
 permissions = ["network"]      # HTTP to the Gitea server -> needs a human's approval once (P3)
-secrets = ["GITEA_TOKEN"]      # the only environment variable it is given: a read-only access token, for private
-                               # repositories (shown on the approval; a tool never gets a teacher's API key)
+secrets = ["GITEA_TOKEN", "GITEA_WRITE_TOKEN"]  # the only environment variables it is given (shown on its approval;
+                               # a tool never gets a teacher's API key): a read-only token for private repositories,
+                               # and - only if you want it to open pull requests on a project - a token that may write
 provides = "code"              # what it reads is studied by the coder nodes, not kept as knowledge
 keywords = ["gitea", "repositories", "repository", "repos", "my code", "source code"]
 timeout_s = 60
@@ -21,6 +22,8 @@ thing = ["parser", "utils", "website", "notes", "scripts", "api", "cli", "dotfil
 [config]
 url = "http://localhost:3000"  # where Gitea listens (a prefix such as http://host/git works too)
 token_env = "GITEA_TOKEN"      # which of its secrets holds the token (only those listed above are given to it)
+write_token_env = "GITEA_WRITE_TOKEN"  # the token it pushes a branch and opens a pull request with (none: it never writes)
+branch_prefix = "neuromesh/"   # every branch it creates starts with this; it never writes to any other branch
 repos = []                     # "owner/name" it may read; empty: every repository the token (or anyone) can see
 use_proxy = false              # talk to Gitea directly, even if HTTP(S)_PROXY is set
 parallel = 6                   # files read at once

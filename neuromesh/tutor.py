@@ -178,6 +178,11 @@ class Tutor:
             kinds = self.kinds()
             if not kinds:
                 return None
+            rw = getattr(s, "rewards", None)
+            if kind not in kinds and rw is not None and rw.enabled:  # people's rewards lean the turn
+                liked = [k for k in kinds if rw.score("lessons", k) > -0.4] or kinds
+                weights = [1.0 + rw.score("lessons", k) for k in liked]
+                kind = self.rng.choices(liked, weights=[max(0.05, w) for w in weights])[0]
             kind = kind if kind in kinds else kinds[self.turn % len(kinds)]
             self.turn += 1
             t = teachers[self.turn % len(teachers)]

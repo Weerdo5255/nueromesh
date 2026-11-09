@@ -29,9 +29,10 @@ GATE = "toolgate"
 MODES = ("on", "off", "decide")
 GATE_LABELS = ("use", "skip")
 MOODS = ("steady", "upbeat", "content", "alert", "tense", "subdued", "wary")
-GATE_FEATURES = ("tasked", "trecord", "tmood", "tother", "tspeed")
+GATE_FEATURES = ("tasked", "trecord", "tmood", "tother", "tspeed", "tliked")
 GATE_VALUES = {"tasked": ("routed", "explicit", "self"), "trecord": ("new", "good", "mixed", "poor"),
-               "tmood": MOODS, "tother": ("none", "memory", "knowledge", "teacher"), "tspeed": ("fast", "slow")}
+               "tmood": MOODS, "tother": ("none", "memory", "knowledge", "teacher"), "tspeed": ("fast", "slow"),
+               "tliked": ("neutral", "liked", "disliked")}  # people's rewards and punishments for using it (rewards.py)
 OTHER_SAY = {"memory": "its memory holds an answer", "knowledge": "what it has read covers it",
              "teacher": "a teacher can answer"}
 
@@ -62,6 +63,10 @@ def gate_policy(f: dict) -> tuple[str, str]:
         return "use", "you asked for that tool"
     if f.get("tasked") == "self":
         return "use", "it is vetting the tool itself"
+    if f.get("tliked") == "disliked" and other != "none":
+        return "skip", f"people discouraged using it, and {OTHER_SAY[other]}"
+    if f.get("tliked") == "liked":
+        return "use", "people encouraged using it"
     if f.get("trecord") == "poor" and other != "none":
         return "skip", f"the tool rarely works, and {OTHER_SAY[other]}"
     if f.get("tmood") in ("wary", "tense") and f.get("trecord") == "new" and other != "none":
@@ -202,8 +207,11 @@ class ToolSwitch:
         stats = s.store.get_kv(f"tools.ms.{tool.name}")
         avg = float(stats) if stats else 0.0
         slow = avg > max(1500.0, 0.5 * 1000 * float(tool.manifest.timeout_s or self.pol.default_timeout_s))
+        rw = getattr(s, "rewards", None)
+        pull = rw.score("tool", tool.name, f"using the {tool.name} tool for {text}") if rw is not None else 0.0
+        liked = "liked" if pull > 0.35 else "disliked" if pull < -0.35 else "neutral"
         return {"tasked": tasked, "trecord": record, "tmood": mood if mood in MOODS else "steady", "tother": other,
-                "tspeed": "slow" if slow else "fast"}
+                "tspeed": "slow" if slow else "fast", "tliked": liked}
 
     def other_way(self, text: str) -> str:
         """Something else that could answer this order without the tool."""

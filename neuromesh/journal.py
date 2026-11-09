@@ -27,12 +27,12 @@ TABS = (("inquiry.", "questions"), ("mind.inquiry", "questions"), ("mind.proposa
         ("kiwix.", "curiosity"), ("objective.", "objectives"), ("director.", "directors"), ("agency.", "initiative"), ("tools.decided", "initiative"), ("tools.switch", "initiative"),
         ("tool.drafted", "tools"), ("tool.experimented", "tools"), ("tool.unsafe", "tools"), ("dream.", "dreams"),
         ("temperament.", "temperament"), ("output.shaped", "temperament"), ("gitea.", "code"), ("code.", "code"),
-        ("vision.", "sight"), ("tutor.", "lessons"), ("mind.", "thoughts"),
+        ("vision.", "sight"), ("tutor.", "lessons"), ("reward.", "rewards"), ("project.", "code"), ("mind.", "thoughts"),
         ("answer.right", "thoughts"))
 NAMES = {"questions": "Questions", "ego": "Ego", "thinking": "Thinking", "curiosity": "Curiosity",
          "objectives": "Objectives", "directors": "Directors", "initiative": "Initiative", "tools": "Tools it writes",
          "dreams": "Dreams", "temperament": "Temperament", "thoughts": "Opinions and notes", "code": "Code",
-         "sight": "Images", "lessons": "Lessons"}
+         "sight": "Images", "lessons": "Lessons", "rewards": "Rewards"}
 DAY = 86400.0
 
 

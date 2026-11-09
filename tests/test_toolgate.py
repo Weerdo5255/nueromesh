@@ -13,13 +13,15 @@ from test_system import FAST, make_root, wait_for
 
 class PolicyTests(unittest.TestCase):
     def test_when_it_uses_a_tool(self):
-        f = {"tasked": "routed", "trecord": "good", "tmood": "steady", "tother": "teacher", "tspeed": "fast"}
+        f = {"tasked": "routed", "trecord": "good", "tmood": "steady", "tother": "teacher", "tspeed": "fast", "tliked": "neutral"}
         self.assertEqual(gate_policy(f)[0], "use")
         self.assertEqual(gate_policy({**f, "trecord": "poor"})[0], "skip")                      # rarely works; a teacher can
         self.assertEqual(gate_policy({**f, "trecord": "poor", "tother": "none"})[0], "use")      # nothing else could
         self.assertEqual(gate_policy({**f, "trecord": "poor", "tasked": "explicit"})[0], "use")  # you named it
         self.assertEqual(gate_policy({**f, "trecord": "new", "tmood": "wary"})[0], "skip")
         self.assertEqual(gate_policy({**f, "trecord": "mixed", "tspeed": "slow", "tother": "memory"})[0], "skip")
+        self.assertEqual(gate_policy({**f, "tliked": "disliked"})[0], "skip")                   # people punished using it
+        self.assertEqual(gate_policy({**f, "trecord": "poor", "tliked": "liked"})[0], "use")     # people rewarded it
         self.assertEqual(parse_gate(gate_text(f)), f)
         spec = type("Spec", (), {"name": "toolgate"})()
         t = ToolGateTeacher(seed=1)

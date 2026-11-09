@@ -618,3 +618,35 @@ label.button.primary { background: var(--hema); color: var(--panel); border-colo
 .kind-chip.lesson-right { background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good); }
 .kind-chip.lesson-partly { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
 .kind-chip.lesson-wrong { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
+
+/* rewards and punishments: a pair of buttons on anything it did */
+.rw { display: inline-flex; gap: 2px; margin-left: 8px; vertical-align: middle; }
+.rw button { border: 1px solid var(--rule); background: var(--panel); color: var(--ink-2); width: 22px; height: 20px; min-height: 0; padding: 0;
+  line-height: 1; font-size: 14px; font-weight: 600; border-radius: 5px; cursor: pointer; }
+.rw button.rw-up:hover, .rw button.rw-up:focus-visible { color: var(--good); border-color: var(--good); }
+.rw button.rw-down:hover, .rw button.rw-down:focus-visible { color: var(--bad); border-color: var(--bad); }
+.rw.given button { opacity: 0.45; }
+ol.log li .rw { opacity: 0; transition: opacity 0.12s; }
+ol.log li:hover .rw, ol.log li:focus-within .rw { opacity: 1; }
+@media (hover: none) { ol.log li .rw { opacity: 0.7; } }
+.rw-q { margin-left: 14px; }
+.rw-form input[type=text] { flex: 1 1 220px; }
+.pulls { list-style: none; padding: 0; margin: 6px 0 14px; display: grid; gap: 6px; }
+.pulls li { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(80px, 1fr) 3.5em; gap: 10px; align-items: center; }
+.pull-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pull-bar { height: 8px; border-radius: 4px; background: var(--rule); overflow: hidden; display: block; }
+.pull-bar b { display: block; height: 100%; border-radius: 4px; }
+.pull-bar.up b { background: var(--good); }
+.pull-bar.down b { background: var(--bad); }
+
+/* its project: objectives and the changes it proposes */
+details.change { border: 1px solid var(--rule); border-radius: 10px; padding: 8px 12px; margin: 8px 0; background: var(--panel); }
+details.change summary { cursor: pointer; }
+details.change[open] summary { margin-bottom: 6px; }
+.change-file { margin-top: 8px; }
+pre.diff { font-family: var(--mono); font-size: 12.5px; line-height: 1.45; background: var(--slide); border-radius: 8px; padding: 8px 10px;
+  overflow: auto; max-height: 50vh; margin: 4px 0; white-space: pre; }
+pre.diff .d-add { color: var(--good); background: color-mix(in srgb, var(--good) 10%, transparent); display: inline-block; min-width: 100%; }
+pre.diff .d-del { color: var(--bad); background: color-mix(in srgb, var(--bad) 9%, transparent); display: inline-block; min-width: 100%; }
+pre.diff .d-hunk { color: var(--tool); }
+pre.diff .d-file { color: var(--ink-2); font-weight: 600; }

@@ -822,7 +822,14 @@ class Dreamer(Agent):
         has, or one it sets itself from its curiosity - and otherwise it sleeps (unless sleep is off)."""
         s, d = self.sys, self.sys.dreams
         roll = self.rng.random()
-        if roll < d.pol.objective_chance:
+        chance = d.pol.objective_chance
+        rw = getattr(s, "rewards", None)
+        if rw is not None and rw.enabled and 0 < chance < 1:  # people rewarded working (or sleeping) when idle: the
+            # coin leans that way (a chance set to always or never is a setting, and stays as it is)
+            lean = rw.direction("dreams", "objective") - rw.direction("dreams", "sleep")
+            if lean:
+                chance = max(0.05, min(0.95, chance + rw.pol.coin_weight * lean))
+        if roll < chance:
             outcome, detail = await self.attempt_objective()
             return d.note_flip(roll, outcome, detail)
         if not d.allow_sleep:

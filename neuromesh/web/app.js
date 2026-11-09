@@ -231,7 +231,8 @@
     const ask = () => fill(box, h("span", { class: "q" }, "Was this right?"),
       h("button", { type: "button", class: "small", onclick: e => act(e.target, () => api("/correct", { order_id: orderId, verdict: "right", by: "web" }),
         r => { thanks(r); return "Marked right"; }) }, "Yes"),
-      h("button", { type: "button", class: "small", onclick: () => wrong() }, "No"));
+      h("button", { type: "button", class: "small", onclick: () => wrong() }, "No"),
+      h("span", { class: "q rw-q" }, "Reward or punish it:"), rewardButtons(orderId, text || "this answer"));
     async function wrong() {
       fill(box, h("p", { class: "dim" }, "Working out the next most likely answers…"));
       let alts;
@@ -932,7 +933,7 @@ it decides whether to say something of its own after an answer, and what`))
 
   function logRow(e) {
     return h("li", { class: `lv-${e.level}` }, h("time", { datetime: new Date(e.ts * 1000).toISOString(), title: dateTime(e.ts) }, clock(e.ts)),
-      h("span", { class: "tag" }, e.tag), h("span", { class: "msg" }, e.text));
+      h("span", { class: "tag" }, e.tag), h("span", { class: "msg" }, e.text, e.seq ? rewardButtons(`log:${e.seq}`, e.text) : null));
   }
 
   function renderLiveLog() {
@@ -957,6 +958,16 @@ it decides whether to say something of its own after an answer, and what`))
   function attentionItems(st, kinds = ["approvals", "inquiries", "questions"]) {
     const out = [];
     for (const a of kinds.includes("approvals") ? st.approvals || [] : []) {
+      if (a.kind === "project-change") {  // a change to its project: what it touches, and where to read the diff
+        out.push(h("div", { class: "ask" },
+          h("p", {}, h("b", {}, `Open a pull request on ${a.detail?.repo}`), `: ${cut(a.detail?.objective || "", 90)}`),
+          h("p", { class: "why" }, `${(a.detail?.files || []).join(", ")}: +${a.detail?.plus} −${a.detail?.minus}, written by ${(a.detail?.how || []).map(WROTE).join(", ")}. It pushes a new branch; it never writes to ${a.detail?.base}. `,
+            h("a", { href: "#code" }, "Read the diff first")),
+          h("div", { class: "row" },
+            h("button", { type: "button", class: "primary", onclick: e => act(e.target, () => api("/approve", { id: a.id, approve: true, by: "web" }), `Approved ${a.subject}: it opens a pull request`) }, "Approve"),
+            h("button", { type: "button", onclick: e => act(e.target, () => api("/approve", { id: a.id, approve: false, by: "web" }), `Declined ${a.subject}`) }, "Decline"))));
+        continue;
+      }
       if (a.kind === "code") {  // code from its scratch pad: say what it reaches for, and where to read it
         out.push(h("div", { class: "ask" },
           h("p", {}, h("b", {}, `Run ${a.subject}`), ` from its scratch pad: ${cut(a.detail?.title || "", 80)}`),
@@ -1039,7 +1050,7 @@ it decides whether to say something of its own after an answer, and what`))
       const ev = evo?.capabilities?.[name];
       return h("tr", {},
         h("td", {}, h("b", {}, name)), h("td", { class: "n" }, num(c.examples)),
-        h("td", {}, ch ? ch.id : h("span", { class: "dim" }, "none yet")),
+        h("td", {}, ch ? h("span", {}, ch.id, rewardButtons(ch.id, `node ${ch.id}`)) : h("span", { class: "dim" }, "none yet")),
         h("td", {}, ch ? shape(ch.arch) : ""), h("td", { class: "n" }, ch ? pct(ch.holdout_acc) : ""),
         h("td", { class: "n" }, ch ? num(ch.serves) : ""), h("td", { class: "n" }, ch ? ch.generation : ""),
         h("td", {}, (c.instances || []).map(x => `${x.id} (${pct(x.holdout_acc)})`).join(", ") || h("span", { class: "dim" }, "none")),
@@ -1607,7 +1618,7 @@ it decides whether to say something of its own after an answer, and what`))
   function offPanel(title, text) { return h("div", { class: "section" }, h("h2", {}, title), h("p", { class: "dim" }, text)); }
 
   // the Mind view is divided into tabs; the open one is in the address (#mind/tools) and remembered
-  const MIND_TABS = ["questions", "ego", "thinking", "curiosity", "objectives", "directors", "initiative", "tools", "dreams", "temperament", "lessons", "thoughts"];
+  const MIND_TABS = ["questions", "ego", "thinking", "curiosity", "objectives", "directors", "initiative", "tools", "dreams", "temperament", "lessons", "rewards", "thoughts"];
   if (MIND_TABS.includes(store.get("mindTab", ""))) S.mindTab = store.get("mindTab", "");
 
   function mindBadges(st) {
@@ -1619,6 +1630,7 @@ it decides whether to say something of its own after an answer, and what`))
     $("#note-mind-dreams").textContent = dr?.enabled && dr.asleep ? "asleep" : "";
     $("#note-mind-temperament").textContent = tm?.enabled ? tm.mood : "";
     $("#note-mind-lessons").textContent = st.tutor?.count ? `${st.tutor.right} of ${st.tutor.count}` : "";
+    $("#note-mind-rewards").textContent = st.rewards && (st.rewards.rewards || st.rewards.punishments) ? `+${st.rewards.rewards} −${st.rewards.punishments}` : "";
     const live = (st.objectives?.objectives || []).filter(o => o.status === "active").length;
     $("#note-mind-objectives").textContent = live ? `${live} active` : "";
     $("#note-mind-thinking").textContent = st.thinking?.enabled && st.thinking.thoughts ? `${st.thinking.thoughts}` : "";
@@ -1737,6 +1749,7 @@ it decides whether to say something of its own after an answer, and what`))
       dreams: () => dreamsPanel(d(st.dreams)) || offPanel("Dreams", "Dreams are off. Turn them on with [dreams] enabled = true in directives.toml."),
       temperament: () => temperamentPanel(d(st.temperament)),
       lessons: () => lessonsPanel(d(S.extra.lessons)),
+      rewards: () => rewardsPanel(d(S.extra.rewards)),
       thoughts: () => thoughtsPanel(d(st.mind), d(S.extra.opinions), d(S.extra.notes)),
     }[S.mindTab];
     const body = panel();
@@ -1851,7 +1864,7 @@ it decides whether to say something of its own after an answer, and what`))
         h("div", { class: "section", id: "tools-section" }, h("h2", {}, "Tools"), toolSwitch(st), h("div", { class: "scroll-x" }, h("table", { class: "tbl" },
           h("thead", {}, h("tr", {}, ["Tool", "State", "Use", "Runs", "Note"].map((t, i) => h("th", { class: i === 3 ? "n" : null }, t)))),
           h("tbody", {}, Object.entries(st.tools).map(([name, t]) => h("tr", {},
-            h("td", {}, h("b", {}, name), h("div", { class: "dim small" }, `v${t.version}${t.permissions.length ? `, needs ${t.permissions.join(", ")}` : ""}`)),
+            h("td", {}, h("b", {}, name), rewardButtons(name, `using the ${name} tool`), h("div", { class: "dim small" }, `v${t.version}${t.permissions.length ? `, needs ${t.permissions.join(", ")}` : ""}`)),
             h("td", { class: t.state === "active" ? "ok" : ["quarantined", "rejected"].includes(t.state) ? "no" : "wait" }, t.state.replace("_", " ")),
             h("td", {}, toolChoice(name, t, st.tool_switch?.mode || "on")),
             h("td", { class: "n" }, num(t.runs)), h("td", { class: "small" }, t.note)))))))),
@@ -1930,7 +1943,7 @@ it decides whether to say something of its own after an answer, and what`))
     return h("div", { class: "code-detail" },
       h("div", { class: "row", style: "justify-content:space-between;align-items:baseline" },
         h("h3", { style: "margin:0" }, `${item.id}: ${cut(item.title, 70)}`),
-        h("span", { class: CODE_STATE[item.status] || "dim" }, item.status)),
+        h("span", {}, h("span", { class: CODE_STATE[item.status] || "dim" }, item.status), rewardButtons(item.id, item.title))),
       h("p", { class: "why small" }, `${item.language}, written by ${HOW(item.origin || {})}` +
         (item.origin?.kind ? `; its code-kind node expects ${item.origin.kind} code` : "") + `, ${dateTime(item.created)}`),
       codeCheck(item.check),
@@ -1977,6 +1990,7 @@ it decides whether to say something of its own after an answer, and what`))
     const practise = h("button", { type: "button", class: "small quiet", disabled: !g.examples, onclick: e => act(e.target, () => api("/code", { practice: true, by: "web" }), r => `Practised on ${r.name}: ${r.ok ? "it checks out" : r.ok === false ? "it does not check out" : "nothing to write it from"}`) }, "Practise now");
     const kinds = Object.entries(g.kinds || {}).sort((a, b) => b[1] - a[1]);
     fill(host,
+      projectPanel(S.extra.projects),
       h("div", { class: "section" }, h("h2", {}, "Scratch pad"),
         h("p", { class: "lede" }, `It writes code here: from a recipe in its code library, with a teacher following the closest code it studied in your Gitea, or by adapting that code. A validator checks every piece (${Object.entries(sp.checkers || {}).map(([l, c]) => `${l}: ${c}`).join("; ")}). Nothing runs until you approve exactly that code. Runs here: ${sp.runnable.join(", ") || "nothing"}.`),
         write,
@@ -2026,7 +2040,7 @@ it decides whether to say something of its own after an answer, and what`))
     return h("article", { class: "img-card" },
       h("div", { class: "img-frame" }, authImg(`/images/file?id=${encodeURIComponent(r.id)}`, r.name)),
       h("div", { class: "img-body" },
-        h("p", { class: "img-title" }, h("b", {}, r.id), ` ${cut(r.name, 40)}`, h("span", { class: "dim small" }, ` ${r.w}×${r.h}`)),
+        h("p", { class: "img-title" }, h("b", {}, r.id), ` ${cut(r.name, 40)}`, h("span", { class: "dim small" }, ` ${r.w}×${r.h}`), rewardButtons(r.id, r.name)),
         h("p", {}, "Sees ", h("b", {}, sees.label ? sees.label.replace(/_/g, " ") : "nothing it knows yet"),
           h("span", { class: "dim small" }, sees.by ? ` (${cut(sees.by, 70)}${sees.confidence && sees.confidence < 1 ? `, ${pct(sees.confidence)}` : ""})` : "")),
         words ? h("div", {}, h("p", { class: "small" }, "Read ", h("span", { class: "dim" }, `(${cut(r.person?.text ? "you said" : t.by || "", 70)}${t.agrees !== undefined && t.agrees !== null ? `; ${pct(t.agrees)} like the reference` : ""})`)),
@@ -2073,6 +2087,95 @@ it decides whether to say something of its own after an answer, and what`))
         v.images.length ? h("div", { class: "img-grid" }, v.images.slice(0, 24).map(imageCard)) : h("p", { class: "dim" }, "No images yet.")));
   }
 
+
+  // ================================================================== rewards and punishments (rewards.py, P23)
+  // A pair of buttons on anything it did: reward (+1) or punish (-1) it. Stronger ones, with a reason, and
+  // directions in words, are in the Mind's Rewards tab.
+  function rewardButtons(target, what) {
+    const give = (e, v) => {
+      e.preventDefault(); e.stopPropagation();
+      const b = e.currentTarget;
+      act(b, () => api("/reward", { target, value: v, by: "web" }), r => r.message.split(" - ")[0]).then(r => { if (r) b.closest(".rw")?.classList.add("given"); });
+    };
+    return h("span", { class: "rw", role: "group", "aria-label": `Reward or punish: ${cut(what, 80)}` },
+      h("button", { type: "button", class: "rw-up", title: "Reward it", "aria-label": "Reward it", onclick: e => give(e, 1) }, "+"),
+      h("button", { type: "button", class: "rw-down", title: "Punish it", "aria-label": "Punish it", onclick: e => give(e, -1) }, "−"));
+  }
+  const DOMAIN_SAY = { answer: "answers", ego: "remarks", initiative: "initiative", reading: "reading", research: "research",
+    curiosity: "curiosity", thinking: "thinking", opinion: "opinions", dreams: "idle time", tool: "tools", code: "code", practice: "practice",
+    study: "studying", project: "its project", sight: "seeing", lessons: "lessons", objective: "objectives", director: "directors",
+    node: "nodes", mood: "moods", direction: "directions" };
+  function rewardsPanel(R) {
+    if (!R) return h("p", { class: "dim" }, "Loading…");
+    const what = h("input", { type: "text", placeholder: "a direction: reading about astronomy, short answers, building tools…", "aria-label": "A direction" });
+    const strength = h("select", { "aria-label": "How much" }, [1, 2, 3].map(n => h("option", { value: n }, ["a little", "some", "a lot"][n - 1])));
+    const why = h("input", { type: "text", placeholder: "why (optional)", "aria-label": "Why" });
+    const send = sign => e => { e.preventDefault(); if (what.value.trim()) act(e.target, () => api("/reward", { target: what.value.trim(), kind: "direction", value: sign * Number(strength.value), why: why.value.trim(), by: "web" }), r => { what.value = ""; why.value = ""; return r.message.split(" - ")[0]; }); };
+    const max = Math.max(0.01, ...R.directions.map(d => Math.abs(d.pull)));
+    return h("div", { class: "section" }, h("h2", {}, "Rewards"),
+      h("p", { class: "lede" }, `Reward or punish anything it does with the + and − beside it: an answer, a line of its activity, a node, a tool, code, an image, a lesson, a change to its project. Each one moves a direction (fading over ${R.half_life_days} days unless you repeat it), teaches its reward node what you encourage, and is felt. They pull on its initiative, its curiosity, its ego's remarks, the coin it tosses when idle, the tool switch, its lessons, evolution and its project. They never override a directive. ${R.rewards} rewards and ${R.punishments} punishments so far.`),
+      h("form", { class: "row rw-form", onsubmit: send(1) }, what, strength, why,
+        h("button", { type: "submit", class: "primary" }, "Encourage"), h("button", { type: "button", onclick: send(-1) }, "Discourage")),
+      R.node ? h("p", { class: "small" }, `Reward node ${R.node.id}: ${pct(R.node.accuracy)} on held-out rewards${R.node.validated ? "; it generalises what you encourage to new things" : "; still learning, so only the directions steer it"}.`)
+        : h("p", { class: "small dim" }, `No reward node yet: it is built once there are enough rewards and punishments (${R.examples} so far).`),
+      R.directions.length ? h("div", {}, h("h3", {}, "Where it is pushed"),
+        h("ul", { class: "pulls" }, R.directions.map(d => h("li", {},
+          h("span", { class: "pull-what" }, h("span", { class: "dim small" }, `${DOMAIN_SAY[d.domain] || d.domain}: `), cut(d.key, 60)),
+          h("span", { class: `pull-bar ${d.pull > 0 ? "up" : "down"}`, "aria-hidden": "true" }, h("b", { style: `width:${(Math.abs(d.pull) / max * 100).toFixed(0)}%` })),
+          h("span", { class: "small n" }, `${d.pull > 0 ? "+" : "−"}${Math.abs(d.pull).toFixed(2)}`))))) : null,
+      R.given.length ? h("div", {}, h("h3", {}, "Lately"),
+        h("ul", { class: "rows" }, R.given.slice(0, 20).map(r => h("li", { class: "ask" },
+          h("p", {}, h("span", { class: `kind-chip ${r.value > 0 ? "lesson-right" : "lesson-wrong"}` }, `${r.value > 0 ? "+" : "−"}${Math.abs(r.value)}`), " ",
+            cut(r.text, 140), h("span", { class: "dim small" }, ` ${r.by}, ${clock(r.ts)}`)),
+          r.why ? h("p", { class: "why" }, r.why) : null,
+          r.effects?.length ? h("p", { class: "why small" }, r.effects.join("; ")) : null)))) : h("p", { class: "dim" }, "Nothing rewarded or punished yet."));
+  }
+
+  // ================================================================== its project in Gitea (projects.py)
+  const WROTE = x => (x === "mechanical" ? "itself (no teacher needed)" : x);
+  const CHANGE_STATE = { "awaiting approval": "hit", approved: "hit", pushed: "ok", merged: "ok", closed: "dim", declined: "dim", failed: "no", "does not check out": "no", drafted: "dim" };
+  function diffBlock(text) {
+    return h("pre", { class: "diff" }, text.split("\n").slice(0, 400).map(line => h("span", { class: line.startsWith("+++") || line.startsWith("---") ? "d-file" :
+      line.startsWith("@@") ? "d-hunk" : line.startsWith("+") ? "d-add" : line.startsWith("-") ? "d-del" : null }, line + "\n")));
+  }
+  function projectPanel(P) {
+    if (!P) return h("p", { class: "dim" }, "Loading…");
+    const f = P.focus;
+    const repo = h("input", { type: "text", list: "studied-repos", placeholder: "owner/name", "aria-label": "Project", value: f?.repo || "" });
+    const branch = h("input", { type: "text", placeholder: "branch (default)", "aria-label": "Branch", value: f?.branch || "", style: "max-width:12em" });
+    const focus = h("form", { class: "row", onsubmit: e => { e.preventDefault(); if (repo.value.trim()) act(e.target.querySelector("button"), () => api("/projects", { focus: repo.value.trim(), branch: branch.value.trim(), by: "web" }), r => r.message); } },
+      repo, h("datalist", { id: "studied-repos" }, (P.studied || []).map(n => h("option", { value: n }))), branch, h("button", { type: "submit" }, f ? "Change project" : "Focus on it"));
+    const obj = h("input", { type: "text", placeholder: "what it should do: add docstrings to textkit/words.py, write tests for stats.py…", "aria-label": "Objective" });
+    const add = h("form", { class: "row", onsubmit: e => { e.preventDefault(); if (obj.value.trim()) act(e.target.querySelector("button"), async () => { const r = await api("/projects", { objective: obj.value.trim(), by: "web" }); obj.value = ""; return r; }, r => r.message); } },
+      obj, h("button", { type: "submit", class: "primary" }, "Add objective"));
+    const OBJ_STATE = { open: "dim", working: "hit", proposed: "hit", "in review": "ok", done: "ok", dropped: "dim" };
+    return h("div", { class: "section" }, h("h2", {}, "Its project"),
+      h("p", { class: "lede" }, f ? `It focuses on ${f.repo}${f.branch ? ` (${f.branch})` : ""}. When idle it takes the next open objective, finds the files it is about, changes them (with a teacher, or by itself for what needs no judgement), checks them, and proposes the change. Approve it and the gitea tool pushes a new branch and opens a pull request; it never writes to an existing branch. ` +
+        (P.can_write ? "It has a write token." : "It has no write token ($GITEA_WRITE_TOKEN): it proposes changes but cannot push them.")
+        : "Pick a project in your Gitea for it to work on, then tell it what it should do to the project."),
+      focus,
+      f ? h("div", {}, add,
+        f.objectives.length ? h("ul", { class: "rows" }, f.objectives.slice().reverse().map(o => h("li", { class: "ask" },
+          h("p", {}, h("span", { class: `small ${OBJ_STATE[o.status] || "dim"}` }, o.status), ` ${o.id} `, h("b", {}, o.text), h("span", { class: "dim small" }, ` ${o.kind}`)),
+          o.notes.length ? h("p", { class: "why" }, o.notes[o.notes.length - 1]) : null,
+          h("div", { class: "row" }, ["open", "working"].includes(o.status) ? h("button", { type: "button", class: "small", disabled: P.busy, onclick: e => act(e.target, () => api("/projects", { work: true, by: "web" }), r => r.message) }, "Work on it now") : null,
+            o.status !== "done" ? h("button", { type: "button", class: "small quiet", onclick: e => act(e.target, () => api("/projects", { objective_id: o.id, action: "done", by: "web" }), r => r.message) }, "Done") : null,
+            o.status !== "dropped" ? h("button", { type: "button", class: "small quiet", onclick: e => act(e.target, () => api("/projects", { objective_id: o.id, action: "drop", by: "web" }), r => r.message) }, "Drop")
+              : h("button", { type: "button", class: "small quiet", onclick: e => act(e.target, () => api("/projects", { objective_id: o.id, action: "reopen", by: "web" }), r => r.message) }, "Reopen"))))) : h("p", { class: "dim" }, "No objectives yet."),
+        P.changes.length ? h("div", {}, h("h3", {}, "Changes it proposed"), P.changes.map(c => h("details", { class: "change", open: c.status === "awaiting approval" },
+          h("summary", {}, h("span", { class: CHANGE_STATE[c.status] || "dim" }, c.status), ` ${c.id}: ${cut(c.objective, 80)} `,
+            h("span", { class: "dim small" }, `${c.files.length} file${c.files.length === 1 ? "" : "s"}, +${c.plus} −${c.minus}, by ${c.how.map(WROTE).join(", ")}`), rewardButtons(c.id, c.objective)),
+          h("p", { class: "why" }, c.summary),
+          c.pr?.number ? h("p", { class: "small" }, "Pull request ", c.pr.url ? h("a", { href: c.pr.url, target: "_blank", rel: "noopener" }, `#${c.pr.number}`) : `#${c.pr.number}`, ` from ${c.branch}`) : null,
+          c.error ? h("p", { class: "small no" }, c.error) : null,
+          c.status === "awaiting approval" ? h("div", { class: "row" },
+            h("button", { type: "button", class: "primary small", onclick: e => act(e.target, () => api("/projects", { change: c.id, action: "approve", by: "web" }), r => r.message) }, "Approve and open a pull request"),
+            h("button", { type: "button", class: "small", onclick: e => act(e.target, () => api("/projects", { change: c.id, action: "decline", by: "web" }), r => r.message) }, "Decline")) : null,
+          c.files.map(x => h("div", { class: "change-file" }, h("p", { class: "small" }, h("b", {}, x.path), x.new ? " (new)" : "",
+            h("span", { class: x.check.ok ? "ok" : x.check.ok === false ? "no" : "dim" }, ` ${x.check.ok ? "checks out" : x.check.ok === false ? "does not check out" : "not checked"}`), h("span", { class: "dim" }, ` (${x.check.checker})`)),
+            diffBlock(x.diff)))))) : null) : null);
+  }
+
   // the Mind's Lessons tab: orders its teachers set it while it was idle, and how they marked them
   function lessonsPanel(L) {
     if (!L) return h("p", { class: "dim" }, "Loading…");
@@ -2086,7 +2189,7 @@ it decides whether to say something of its own after an answer, and what`))
       now, L.waiting ? h("p", { class: "dim small" }, `Next lesson: ${L.waiting}.`) : null,
       Object.keys(L.by_kind).length ? h("p", { class: "small" }, Object.entries(L.by_kind).map(([k, v]) => h("span", { class: "kind-chip code-kind" }, `${k}: ${v.right} right, ${v.wrong} wrong`))) : null,
       L.lessons.length ? h("ul", { class: "rows" }, L.lessons.map(x => h("li", { class: "ask" },
-        h("p", {}, h("span", { class: `kind-chip lesson-${x.verdict}` }, x.verdict), " ", h("b", {}, `“${cut(x.order, 120)}”`), h("span", { class: "dim small" }, ` ${x.kind}, set by ${x.teacher} at ${clock(x.ts)}`)),
+        h("p", {}, h("span", { class: `kind-chip lesson-${x.verdict}` }, x.verdict), " ", h("b", {}, `“${cut(x.order, 120)}”`), h("span", { class: "dim small" }, ` ${x.kind}, set by ${x.teacher} at ${clock(x.ts)}`), rewardButtons(x.id, x.order)),
         h("p", { class: "why" }, `It answered: ${cut(x.answer, 200)}`),
         h("p", { class: "why" }, `${x.marked_by.charAt(0).toUpperCase() + x.marked_by.slice(1)}: ${x.mark_why}${/[.!?]$/.test(x.mark_why) ? "" : "."}` +
           (x.verdict !== "right" && x.correct && !x.mark_why.toLowerCase().includes(x.correct.toLowerCase()) ? ` The answer: ${cut(x.correct, 120)}.` : "")),
@@ -2111,7 +2214,7 @@ it decides whether to say something of its own after an answer, and what`))
     const d = S.dash;
     if (!d) return;
     renderHeader(d.status);
-    const code = (d.status.approvals || []).filter(a => a.kind === "code").length;
+    const code = (d.status.approvals || []).filter(a => a.kind === "code" || a.kind === "project-change").length;
     $("#badge-code").textContent = code ? String(code) : "";
     if (S.view === "live") renderLive();
     else if (S.view === "nodes") renderNodes();
@@ -2167,6 +2270,8 @@ it decides whether to say something of its own after an answer, and what`))
     if (S.view === "code" && due("code", 3000)) jobs.push(get("code", "/code"));
     if (S.view === "images" && due("images", 4000)) jobs.push(get("images", "/images"));
     if (S.view === "mind" && S.mindTab === "lessons" && due("lessons", 4000)) jobs.push(get("lessons", "/lessons"));
+    if (S.view === "mind" && S.mindTab === "rewards" && due("rewards", 3000)) jobs.push(get("rewards", "/rewards"));
+    if (S.view === "code" && due("projects", 3000)) jobs.push(get("projects", "/projects"));
     if (S.view === "memory" && S.memNode && due("memNode", 3000)) {
       S.extraAt.memNode = now;
       jobs.push(api(`/memory?node=${encodeURIComponent(S.memNode)}`).then(r => { S.memDetail = r; }).catch(() => { S.memDetail = null; S.memNode = null; }));

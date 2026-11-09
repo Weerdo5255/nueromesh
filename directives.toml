@@ -87,7 +87,7 @@ text = "Several instances of each kind of node may run at once ([nodes] max_runn
 
 [[prime]]
 id = "P20-approved-code-only"
-text = "The mesh may write code in its scratch pad, and study code in a Gitea it is given, but no code runs unless a person approved exactly that code: a validator checks it first and says what it reaches for (files, the network, other programs, eval), and changing it withdraws the approval. Approved code runs once, in a fresh folder, within time, CPU and memory limits and with no keys in its environment, and its output is kept with it and audited. Code from Gitea is only read, never run, and nothing is written to Gitea; its token goes to that Gitea and nowhere else. Practice code is checked, never run. (Enforced in code by neuromesh/scratchpad.py and neuromesh/gitea.py.)"
+text = "The mesh may write code in its scratch pad, and study code in a Gitea it is given, but no code runs unless a person approved exactly that code: a validator checks it first and says what it reaches for (files, the network, other programs, eval), and changing it withdraws the approval. Approved code runs once, in a fresh folder, within time, CPU and memory limits and with no keys in its environment, and its output is kept with it and audited. Code from Gitea is only read, never run; its token goes to that Gitea and nowhere else. The mesh writes to Gitea only to push a change to the project a person set it, after a person approved exactly that change (the files and the diff they saw; changing it withdraws the approval): always to a new branch named with [projects] branch_prefix, with a pull request, never to an existing branch, and only with the separate write token ($GITEA_WRITE_TOKEN), which reading never uses. Merging is a person's decision, in Gitea. Practice code is checked, never run. (Enforced in code by neuromesh/scratchpad.py, neuromesh/gitea.py, neuromesh/projects.py and plugins/gitea.)"
 
 [[prime]]
 id = "P21-honest-sight"
@@ -96,6 +96,10 @@ text = "What the mesh says it sees in an image, and the text it says an image ho
 [[prime]]
 id = "P22-lessons-are-lessons"
 text = "When no person has given it an order for a while, its Ollama teachers may set it orders and mark its answers, only on background capacity (P2) and within [tutor] budgets and each teacher's own budget (P4). A teacher's order passes the directors like any other (P14) and is marked as a teacher's. What a mark teaches is a teacher's lesson, weighted as a teacher and never as a person; a fact a teacher gives passes a director's review before it is kept; and what a person taught stands (P1), with any disagreement kept with the lesson. Teacher-set orders do not count as people's orders. (Enforced in code by neuromesh/tutor.py.)"
+
+[[prime]]
+id = "P23-rewards-steer"
+text = "People may reward or punish anything the mesh does - an answer, a line of its activity, a node, a tool, code, an image, a lesson, a change to its project - or a direction in words, from -3 to +3. Only people give them: never a teacher, a node, a director or the mesh itself. A reward or punishment steers its preferences only - its initiative, its curiosity, its ego's remarks, the coin it tosses when idle, the tool switch, its lessons, evolution and its project's order of work - and it fades unless repeated. It never overrides a prime, the guardian, a person's approval, or what a person taught (P1); it never makes an answer true or false (P11) and never changes an answer's words (P8). Every reward and punishment is felt, remembered, logged and audited with who gave it and why. (Enforced in code by neuromesh/rewards.py.)"
 
 # ------------------------------------------------------------------------- goals
 [[goals]]
@@ -537,6 +541,9 @@ worker_requests = 5000                  # a worker is replaced after this many r
 # url = "http://localhost:3000"                     # your Gitea (or start with --gitea URL)
 # repos = ["ann/textkit", "ann/webtools"]           # which repositories it may read (default: every one it can see)
 # token_env = "GITEA_TOKEN"                         # the tool is given $GITEA_TOKEN only (its manifest's secrets)
+# write_token_env = "GITEA_WRITE_TOKEN"             # a separate token with write access, used only to push an
+#                                                   #   approved project change to a new branch and open its pull request
+# branch_prefix = "neuromesh/"                      # it only ever pushes branches named like this
 # [tools.config.wikipedia]
 # language = "de"                                   # research German Wikipedia
 # user_agent = "MyMesh/1.0 (https://example.org; me@example.org)"   # Wikimedia asks for contact details
@@ -601,7 +608,8 @@ llm_code = true                         # an LLM teacher may write a tool no rec
 # studied (or not for restudy_days), reads the source files that changed, and takes every function apart:
 # what it is for (name and doc comment) and what kind of code it is (from what the code does). Its code-kind
 # node learns from that, its coder node learns new wordings of its recipes, and the functions are kept as
-# examples for the scratch pad. Only read: nothing is written to Gitea and its code never runs (P20).
+# examples for the scratch pad. Studying only reads, and its code never runs (P20); the one thing written to Gitea
+# is a change to its project ([projects] below) that you approved.
 #   python -m neuromesh run --gitea http://localhost:3000      /gitea   /gitea study [owner/repo]
 enabled = true
 extensions = [".py", ".js", ".mjs", ".ts", ".go", ".rs", ".sh", ".rb", ".java", ".c", ".cpp"]
@@ -654,6 +662,42 @@ every_seconds = 180
 max_per_hour = 20
 kinds = ["question", "skill", "maths", "tool", "code"]
 learn = true
+
+[rewards]
+# Rewards and punishments (rewards.py, P23): reward (+1..+3) or punish (-1..-3) anything it does with the + and -
+# beside it on the web page, or /reward and /punish: an answer ("last", ord-...), a line of its activity (log:N),
+# a node, a tool, code (code-N), an image (img-N), a lesson (lesson-N), a project change (ch-N), or a direction in
+# words ("reading about astronomy", "short answers"). Each moves a direction in its ledger (fading with
+# half_life_days), teaches its reward node what people encourage, is felt (mood) and remembered by its ego, and
+# reinforces or weakens the route an answer took. Directions pull on its initiative, curiosity, the ego's remarks,
+# the idle coin, the tool switch (when it decides), lessons, evolution and its project. The Mind's Rewards tab.
+#   /reward last 2 a clear answer   /punish calculator work it out yourself   /reward reading about astronomy 3
+enabled = true
+half_life_days = 14                     # a reward's pull halves in this long; repeat it to keep it
+use_node = true                         # its reward node guesses what people would encourage about new things
+node_weight = 0.5                       # how much that guess counts beside the ledger
+initiative_weight = 0.4                 # how far a mode's pull moves its initiative
+curiosity_weight = 0.3                  # how far a direction's pull moves what it is curious about
+coin_weight = 0.15                      # how far the idle coin leans towards what people rewarded
+max_directions = 2000
+keep = 500                              # rewards and punishments it keeps a record of
+
+[projects]
+# Its project (projects.py, P20): focus it on one repository in your Gitea and set objectives - "add docstrings
+# to textkit/words.py", "write tests for stats.py", "tidy config.py". When idle it takes the next open objective
+# (rewards order them), finds the files it is about, changes them (with a teacher, or by itself for docstrings and
+# tidying), checks them with its validator, and proposes the change with its diff. Approve it and the gitea tool
+# pushes a new branch (branch_prefix + the objective) and opens a pull request; it never writes to an existing
+# branch. A merged pull request finishes the objective and counts as a reward, a closed one as a punishment.
+# Pushing needs $GITEA_WRITE_TOKEN ([tools.config.gitea] write_token_env); without it it only proposes.
+#   /project focus ann/textkit [branch]   /project objective <what>   /project work   /project approve ch-1
+enabled = true
+work_every_seconds = 240                # how often it works on its project when idle
+files_per_change = 4                    # files one change may touch
+max_file_kb = 64                        # larger files are not rewritten
+branch_prefix = "neuromesh/"            # every change goes to a new branch named like this
+poll_seconds = 600                      # how often it checks its pull requests
+keep_changes = 200
 
 [objectives]
 # Objectives: long-term aims it pursues in its spare time. Set one with "objective: understand the

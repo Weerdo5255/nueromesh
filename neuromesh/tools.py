@@ -222,13 +222,15 @@ class Sandbox:
 
     async def _worker(self, tool: Tool) -> Worker:
         m = tool.manifest
+        env = self._env(m)
+        key = f"{m.digest}:{hashlib.sha256(json.dumps(env, sort_keys=True).encode()).hexdigest()[:12]}"  # (a secret set or changed: a fresh worker)
         w = self.workers.get(m.name)
-        if w is not None and w.alive and w.digest == m.digest and w.served < self.worker_requests:
+        if w is not None and w.alive and w.digest == key and w.served < self.worker_requests:
             return w
         lock = self._starting.setdefault(m.name, asyncio.Lock())
         async with lock:
             w = self.workers.get(m.name)
-            if w is not None and w.alive and w.digest == m.digest and w.served < self.worker_requests:
+            if w is not None and w.alive and w.digest == key and w.served < self.worker_requests:
                 return w
             if w is not None:
                 await w.stop()
@@ -236,8 +238,8 @@ class Sandbox:
             proc = await asyncio.create_subprocess_exec(
                 sys.executable, "-I", "-c", _LAUNCHER, str(self.worker_cpu_seconds), str(self.memory_mb), str(entry),
                 "--serve", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL, cwd=str(m.path), env=self._env(m), limit=1 << 24)
-            w = Worker(tool, proc, m.digest)
+                stderr=asyncio.subprocess.DEVNULL, cwd=str(m.path), env=env, limit=1 << 24)
+            w = Worker(tool, proc, key)
             self.workers[m.name] = w
             return w
 

@@ -604,6 +604,32 @@ class TutorPolicy:
 
 
 @dataclass
+class RewardPolicy:
+    """Rewards and punishments from people (rewards.py, P23): they steer what it chooses, and fade."""
+    enabled: bool = True
+    half_life_days: float = 14.0        # a reward's pull halves in this long (repeat it to keep it)
+    use_node: bool = True               # its reward node generalises: what people would encourage, from the words
+    node_weight: float = 0.5            # how much the reward node's guess counts beside the ledger
+    initiative_weight: float = 0.4      # how much a mode's pull adds to its drive (the drive policy's values are 0..1)
+    curiosity_weight: float = 0.3
+    coin_weight: float = 0.15           # how far the idle coin leans towards what people rewarded
+    max_directions: int = 2000
+    keep: int = 500
+
+
+@dataclass
+class ProjectPolicy:
+    """Coding projects in Gitea it focuses on, with objectives people set (projects.py, P20)."""
+    enabled: bool = True
+    work_every_seconds: float = 240.0   # how often it works on its project when idle
+    files_per_change: int = 4           # files one proposed change may touch
+    max_file_kb: int = 64               # files larger than this are not rewritten
+    branch_prefix: str = "neuromesh/"   # every change goes to a new branch with this prefix and a pull request
+    poll_seconds: float = 600.0         # how often it checks its pull requests (merged, closed)
+    keep_changes: int = 200
+
+
+@dataclass
 class Directives:
     name: str = "NeuroMesh"
     mission: str = ""
@@ -635,6 +661,8 @@ class Directives:
     code: CodePolicy = field(default_factory=CodePolicy)
     vision: VisionPolicy = field(default_factory=VisionPolicy)
     tutor: TutorPolicy = field(default_factory=TutorPolicy)
+    rewards: RewardPolicy = field(default_factory=RewardPolicy)
+    projects: ProjectPolicy = field(default_factory=ProjectPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -670,6 +698,8 @@ class Directives:
             code=build(CodePolicy, d.get("code")),
             vision=build(VisionPolicy, d.get("vision")),
             tutor=build(TutorPolicy, d.get("tutor")),
+            rewards=build(RewardPolicy, d.get("rewards")),
+            projects=build(ProjectPolicy, d.get("projects")),
         )
 
     @classmethod

@@ -24,6 +24,8 @@ from .scratchpad import ScratchPad
 from .vision import GlyphTeacher, Looker, SightTeacher, VisionBank, VisionTeacher
 from .imaging import glyph_vector
 from .tutor import Schoolroom, Tutor
+from .rewards import Rewards
+from .projects import Foreman, Projects
 from .anatomy import record as record_firing
 from .directors import DirectorPool
 from .dreams import DreamBank, Dreamer
@@ -147,6 +149,9 @@ class System:
                                  if getattr(m, "api_key_env", "")} | {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "NEUROMESH_TOKEN"}
         self.scratch = ScratchPad(self)       # code it writes; checked; it runs only once a person approves it (P20)
         self.tutor = Tutor(self)              # when idle, its Ollama teachers set it orders and mark them (P22)
+        self.rewards = Rewards(self)          # people reward and punish what it does, and steer it (P23)
+        self.projects = Projects(self)        # a coding project in Gitea, with objectives people set (P20)
+        self.bus.listen(self.projects.on_event)
         self.bus.listen(self.scratch.on_event)
         self.bus.listen(self.journal.on_event)
         for cap in self.capabilities:  # what people taught, exactly as they put it, stands (P1)
@@ -173,7 +178,7 @@ class System:
         self.dreamer = Dreamer(self)    # idle: the coin flip (an objective, or sleep), and dreaming
         self.agents = [self.directors, self.orchestrator, Architect(self), Trainer(self), Evaluator(self), Curator(self),
                        Explorer(self), self.researcher, self.investigator, TaskRunner(self), Compressor(self),
-                       self.director, self.dreamer, Ruminator(self), Thinker(self), Reader(self), Apprentice(self), Looker(self), Schoolroom(self), Sentinel(self)]
+                       self.director, self.dreamer, Ruminator(self), Thinker(self), Reader(self), Apprentice(self), Looker(self), Schoolroom(self), Foreman(self), Sentinel(self)]
 
     # ------------------------------------------------------------- lifecycle
     async def start(self) -> "System":
@@ -709,6 +714,10 @@ class System:
                       "right": self.tutor.stats.get("right", 0), "teachers": len(self.tutor.teachers())},
             "scratch": {"items": len(self.scratch.items), "gitea": self.code_study.state, "examples": self.code_study.count()},
             "vision": {"images": len(self.vision.records), "glyphs": self.store.count("glyphs")},
+            "rewards": {"rewards": sum(1 for r in self.rewards.given if r["value"] > 0),
+                        "punishments": sum(1 for r in self.rewards.given if r["value"] < 0)},
+            "project": {"repo": (self.projects.focus or {}).get("repo"),
+                        "waiting": sum(1 for c in self.projects.changes.values() if c["status"] == "awaiting approval")},
             "approvals": [a.to_dict() for a in self.guardian.pending_approvals()],
             "questions": list(self.teachers.human.questions),
             "teachers": self.teachers.describe(), "llm_usage": self.guardian.llm_usage(),

@@ -159,6 +159,36 @@ class _Gitea(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def do_POST(self):
+        import base64
+        owner = self.server.owner
+        body = json.loads(self.rfile.read(int(self.headers.get("content-length", 0))) or b"{}")
+        p = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
+        owner.writes.append(("POST", p, body, self.headers.get("authorization")))
+        if self.headers.get("authorization") != "token w-secret":
+            return self._send({"message": "token does not have write access"}, 403)
+        parts = p.split("/")
+        name = f"{parts[4]}/{parts[5]}"
+        files = owner.repos.get(name)
+        if files is None:
+            return self._send({"message": "not found"}, 404)
+        if parts[6:] == ["contents"]:
+            if (name, body["new_branch"]) in owner.branches:
+                return self._send({"message": "branch already exists"}, 422)
+            new = dict(files)
+            for f in body["files"]:
+                if f["operation"] == "update" and f["path"] not in files:
+                    return self._send({"message": "file does not exist"}, 422)
+                new[f["path"]] = base64.b64decode(f["content"]).decode()
+            owner.branches[(name, body["new_branch"])] = new
+            return self._send({"commit": {"sha": "c0ffee" + str(len(owner.branches))}, "files": []}, 201)
+        if parts[6:] == ["pulls"]:
+            n = len(owner.pulls) + 1
+            owner.pulls[(name, n)] = {"number": n, "state": "open", "merged": False, "head": body["head"], "base": body["base"],
+                                      "title": body["title"], "body": body["body"]}
+            return self._send({"number": n, "html_url": f"{owner.url}/{name}/pulls/{n}", "state": "open"}, 201)
+        self._send({"message": "not found"}, 404)
+
     def _send(self, payload, code=200, raw=False):
         data = payload if raw else json.dumps(payload).encode()
         self.send_response(code)
@@ -198,6 +228,9 @@ class _Gitea(BaseHTTPRequestHandler):
                 if path in files:
                     return self._send(files[path].encode(), raw=True)
                 return self._send({"message": "not found"}, 404)
+            if rest[:1] == ["pulls"] and len(rest) == 2:
+                pr = owner.pulls.get((name, int(rest[1])))
+                return self._send(pr) if pr else self._send({"message": "not found"}, 404)
             if not rest:
                 return self._send({"full_name": name, "default_branch": "main", "description": ""})
         self._send({"message": "not found"}, 404)
@@ -208,6 +241,9 @@ class MockGitea(_Server):
         self.repos = {"ann/textkit": dict(TEXTKIT), "ann/webtools": dict(WEBTOOLS)}
         self.auth: list = []
         self.paths: list = []
+        self.branches: dict = {}       # (repo, branch) -> files after a change
+        self.writes: list = []         # (method, path, body, authorization)
+        self.pulls: dict = {}          # (repo, number) -> pull request
         super().__init__(_Gitea)
 
     def commit(self, name: str) -> str:

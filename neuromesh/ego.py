@@ -406,6 +406,12 @@ class Ego:
                 how += f"; {wrong} was not possible, so the policy chose"
         else:
             kind, why = policy(f)
+        rw = getattr(s, "rewards", None)
+        if rw is not None and rw.enabled and kind != "quiet" and "quiet" in KINDS:
+            pull = rw.score("ego", kind)
+            if pull < -0.4:  # people discouraged this kind of remark: it keeps it to itself
+                how += f"; people discouraged {kind} remarks ({pull:+.2f}), so it keeps quiet"
+                kind, why = "quiet", f"people discouraged {kind} remarks"
         res.steps.append({"capability": EGO, "input": text, "label": kind, "provenance": prov, "confidence": conf, "how": how})
         return self._speak(order, res, f, ctx, kind, why, how, node)
 

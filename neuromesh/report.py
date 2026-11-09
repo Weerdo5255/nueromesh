@@ -257,6 +257,18 @@ def describe_event(ev: Event) -> str | None:
     if t == "ego.spoke":
         from .ego import a_mood
         return f"[ego]      after {d['order']}, in {a_mood(d['mood'])} ({d['kind']}, {d['node']}): {_cut(d['text'], 140)}"
+    if t == "reward.given":
+        what = "rewarded" if d["value"] > 0 else "punished"
+        return (f"[reward]   {d['by']} {what} it ({d['value']:+d}) for {d['domain']} {_cut(d['key'], 40)}: {_cut(d['text'], 80)}"
+                + (f" - {_cut(d['why'], 60)}" if d.get("why") else ""))
+    if t == "project.focus":
+        return f"[project]  {d['by']} set its project: {d['repo']}" + (f" ({d['branch']})" if d.get("branch") else "")
+    if t == "project.objective":
+        return (f"[project]  objective {d['id']} ({d['kind']}): {_cut(d['objective'], 90)}"
+                + (f" - {d['status']}" if d.get("status") else f", set by {d['by']}"))
+    if t == "project.change":
+        return (f"[project]  {d['id']} for '{_cut(d['objective'], 60)}': {d['files']} file(s), +{d['plus']} -{d['minus']} "
+                f"({d['how']}) - {d['status']}")
     if t == "tutor.lesson":
         return (f"[lesson]   the {d['teacher']} teacher set {d['kind']}: '{_cut(d['order'], 70)}' - {d['verdict']}"
                 f" ({_cut(d['why'], 80)})" + (f"; it learns: {_cut(d['learned'], 90)}" if d.get("learned") else ""))

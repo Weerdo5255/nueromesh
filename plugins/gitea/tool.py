@@ -5,16 +5,25 @@ repository's file tree, and source files (many at once). It never writes to Gite
 The token comes from the one environment variable its manifest lists (GITEA_TOKEN), and is sent only to the
 configured Gitea.
 
+It writes only when the mesh proposes a change a person approved (projects.py): a NEW branch (named with
+[config] branch_prefix) with the changed files, and a pull request into the base branch - never a commit to an
+existing branch - and only with the separate write token ($GITEA_WRITE_TOKEN). Without it, it never writes.
+
 Requests (the "input"):
     "__selftest__"                          Gitea answers: "gitea ok: Gitea 1.22.3, 4 repositories"
     {"op": "repos"}                         the repositories it may read ([config] repos, or every one it can see)
     {"op": "tree", "repo", "branch"}        the branch's commit and every file in it (path, sha, size)
     {"op": "files", "repo", "ref", "paths"} the files' text, read at once ([config] parallel; at most 4 MB a call)
+    {"op": "change", "repo", "base", "branch", "message", "files": [{"path", "content", "sha"?}]}
+                                            a new branch from base with the files changed (the write token)
+    {"op": "pull", "repo", "base", "head", "title", "body"}   a pull request (the write token)
+    {"op": "pull_state", "repo", "number"}  whether a pull request is open, merged or closed
     anything else                           an order: the repositories whose name or description match its words
 
 Speed: started with --serve (manifest: persistent = true) it stays running and answers requests as JSON lines,
 many at once, over kept-alive connections.
 """
+import base64
 import http.client
 import json
 import os
@@ -27,7 +36,8 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 DEFAULTS = {"url": "http://localhost:3000", "token_env": "GITEA_TOKEN", "repos": [], "use_proxy": False, "timeout": 15,
-            "parallel": 6, "max_file_kb": 256, "max_batch_kb": 4096, "user_agent": "neuromesh-coder"}
+            "parallel": 6, "max_file_kb": 256, "max_batch_kb": 4096, "user_agent": "neuromesh-coder",
+            "write_token_env": "GITEA_WRITE_TOKEN", "branch_prefix": "neuromesh/"}
 LOCAL = ("localhost", "127.0.0.1", "::1")
 STOP = {"what", "which", "are", "is", "the", "on", "in", "my", "list", "show", "find", "search", "for", "gitea", "repos",
         "repositories", "repository", "repo", "have", "has", "with", "me", "all", "a", "an", "of", "any", "there"}
@@ -82,19 +92,25 @@ class Gitea:
             os.environ.get("HTTPS_PROXY" if self.scheme == "https" else "HTTP_PROXY")
         self.proxy = proxy if (proxy and cfg.get("use_proxy") and not local) else None
 
-    def _request(self, path: str, params: dict | None = None, accept: str = "application/json") -> bytes:
+    def _request(self, path: str, params: dict | None = None, accept: str = "application/json",
+                 method: str = "GET", body: dict | None = None, token: str | None = None) -> bytes:
         q = ("?" + urllib.parse.urlencode(params)) if params else ""
         target = f"{self.prefix}/api/v1{path}{q}"
         headers = {"accept": accept, "user-agent": self.cfg.get("user_agent", "neuromesh-coder")}
-        if self.token:
-            headers["authorization"] = f"token {self.token}"
+        token = self.token if token is None else token
+        if token:
+            headers["authorization"] = f"token {token}"
+        payload = None
+        if body is not None:
+            payload = json.dumps(body).encode("utf-8")
+            headers["content-type"] = "application/json"
         if self.proxy:  # through the proxy ([config] use_proxy, a Gitea that isn't local)
-            return self._via_proxy(f"{self.base}/api/v1{path}{q}", headers, path)
+            return self._via_proxy(f"{self.base}/api/v1{path}{q}", headers, path, method, payload)
         scheme, netloc = self.scheme, self.netloc
         for attempt in (0, 1):  # a kept-alive connection the server closed: once more, on a fresh one
             c = POOL.conn(scheme, netloc, self.timeout)
             try:
-                c.request("GET", target, headers=headers)
+                c.request(method, target, body=payload, headers=headers)
                 r = c.getresponse()
                 body = r.read()
                 if r.will_close:
@@ -105,19 +121,21 @@ class Gitea:
                 if attempt:
                     raise Transient(f"no Gitea at {self.base} ({exc})")
         if r.status in (401, 403):
-            raise RuntimeError(f"Gitea refused it ({r.status}): set a read-only token in ${self.cfg.get('token_env')}")
+            which = self.cfg.get("write_token_env") if method != "GET" else self.cfg.get("token_env")
+            raise RuntimeError(f"Gitea refused it ({r.status}): set a token {'that may write ' if method != 'GET' else ''}in ${which}")
         if r.status == 404:
             raise NotFound(f"not on Gitea: {path}")
         if r.status >= 500:
             raise Transient(f"Gitea answered {r.status}")
-        if r.status != 200:
-            raise RuntimeError(f"Gitea answered {r.status} for {path}")
+        if r.status not in (200, 201):
+            detail = body[:300].decode("utf-8", errors="replace")
+            raise RuntimeError(f"Gitea answered {r.status} for {method} {path}: {detail}")
         return body
 
-    def _via_proxy(self, url: str, headers: dict, path: str) -> bytes:
+    def _via_proxy(self, url: str, headers: dict, path: str, method: str = "GET", payload: bytes | None = None) -> bytes:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({self.scheme: self.proxy}))
         try:
-            with opener.open(urllib.request.Request(url, headers=headers), timeout=self.timeout) as resp:
+            with opener.open(urllib.request.Request(url, data=payload, headers=headers, method=method), timeout=self.timeout) as resp:
                 return resp.read()
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
@@ -206,6 +224,51 @@ class Gitea:
         return {"files": out, "errors": errors}
 
 
+    # ------------------------------------------------------------------ writing: a new branch and a pull request
+    def write_token(self) -> str:
+        name = str(self.cfg.get("write_token_env") or "")
+        token = os.environ.get(name, "") if name else ""
+        if not token:
+            raise RuntimeError(f"it has no token to write with: set ${name or 'GITEA_WRITE_TOKEN'} to a token that may "
+                               "write to the repository (it only ever pushes new branches and opens pull requests)")
+        return token
+
+    def change(self, repo: str, base: str, branch: str, message: str, files: list[dict]) -> dict:
+        self.allowed(repo)
+        prefix = str(self.cfg.get("branch_prefix") or "neuromesh/")
+        if not branch.startswith(prefix) or branch == base or not re.fullmatch(r"[\w./-]+", branch) or ".." in branch:
+            raise RuntimeError(f"it only writes to new branches that start with {prefix} (not {branch})")
+        ops = []
+        for f in files[:50]:
+            path = str(f.get("path", ""))
+            if not path or path.startswith("/") or ".." in path.split("/"):
+                raise RuntimeError(f"not a path in the repository: {path}")
+            op = {"operation": "update" if f.get("sha") else "create", "path": path,
+                  "content": base64.b64encode(str(f.get("content", "")).encode("utf-8")).decode()}
+            if f.get("sha"):
+                op["sha"] = str(f["sha"])
+            ops.append(op)
+        body = {"branch": base, "new_branch": branch, "message": message[:2000] or "Changes proposed by NeuroMesh", "files": ops}
+        data = json.loads(self._request(f"/repos/{repo}/contents", method="POST", body=body, token=self.write_token()) or b"{}")
+        commit = (data.get("commit") or {}).get("sha") or ""
+        return {"branch": branch, "commit": commit, "files": len(ops)}
+
+    def pull(self, repo: str, base: str, head: str, title: str, body: str) -> dict:
+        self.allowed(repo)
+        prefix = str(self.cfg.get("branch_prefix") or "neuromesh/")
+        if not head.startswith(prefix):
+            raise RuntimeError(f"it only opens pull requests from its own branches ({prefix}...)")
+        data = json.loads(self._request(f"/repos/{repo}/pulls", method="POST", token=self.write_token(),
+                                        body={"base": base, "head": head, "title": title[:250], "body": body[:20000]}) or b"{}")
+        return {"number": data.get("number"), "url": data.get("html_url") or data.get("url") or "", "state": data.get("state", "open")}
+
+    def pull_state(self, repo: str, number: int) -> dict:
+        self.allowed(repo)
+        data = self.get(f"/repos/{repo}/pulls/{int(number)}")
+        return {"number": data.get("number"), "state": data.get("state"), "merged": bool(data.get("merged")),
+                "url": data.get("html_url") or ""}
+
+
 def slim(r: dict) -> dict:
     return {"full_name": r.get("full_name"), "default_branch": r.get("default_branch") or "main",
             "description": str(r.get("description") or "")[:200], "empty": bool(r.get("empty")),
@@ -242,6 +305,17 @@ def handle(request: dict) -> dict:
         if op == "files":
             got = g.files(str(req.get("repo", "")), str(req.get("ref") or "main"), list(req.get("paths") or []))
             return {"output": f"{len(got['files'])} file(s) read", **got}
+        if op == "change":
+            got = g.change(str(req.get("repo", "")), str(req.get("base") or "main"), str(req.get("branch", "")),
+                           str(req.get("message", "")), list(req.get("files") or []))
+            return {"output": f"branch {got['branch']}: {got['files']} file(s)", **got}
+        if op == "pull":
+            got = g.pull(str(req.get("repo", "")), str(req.get("base") or "main"), str(req.get("head", "")),
+                         str(req.get("title", "")), str(req.get("body", "")))
+            return {"output": f"pull request #{got['number']}", **got}
+        if op == "pull_state":
+            got = g.pull_state(str(req.get("repo", "")), int(req.get("number") or 0))
+            return {"output": f"pull request #{got['number']}: {'merged' if got['merged'] else got['state']}", **got}
         raise RuntimeError(f"unknown request {op}")
     # an order: the repositories that match its words
     words = [w for w in re.findall(r"[a-z0-9_-]+", str(raw).lower()) if w not in STOP and len(w) > 1]

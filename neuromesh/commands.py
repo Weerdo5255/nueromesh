@@ -24,6 +24,12 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /code write <what it should do> have it write code (a recipe, a teacher with Gitea examples, or the closest example)
   /code show|check|approve|decline|remove <id>   approve: it runs that exact code once (P20)
   /code practice                  practise now: write code for a function's purpose without looking, and compare
+  /reward <what> [1-3] [why]      reward it: last (its last answer), ord-12, log:123 (a line of the activity log),
+                                  a node, a tool, code-3, img-2, lesson-4, ch-1, or a direction in words
+  /punish <what> [1-3] [why]      punish it, the same way        /rewards   the directions people push it
+  /project                        its coding project: objectives, proposed changes, pull requests
+  /project focus <owner/name> [branch]   /project objective <what it should do>   /project work
+  /project done|drop|reopen <po-id>      /project show|approve|decline <ch-id>    /project clear
   /lessons                        orders its teachers set it when idle, its answers, and their marks
   /lesson [kind]                  have a teacher set it a lesson now (question, skill, maths, tool, code)
   /images                         images it took in: what each shows, the text it read, how well it reads
@@ -700,6 +706,56 @@ async def code_lines(system, rest: str) -> list[str]:
     return out
 
 
+def reward_lines(system, rest: str, sign: int) -> list[str]:
+    """/reward last 2 a lovely answer; /punish log:123; /reward reading about astronomy 3 more of this."""
+    words = rest.split()
+    if not words:
+        return [f"  usage: /{'reward' if sign > 0 else 'punish'} <what> [1-3] [why]"]
+    single = re.fullmatch(r"last|ord-[\w-]+|log:\d+|code-\d+|img-\d+|lesson-\d+|ch-\d+", words[0]) or \
+        system.registry.get(words[0]) is not None or words[0] in system.tools.tools
+    if single:
+        target, rest_words = words[0], words[1:]
+    else:  # a direction in words, up to a strength
+        cut = next((i for i, w in enumerate(words) if re.fullmatch(r"[+-]?[1-3]", w)), len(words))
+        target, rest_words = " ".join(words[:cut]), words[cut:]
+    value = 1
+    if rest_words and re.fullmatch(r"[+-]?[1-3]", rest_words[0]):
+        value = abs(int(rest_words[0]))
+        rest_words = rest_words[1:]
+    ok, msg, _ = system.rewards.give(target, sign * value, "console", " ".join(rest_words))
+    return [f"  {msg}"]
+
+
+async def project_lines(system, rest: str) -> list[str]:
+    p = system.projects
+    sub, _, arg = rest.partition(" ")
+    arg = arg.strip()
+    if not sub:
+        return p.lines()
+    if sub == "focus":
+        repo, _, branch = arg.partition(" ")
+        ok, msg = p.set_focus(repo, branch, "console")
+    elif sub == "clear":
+        ok, msg = p.clear("console")
+    elif sub == "objective":
+        ok, msg, _ = p.add_objective(arg, "console")
+    elif sub in ("done", "drop", "reopen"):
+        ok, msg = p.set_objective(arg, sub, "console")
+    elif sub == "work":
+        res = await p.work(by="console")
+        if res and res.get("ok"):
+            return ["  " + x for x in p.lines(res["change"]["id"])[:40]] + ([f"  approve it: /project approve {res['change']['id']}"]
+                                                                            if res["change"]["status"] == "awaiting approval" else [])
+        msg = (res or {}).get("why", "nothing to do")
+    elif sub == "show":
+        return ["  " + x for x in p.lines(arg)]
+    elif sub in ("approve", "decline"):
+        ok, msg = (p.approve if sub == "approve" else p.decline)(arg, "console")
+    else:
+        msg = "usage: /project [focus <owner/name> [branch] | objective <text> | work | show|approve|decline <ch-id> | done|drop|reopen <po-id> | clear]"
+    return [f"  {msg}"]
+
+
 async def image_lines(system, rest: str) -> list[str]:
     v = system.vision
     sub, _, arg = rest.partition(" ")
@@ -797,6 +853,12 @@ async def execute(system, line: str) -> Output:
             out += ["", *system.tool_switch.lines()]
         elif cmd == "code":
             out = await code_lines(system, rest)
+        elif cmd in ("reward", "punish"):
+            out = reward_lines(system, rest, 1 if cmd == "reward" else -1)
+        elif cmd == "rewards":
+            out = system.rewards.lines()
+        elif cmd == "project":
+            out = await project_lines(system, rest)
         elif cmd == "lessons":
             out = system.tutor.lines()
         elif cmd == "lesson":

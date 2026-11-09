@@ -249,6 +249,11 @@ class Evolution:
         return param_count(npol.input_dim, tuple(npol.default_hidden), outputs)
 
     def node_fitness(self, node) -> float | None:
+        bonus = 0.02 * math.tanh(float(node.metrics.get("reward", 0.0) or 0.0) / 3.0)  # people's rewards (rewards.py)
+        f = self._fitness(node)
+        return None if f is None else f + bonus
+
+    def _fitness(self, node) -> float | None:
         return fitness(node.metrics.get("holdout_acc"), node.param_count, self.base_params(len(node.labels)),
                        self.pol.complexity_weight)
 

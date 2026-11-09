@@ -150,6 +150,20 @@ def drives(f: dict) -> dict[str, float]:
     return d
 
 
+def reward_pull(f: dict, feasible, mode: str, rw) -> tuple[str, str] | None:
+    """People's rewards and punishments for its modes pull on the drives (rewards.py): the mode that wins with
+    them, and why - or None when the choice stands."""
+    d = drives(f)
+    pulled = {m: d[m] + rw.pol.initiative_weight * rw.score("initiative", m) for m in feasible}
+    if not pulled:
+        return None
+    best = max(pulled, key=lambda m: (pulled[m], -MODES.index(m)))
+    if best == mode or pulled[best] <= pulled.get(mode, -9.0) + 1e-9:
+        return None
+    up, down = rw.score("initiative", best), rw.score("initiative", mode)
+    return best, (f"people encouraged {best} ({up:+.2f})" if up > 0 else f"people discouraged {mode} ({down:+.2f})")
+
+
 def policy(f: dict, exclude: tuple = ()) -> tuple[str, str]:
     """The drive policy's choice and why. Ties go to the earlier mode."""
     d = drives(f)
@@ -534,6 +548,14 @@ class Director(Agent):
             else:
                 mode, why = policy(f)
                 how = "drive policy"
+            rw = getattr(s, "rewards", None)
+            if self.pinned == "auto" and rw is not None and rw.enabled and not how.endswith("exploring"):
+                pulled = reward_pull(f, sit["feasible"], mode, rw)  # people's rewards and punishments for its modes
+                if pulled is not None:
+                    how += f"; people's rewards pulled it from {mode} to {pulled[0]}"
+                    mode, why = pulled
+                    if AGENCY in s.capabilities:
+                        s.learn(AGENCY, sit["text"], mode, "reward")  # the agency node learns the preference
             record = {"ts": round(time.time(), 1), "mode": mode, "how": how, "why": why, "situation": sit["text"],
                       "target": "", "task": "", "summary": "", "value": None, "by": lead.id}
             lead.initiative = mode

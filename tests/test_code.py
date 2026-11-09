@@ -78,7 +78,7 @@ class CodeSystemTests(unittest.IsolatedAsyncioTestCase):
         s = self.system
         self.assertTrue(await wait_for(lambda: "gitea" in s.tools.tools and s.tools.tools["gitea"].state == "pending_approval", 20))
         apv = next(a for a in s.guardian.pending_approvals() if a.subject == "gitea")
-        self.assertEqual(apv.detail["secrets"], ["GITEA_TOKEN"])            # the approval says what it is given
+        self.assertEqual(apv.detail["secrets"], ["GITEA_TOKEN", "GITEA_WRITE_TOKEN"])  # the approval says what it is given
         s.guardian.decide(apv.id, True, by="tester")                        # a person approves the plugin (P3)
         self.assertTrue(await wait_for(lambda: s.tools.tools["gitea"].state == "active", 30), s.tools.tools["gitea"].note)
 
@@ -149,7 +149,7 @@ def median(numbers):
         from neuromesh.tools import ToolManifest
         s = self.system
         m = ToolManifest.load(Path(self.tmp.name) / "plugins" / "gitea")
-        self.assertEqual(m.secrets, ("GITEA_TOKEN",))
+        self.assertEqual(m.secrets, ("GITEA_TOKEN", "GITEA_WRITE_TOKEN"))
         env = s.sandbox._env(m)
         self.assertEqual(env.get("GITEA_TOKEN"), "s3cret")
         self.assertNotIn("ANTHROPIC_API_KEY", env)

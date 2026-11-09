@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS objectives(id TEXT PRIMARY KEY, status TEXT, data TEX
 CREATE TABLE IF NOT EXISTS scratch(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
 CREATE TABLE IF NOT EXISTS images(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
 CREATE TABLE IF NOT EXISTS lessons(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
+CREATE TABLE IF NOT EXISTS changes(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT, updated_at REAL);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, ts REAL, actor TEXT, kind TEXT, subject TEXT, detail TEXT);
 """
@@ -46,7 +47,7 @@ class Example:
     source: str
 
 
-RECORD_TABLES = ("inquiries", "proposals", "bg_tasks", "challenge_runs", "objectives", "scratch", "images", "lessons")
+RECORD_TABLES = ("inquiries", "proposals", "bg_tasks", "challenge_runs", "objectives", "scratch", "images", "lessons", "changes")
 
 
 class Store:

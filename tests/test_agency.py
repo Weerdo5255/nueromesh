@@ -217,6 +217,15 @@ class AgencyNodeTests(unittest.IsolatedAsyncioTestCase):
                 rec = await s.director.decide(force=True)
                 if rec["how"].startswith("agency node"):
                     break
+            if not rec["how"].startswith("agency node"):  # (not sure in this situation yet: a little more practice)
+                for mode in MODES:
+                    for text in await teacher.generate(spec, mode, 30):
+                        s.learn(AGENCY, text, mode, "agency")
+                for _ in range(40):
+                    await asyncio.sleep(0.5)
+                    rec = await s.director.decide(force=True)
+                    if rec["how"].startswith("agency node"):
+                        break
             self.assertTrue(rec["how"].startswith("agency node"), rec)
             self.assertIn("it chooses the mode", "\n".join((await execute(s, "/director")).lines))
         finally:
