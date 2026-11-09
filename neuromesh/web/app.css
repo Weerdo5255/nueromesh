@@ -97,7 +97,7 @@ button.danger { color: var(--bad); }
 button.danger.armed { background: var(--bad); border-color: var(--bad); color: #fff; }
 button.quiet { border-color: transparent; background: transparent; color: var(--ink-2); }
 button[disabled] { opacity: .55; cursor: progress; }
-input[type="text"], input[type="password"], input:not([type]), textarea, select {
+input[type="text"], input[type="password"], input[type="search"], input[type="number"], input[type="url"], input:not([type]), textarea, select {
   border: 1px solid var(--rule); background: var(--panel); border-radius: 6px; padding: 6px 10px; min-width: 0;
 }
 
@@ -646,8 +646,8 @@ details.change[open] summary { margin-bottom: 6px; }
 .change-file { margin-top: 8px; }
 pre.diff { font-family: var(--mono); font-size: 12.5px; line-height: 1.45; background: var(--slide); border-radius: 8px; padding: 8px 10px;
   overflow: auto; max-height: 50vh; margin: 4px 0; white-space: pre; }
-pre.diff .d-add { color: var(--good); background: color-mix(in srgb, var(--good) 10%, transparent); display: inline-block; min-width: 100%; }
-pre.diff .d-del { color: var(--bad); background: color-mix(in srgb, var(--bad) 9%, transparent); display: inline-block; min-width: 100%; }
+pre.diff .d-add { color: var(--good); background: color-mix(in srgb, var(--good) 10%, transparent); display: block; width: max-content; min-width: 100%; }
+pre.diff .d-del { color: var(--bad); background: color-mix(in srgb, var(--bad) 9%, transparent); display: block; width: max-content; min-width: 100%; }
 pre.diff .d-hunk { color: var(--tool); }
 pre.diff .d-file { color: var(--ink-2); font-weight: 600; }
 
@@ -662,3 +662,52 @@ pre.diff .d-file { color: var(--ink-2); font-weight: 600; }
 .web-row input[type=url] { flex: 1 1 260px; }
 .web-row .num-input, .num-input { flex: 0 0 6.5em; width: 6.5em; min-width: 0; }
 .web-error, .tool-error { overflow-wrap: anywhere; margin-top: 4px; }
+
+/* challenges: more suites from the catalog, the Hub, or a file */
+details.cat { border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); padding: 10px 14px; margin-top: 12px; }
+details.cat > summary { cursor: pointer; padding: 2px 0; }
+details.cat[open] > summary { margin-bottom: 10px; }
+.cat-body .seg { margin-bottom: 12px; flex-wrap: wrap; border-radius: 16px; }
+.cat-search input[type=search] { flex: 1 1 260px; min-width: 0; }
+.cat-list { list-style: none; margin: 10px 0 0; padding: 0; }
+.cat-list li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 14px; padding: 8px 0; border-bottom: 1px solid var(--rule); }
+.cat-list li > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.cat-insp:not(:empty) { margin-top: 14px; padding-top: 12px; border-top: 2px solid var(--hema-soft); }
+.cat-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: 8px; }
+.cat-head h3 { overflow-wrap: anywhere; }
+.cat-map { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px 14px; margin: 4px 0 8px; }
+.cat-field { display: grid; gap: 3px; font-size: 13px; color: var(--ink-2); min-width: 0; }
+.cat-field select, .cat-field input { min-width: 0; width: 100%; }
+.cat-get { align-items: end; gap: 8px 12px; margin-top: 10px; }
+.cat-get .cat-field:first-child { flex: 1 1 200px; }
+.cat-cols td { max-width: 36ch; overflow-wrap: anywhere; }
+details.cat textarea { width: 100%; font-size: 12.5px; }
+
+/* why a tool fails, and removed tools */
+.diag { margin-top: 6px; padding: 6px 10px; border-left: 3px solid var(--warn); background: color-mix(in srgb, var(--warn) 7%, transparent); border-radius: 0 6px 6px 0; }
+.diag.diag-code { border-left-color: var(--bad); background: color-mix(in srgb, var(--bad) 6%, transparent); }
+.diag.diag-outside { border-left-color: var(--tool); background: color-mix(in srgb, var(--tool) 7%, transparent); }
+.diag p { margin: 2px 0; overflow-wrap: anywhere; }
+.diag details.change { margin: 6px 0 2px; }
+.tool-acts { gap: 4px 6px; margin-top: 4px; }
+tr.tool-removed td { color: var(--ink-3); }
+tr.tool-removed td b { text-decoration: line-through; text-decoration-color: var(--ink-3); }
+
+/* fact and fiction */
+.realm-chip { display: inline-block; margin-left: 8px; font-size: 12px; font-weight: 500; padding: 0 8px; border-radius: 999px;
+  vertical-align: 1px; border: 1px solid var(--rule); color: var(--ink-3); }
+.realm-chip.fiction { border-color: color-mix(in srgb, var(--eosin) 45%, transparent); color: var(--eosin); background: var(--eosin-soft); }
+
+/* short-term memory and conversations */
+.stm-list { list-style: none; margin: 0; padding: 0; }
+.stm-list li.stm { padding: 8px 0; border-bottom: 1px solid var(--rule); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: start; }
+.stm-list li.stm > .dim { grid-column: 1; }
+.stm-acts { grid-column: 2; grid-row: 1 / span 2; gap: 4px; }
+.stm-text { overflow-wrap: anywhere; }
+.stm-secret .stm-text > span:first-child { font-style: italic; color: var(--ink-2); }
+.answer .read-as { color: var(--ink-3); font-size: 13px; margin-top: 4px; }
+@media (max-width: 560px) { .stm-list li.stm { grid-template-columns: 1fr; } .stm-acts { grid-column: 1; grid-row: auto; } }
+.tbl tr.has-diag td { border-bottom: 0; }
+.tbl tr.diag-row td { padding-top: 0; }
+.tbl tr.diag-row .diag { margin-top: 0; max-width: 100%; }
+.diag pre.diff { max-height: 40vh; }

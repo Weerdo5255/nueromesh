@@ -68,6 +68,32 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, system.tasks.status()
         if path == "/challenges":
             return 200, system.challenges.status()
+        if path == "/tools/doctor":
+            return 200, system.tooldoctor.status()
+        if path == "/conversations":  # conversations, and its short-term memory nodes
+            return 200, system.conversations.status()
+        if path == "/realm":  # its sense of fact and fiction; ?text= judges one
+            st = system.realm.status()
+            if query.get("text"):
+                st["judged"] = system.realm.judge(query["text"], teach=False).to_dict()
+            return 200, st
+        if path == "/challenges/catalog":
+            return 200, system.challenges.catalog()
+        if path in ("/challenges/search", "/challenges/inspect"):
+            try:
+                if path == "/challenges/search":
+                    return 200, {"query": query.get("q", ""),
+                                 "datasets": await asyncio.to_thread(system.challenges.search, query.get("q", ""))}
+                mapping = json.loads(query["mapping"]) if query.get("mapping") else None
+                return 200, await asyncio.to_thread(system.challenges.inspect, query.get("dataset", ""),
+                                                    query.get("config", ""), query.get("split", ""), mapping)
+            except (ValueError, RuntimeError, json.JSONDecodeError) as exc:
+                return 400, {"ok": False, "message": str(exc)}
+        if path == "/challenges/export":
+            try:
+                return 200, system.challenges.export(query.get("suite", ""))
+            except (ValueError, OSError) as exc:
+                return 400, {"ok": False, "message": str(exc)}
         if path == "/evolution":
             return 200, {**system.evolution.status(), "archive": system.evolution.archive}
         if path == "/director":
@@ -217,7 +243,8 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                                        "or /halt to stop all activity"], "is_order": False}
             return 200, {"lines": out.lines, "is_order": out.is_order}
         if path == "/order":
-            result = await system.submit(body["text"], source=body.get("source", "api"))
+            result = await system.submit(body["text"], source=body.get("source", "api"),
+                                         conversation=str(body.get("conversation", ""))[:80])
             return 200, result.public_dict()  # a held answer is only shown through /release
         if path == "/research":
             doc, note = await system.research(body["topic"], reason=body.get("reason", "api request"))
@@ -302,6 +329,26 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
         if path == "/tools/retest":  # {"tool": "searxng"}: run its self-tests again (after fixing what failed)
             ok, msg = system.retest_tool(str(body.get("tool", "")))
             return (200 if ok else 400), {"ok": ok, "message": msg}
+        if path == "/memory/short":  # {"id": "stm-3", "action": "keep" | "forget"}
+            ok, msg = system.conversations.decide(str(body.get("id", "")), str(body.get("action", "")),
+                                                  str(body.get("by") or "web"))
+            return (200 if ok else 400), {"ok": ok, "message": msg}
+        if path == "/conversations/end":  # {"id": "conv-2"} (or the conversation key): its ego decides what to keep now
+            ok, msg = system.conversations.end_now(str(body.get("id", "")), str(body.get("by") or "web"))
+            return (200 if ok else 400), {"ok": ok, "message": msg}
+        if path == "/tools/remove":  # {"tool": "kiwix", "why": "..."}: out of the mesh (its files stay)
+            ok, msg = await system.remove_tool(str(body.get("tool", "")), str(body.get("by") or "web"), str(body.get("why", "")))
+            return (200 if ok else 400), {"ok": ok, "message": msg}
+        if path == "/tools/restore":  # {"tool": "kiwix"}: back in, vetted and tested again
+            ok, msg = system.restore_tool(str(body.get("tool", "")), str(body.get("by") or "web"))
+            return (200 if ok else 400), {"ok": ok, "message": msg}
+        if path == "/tools/diagnose":  # {"tool": "kiwix"}: why does it fail? (and a fix for its code, to approve)
+            d = await system.tooldoctor.diagnose(str(body.get("tool", "")), "a person asked", str(body.get("by") or "web"))
+            if not d.get("ok"):
+                return 400, d
+            from .tooldoctor import SAY
+            return 200, {**d, "message": f"{d['tool']}: {SAY.get(d['cause'], d['cause'])} - {d['why'][:200]}"
+                                         + (f" ({d['outcome']})" if d.get("outcome") else "")}
         if path == "/tools/switch":  # {"mode": "on"|"off"|"decide"} for all tools; {"tool": "calculator", "mode": ...|"default"}
             by = str(body.get("by") or "web")
             if body.get("tool"):
@@ -516,13 +563,33 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             system.memory.sync_tests(force=True)
             results = [await asyncio.to_thread(system.memory.run_tests, n) for n in system.memory.fact_nodes()]
             return 200, {"nodes": results, "passing": all(r["passed"] == r["total"] for r in results)}
-        if path == "/challenge/fetch":  # {"benchmark": "gsm8k", "rows": 200, "split": "test"}
+        if path == "/challenge/fetch":
+            # {"benchmark": "gsm8k", "rows": 200, "split": "test"}, or any dataset on the Hub:
+            # {"dataset": "owner/name", "config": "...", "split": "...", "rows": 300, "name": "...",
+            #  "mapping": {"input": "question", "answer": "label", "kind": "classify", "context": "", "choices": ""}}
+            by = body.get("by", "api-operator")
             try:
-                suite = await asyncio.to_thread(system.challenges.fetch, body["benchmark"], int(body.get("rows", 0)),
-                                                body.get("split", ""), body.get("name", ""), body.get("by", "api-operator"))
-            except (ValueError, RuntimeError) as exc:
+                suite = await system.challenges.get(str(body.get("benchmark", "")) if not body.get("dataset") else "",
+                                                    str(body.get("dataset", "")), body.get("mapping") or {},
+                                                    int(body.get("rows", 0) or 0), body.get("config", ""), body.get("split", ""),
+                                                    body.get("name", ""), body.get("capability", ""), by)
+            except (ValueError, RuntimeError, KeyError) as exc:
                 return 400, {"ok": False, "message": str(exc)}
-            return 200, {"suite": suite.name, "items": len(suite.items), "source": suite.source}
+            return 200, {"ok": True, "suite": suite.name, "items": len(suite.items), "source": suite.source,
+                         "kind": suite.kind, "message": f"downloaded {len(suite.items)} items as {suite.name}"}
+        if path == "/challenges/import":  # {"name", "kind", "items": "<JSONL or CSV text>", "capability", "labels"}
+            try:
+                suite = system.challenges.add_own(str(body.get("name", "")), str(body.get("kind", "")),
+                                                  str(body.get("items", "")), str(body.get("capability", "")),
+                                                  body.get("labels") or [], str(body.get("description", "")),
+                                                  body.get("by", "api-operator"))
+            except (ValueError, json.JSONDecodeError) as exc:
+                return 400, {"ok": False, "message": str(exc)}
+            return 200, {"ok": True, "suite": suite.name, "items": len(suite.items),
+                         "message": f"added {suite.name}: {len(suite.items)} items"}
+        if path == "/challenges/remove":  # {"suite": "..."}
+            ok, msg = system.challenges.remove(str(body.get("suite", "")), body.get("by", "api-operator"))
+            return (200 if ok else 400), {"ok": ok, "message": msg}
         if path == "/reply":
             ok, lines = await system.mind.reply(body["inquiry_id"], body["answer"], by=body.get("by", "api-user"))
             return (200 if ok else 400), {"ok": ok, "message": "\n".join(x.strip() for x in lines)}

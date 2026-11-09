@@ -11,6 +11,7 @@ Talks only to the configured Wikipedia API. Settings arrive in the request's "co
 import json
 import re
 import sys
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -161,5 +162,5 @@ if __name__ == "__main__":
         print(json.dumps({"error": str(exc), "transient": True}))
     except LookupError as exc:  # no such article: the tool works, the answer just isn't there
         print(json.dumps({"error": str(exc), "not_found": True}))
-    except Exception as exc:
-        print(json.dumps({"error": str(exc)}))
+    except Exception as exc:  # a fault in this code: the trace lets the mesh find it (tooldoctor.py)
+        print(json.dumps({"error": f"{type(exc).__name__}: {exc}", "trace": traceback.format_exc()[-3000:]}))

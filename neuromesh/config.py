@@ -305,6 +305,7 @@ class ChallengePolicy:
     api_url: str = "https://datasets-server.huggingface.co"  # where /challenge fetch downloads benchmarks
     fetch_limit: int = 500                  # rows fetched per benchmark by default
     token_env: str = "HF_TOKEN"             # environment variable with a Hugging Face token (optional)
+    hub_url: str = "https://huggingface.co" # where the web page's catalog searches for more datasets
 
 
 @dataclass
@@ -665,6 +666,42 @@ class ProjectPolicy:
 
 
 @dataclass
+class RepairPolicy:
+    """When a tool fails: why (its code, or the network, its server, its settings, this machine), and a fix for
+    a fault in its code that a person approves (tooldoctor.py, P3, P15)."""
+    enabled: bool = True
+    diagnose_after_failures: int = 2    # failed runs (of any kind) within window_seconds before it looks into why
+    window_seconds: float = 3600.0
+    cooldown_seconds: float = 1800.0    # between looking into the same tool again (a quarantine always counts)
+    write_fixes: bool = True            # an LLM teacher reviews the code and writes a fix for a fault in it
+    attempts: int = 2                   # fixes per broken version before it gives up and says so
+    probe_network: bool = True          # checks whether a networked tool's server answers at all
+    keep_backups: int = 5               # the files each fix replaced, per tool (state/tool_backups/)
+
+
+@dataclass
+class ConversationPolicy:
+    """The conversation it is having with you: context between messages, and short-term memory nodes for what
+    you tell it, which its ego keeps or lets go once you have been quiet a while (conversation.py, P25)."""
+    enabled: bool = True
+    idle_hours: float = 6.0             # quiet this long: the conversation ends and the ego decides what to keep
+    turns: int = 40                     # turns kept as context
+    check_every_seconds: float = 300.0  # how often it looks for conversations that have gone quiet
+    follow_ups: bool = True             # "and what about Spain?", "how tall is it?" are read against the last turn
+    capture: bool = True                # what you tell it goes into short-term memory nodes
+    max_short: int = 400                # short-term memory nodes kept at once (the oldest let go first)
+
+
+@dataclass
+class RealmPolicy:
+    """Fact and fiction: what it remembers and says is marked as one or the other (realm.py, P24)."""
+    enabled: bool = True
+    frame_answers: bool = True          # an answer from fiction says so ("In The Lord of the Rings, ...")
+    works: dict = field(default_factory=dict)   # [realm.works] more names it should know are fiction:
+                                                # "Kvothe" = "The Kingkiller Chronicle"
+
+
+@dataclass
 class Directives:
     name: str = "NeuroMesh"
     mission: str = ""
@@ -699,6 +736,9 @@ class Directives:
     rewards: RewardPolicy = field(default_factory=RewardPolicy)
     projects: ProjectPolicy = field(default_factory=ProjectPolicy)
     websearch: WebSearchPolicy = field(default_factory=WebSearchPolicy)
+    repair: RepairPolicy = field(default_factory=RepairPolicy)
+    conversation: ConversationPolicy = field(default_factory=ConversationPolicy)
+    realm: RealmPolicy = field(default_factory=RealmPolicy)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Directives":
@@ -737,6 +777,9 @@ class Directives:
             rewards=build(RewardPolicy, d.get("rewards")),
             projects=build(ProjectPolicy, d.get("projects")),
             websearch=build(WebSearchPolicy, d.get("websearch")),
+            repair=build(RepairPolicy, d.get("repair")),
+            conversation=build(ConversationPolicy, d.get("conversation")),
+            realm=build(RealmPolicy, d.get("realm")),
         )
 
     @classmethod

@@ -28,6 +28,7 @@ import re
 import sys
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -593,8 +594,8 @@ def reply(request: dict) -> dict:
         return {"error": str(exc), "transient": True}
     except NotFound as exc:
         return {"error": str(exc), "not_found": True}
-    except Exception as exc:
-        return {"error": f"{type(exc).__name__}: {exc}"}
+    except Exception as exc:  # a fault in this code: the trace lets the mesh find it (tooldoctor.py)
+        return {"error": f"{type(exc).__name__}: {exc}", "trace": traceback.format_exc()[-3000:]}
 
 
 def serve() -> None:

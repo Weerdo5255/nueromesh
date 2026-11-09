@@ -1,5 +1,5 @@
 """Small stand-ins for the servers the mesh talks to in these tests: an Ollama server (with a vision model) whose
-replies a test decides, a Gitea with a few repositories, and a SearXNG whose results a test sets."""
+replies a test decides, a Gitea with a few repositories, a SearXNG whose results a test sets, and the Hugging Face Hub with a few datasets."""
 import json
 import threading
 import urllib.parse
@@ -305,3 +305,108 @@ class MockSearXNG(_Server):
         self.json = True
         self.limiter = True            # its bot detection is on, as in SearXNG's Docker set-up
         super().__init__(_SearXNG)
+
+
+# ------------------------------------------------------------------ Hugging Face Hub + dataset viewer
+def _class(names):
+    return {"_type": "ClassLabel", "names": names}
+
+
+def _value(dtype="string"):
+    return {"_type": "Value", "dtype": dtype}
+
+
+MOODS = ["sadness", "joy", "anger"]
+DATASETS = {
+    # a classification with a ClassLabel answer
+    "acme/emotion-tiny": {"default": {"test": {
+        "features": {"text": _value(), "label": _class(MOODS)},
+        "rows": [{"text": t, "label": MOODS.index(m)} for t, m in [
+            ("i cried all night after the funeral", "sadness"), ("what a wonderful sunny morning, i'm thrilled", "joy"),
+            ("he lied to me again and i am furious", "anger"), ("i miss my old dog so much it hurts", "sadness"),
+            ("we won the cup and everyone is cheering", "joy"), ("stop shouting at me, this is outrageous", "anger"),
+            ("the letter said she had passed away", "sadness"), ("best birthday party ever, so happy", "joy"),
+            ("they cancelled my flight again, i'm livid", "anger"), ("lonely and grey, nothing seems worth it today", "sadness"),
+            ("the puppy licked my face and i laughed", "joy"), ("someone keyed my car, i am so angry", "anger")] * 3]}}},
+    # short answers in a plain string column
+    "acme/trivia-qa": {"default": {"validation": {
+        "features": {"id": _value(), "question": _value(), "answer": _value()},
+        "rows": [{"id": f"t{i}", "question": q, "answer": a} for i, (q, a) in enumerate([
+            ("What is the capital of Peru?", "Lima"), ("Which planet is known as the red planet?", "Mars"),
+            ("Who wrote Pride and Prejudice?", "Jane Austen"), ("What gas do plants take in?", "Carbon dioxide"),
+            ("What is the largest ocean?", "Pacific Ocean"), ("How many legs does a spider have?", "8")])]},
+        "train": {"features": {"id": _value(), "question": _value(), "answer": _value()},
+                  "rows": [{"id": "x", "question": "Train question?", "answer": "train"}]}}},
+    # columns it has to be told about
+    "acme/odd-columns": {"default": {"test": {
+        "features": {"q_text": _value(), "gold": _value("int64"), "notes": _value()},
+        "rows": [{"q_text": f"What is {a} times {b}?", "gold": a * b, "notes": "x"} for a in range(2, 6) for b in range(3, 6)]}}},
+    # a benchmark the catalog already knows (two subsets)
+    "allenai/ai2_arc": {cfg: {"test": {
+        "features": {"id": _value(), "question": _value(),
+                     "choices": {"text": {"_type": "List", "feature": _value()}, "label": {"_type": "List", "feature": _value()}},
+                     "answerKey": _value()},
+        "rows": [{"id": f"{cfg}-{i}", "question": f"{cfg} question {i}: which is a mammal?",
+                  "choices": {"text": ["shark", "whale", "trout", "squid"], "label": ["A", "B", "C", "D"]}, "answerKey": "B"}
+                 for i in range(20)]}} for cfg in ("ARC-Challenge", "ARC-Easy")},
+}
+HUB = [{"id": "acme/emotion-tiny", "downloads": 52000, "likes": 40,
+        "tags": ["task_categories:text-classification", "license:mit", "language:en"]},
+       {"id": "acme/trivia-qa", "downloads": 9100, "likes": 12, "tags": ["task_categories:question-answering", "license:cc-by-4.0"]},
+       {"id": "acme/odd-columns", "downloads": 31, "likes": 0, "tags": []},
+       {"id": "allenai/ai2_arc", "downloads": 880000, "likes": 200, "tags": ["task_categories:question-answering", "license:cc-by-sa-4.0"]}]
+
+
+class _Datasets(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def _send(self, payload, code=200):
+        data = json.dumps(payload).encode()
+        self.send_response(code)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        owner = self.server.owner
+        u = urllib.parse.urlsplit(self.path)
+        q = dict(urllib.parse.parse_qsl(u.query))
+        owner.requests.append({"path": u.path, "query": q})
+        if owner.down:
+            return self._send({"error": "The service is temporarily unavailable"}, 503)
+        if u.path == "/api/datasets":
+            words = q.get("search", "").lower()
+            found = [d for d in HUB if words in d["id"].lower()]
+            return self._send(sorted(found, key=lambda d: -d["downloads"])[: int(q.get("limit", 20))])
+        ds = DATASETS.get(q.get("dataset", ""))
+        if ds is None:
+            return self._send({"error": "The dataset does not exist, or is not accessible without authentication."}, 404)
+        if u.path == "/splits":
+            return self._send({"splits": [{"dataset": q["dataset"], "config": c, "split": sp}
+                                          for c, splits in ds.items() for sp in splits], "pending": [], "failed": []})
+        part = ds.get(q.get("config", ""), {}).get(q.get("split", ""))
+        if part is None:
+            return self._send({"error": "Not found."}, 404)
+        feats = [{"feature_idx": i, "name": n, "type": t} for i, (n, t) in enumerate(part["features"].items())]
+        if u.path == "/first-rows":
+            return self._send({"dataset": q["dataset"], "config": q["config"], "split": q["split"], "features": feats,
+                               "rows": [{"row_idx": i, "row": r, "truncated_cells": []} for i, r in enumerate(part["rows"][:100])],
+                               "truncated": len(part["rows"]) > 100})
+        if u.path == "/rows":
+            off, n = int(q.get("offset", 0)), int(q.get("length", 100))
+            return self._send({"features": feats, "rows": [{"row_idx": off + i, "row": r, "truncated_cells": []}
+                                                           for i, r in enumerate(part["rows"][off: off + n])],
+                               "num_rows_total": len(part["rows"]), "num_rows_per_page": 100, "partial": False})
+        self._send({"error": "not found"}, 404)
+
+
+class MockDatasets(_Server):
+    """The Hugging Face Hub's dataset search (/api/datasets?search=) and its dataset viewer (/splits, /first-rows,
+    /rows) for the datasets above, in one server. .down = True answers 503."""
+
+    def __init__(self):
+        self.requests: list[dict] = []
+        self.down = False
+        super().__init__(_Datasets)

@@ -75,6 +75,8 @@ class Order:
     learn: bool = True         # False for challenge exams: answering teaches the mesh nothing
     created_at: float = field(default_factory=time.time)
     future: Any = None
+    conversation: str = ""     # the conversation it belongs to (the web page's id; else its source: conversation.py)
+    conversation_ctx: dict | None = None  # which conversation, and what a follow-up was read as
 
 
 @dataclass
@@ -111,6 +113,8 @@ class Result:
     thought: dict | None = None  # its own thought after the knowledge, from a thinking node (thinking.py); never the answer
     searched: dict | None = None  # the Kiwix search behind it: books, wordings, articles read (seeker.py)
     ego: dict | None = None       # its ego's remark after the answer, labelled (ego.py); never the answer
+    realm: dict | None = None     # fact or fiction: {"realm", "work", "confidence", "how"} (realm.py, P24)
+    conversation: dict | None = None  # the conversation it belongs to, and what it took from it (conversation.py)
 
     def to_dict(self) -> dict:
         return asdict(self)

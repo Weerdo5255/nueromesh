@@ -426,6 +426,47 @@ class LLMTeacher(Teacher):
         return {"name": name, "description": str(data.get("description", ""))[:200], "code": data["code"][:20000],
                 "examples": examples}
 
+    async def fix_tool(self, tool: dict, failures: list[dict], guess: dict, previous: str = "",
+                       problems: list[str] | None = None) -> dict | None:
+        """Review a failing tool: is the fault in its code or outside it? For a fault in the code, the fixed files.
+        tool: {name, description, manifest, files: {path: text}}. A person approves any fix before it is used."""
+        causes = ["code", "network", "service", "config", "environment", "limits"]
+        schema = {"type": "object", "required": ["cause", "explanation"],
+                  "properties": {"cause": {"type": "string", "enum": causes}, "explanation": {"type": "string"},
+                                 "files": {"type": "object", "additionalProperties": {"type": "string"}}}}
+        system = ("You maintain the tools of a multi-agent system. A tool failed. Work out whether the fault is in the "
+                  "tool's own code or outside it - the network, the server it talks to, its settings, or the machine "
+                  "it runs on - and, only if it is in the code, fix it. A person reviews any fix before it is used. "
+                  "Reply with a single JSON object and nothing else.")
+        files = "\n\n".join(f"--- {path} ---\n{text[:14000]}" for path, text in list(tool["files"].items())[:3])
+        seen = "\n".join(f"- input {f.get('input', '')[:160]!r}: {f.get('error', '')[:300]}"
+                         + (f"\n  traceback:\n{f['trace'][-1500:]}" if f.get("trace") else "")
+                         + (f"\n  expected {f['expected']!r}, got {f.get('got')!r}" if f.get("expected") is not None else "")
+                         for f in failures[:4])
+        user = (f"Tool: {tool['name']} - {tool.get('description', '')[:300]}\n"
+                f"Its manifest:\n{tool.get('manifest', '')[:2500]}\n\nIts files:\n{files}\n\n"
+                f"How it failed:\n{seen}\n\n"
+                f"A first look said: {guess.get('cause', 'unknown')} - {guess.get('why', '')[:300]}"
+                + (f"\nIts server: {guess['probe']}" if guess.get("probe") else "") + "\n"
+                + (f"\nYour previous fix did not work:\n{previous[:4000]}\nProblems: {'; '.join(problems or [])}\n" if previous else "")
+                + "\nRules for a fix: change only what the fault needs; keep the tool's interface (it reads one JSON "
+                  "object from stdin and prints one JSON object), its self-tests and everything else it does; the "
+                  "standard library only, and nothing the original code did not already do (no new network access, "
+                  "files, processes, eval or exec). If the fault is outside the code, change nothing.\n"
+                  'JSON: {"cause": "code" | "network" | "service" | "config" | "environment" | "limits", '
+                  '"explanation": "<what is wrong and why, in two sentences>", '
+                  '"files": {"tool.py": "<the whole fixed file>"} (only when the cause is code)}')
+        data = _extract_json(await self._ask(system, user, schema) or "")
+        if not data or str(data.get("cause", "")) not in causes:
+            return None
+        out = {"cause": str(data["cause"]), "explanation": str(data.get("explanation", ""))[:600], "files": {}}
+        if out["cause"] == "code" and isinstance(data.get("files"), dict):
+            for path, text in data["files"].items():
+                if isinstance(text, str) and text.strip():
+                    fence = re.match(r"^\s*```[\w+-]*\n(.*?)\n```\s*$", text, re.S)
+                    out["files"][str(path)] = (fence.group(1) if fence else text)[:60000]
+        return out
+
     async def write_code(self, request: str, language: str, examples: list[dict], previous: str = "",
                          problems: list[str] | None = None) -> dict | None:
         """Write code for its scratch pad, following code people wrote (from their Gitea) where it fits. Nothing it
@@ -789,6 +830,18 @@ class TeacherPool:
                 continue
             with self._track(teacher, f"writing a tool for {len(requests)} requests"):
                 made = await teacher.write_tool(requests)
+            if made:
+                return made, teacher.name
+        return None
+
+    async def fix_tool(self, tool: dict, failures: list[dict], guess: dict, previous: str = "",
+                       problems: list[str] | None = None) -> tuple[dict, str] | None:
+        """Have the first available LLM teacher review a failing tool and fix a fault in its code (None offline)."""
+        for teacher in self.ranked():
+            if not isinstance(teacher, LLMTeacher):
+                continue
+            with self._track(teacher, f"reviewing the {tool['name']} tool's code"):
+                made = await teacher.fix_tool(tool, failures, guess, previous, problems)
             if made:
                 return made, teacher.name
         return None

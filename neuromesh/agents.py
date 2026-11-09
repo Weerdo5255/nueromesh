@@ -103,6 +103,10 @@ class Orchestrator(Agent):
         t0 = time.perf_counter()
         try:
             with self.sys.activity.track("order", order.source, " ".join(order.text.split())[:100]):
+                try:  # the conversation it belongs to, and what a follow-up means (conversation.py, P25)
+                    self.sys.conversations.before(order)
+                except Exception:
+                    self.log.exception("could not place %s in its conversation", order.id)
                 try:  # the ego, wrapped around everything: the mood it takes the order in (ego.py, P18)
                     self.sys.ego.before(order)
                 except Exception:
@@ -133,14 +137,24 @@ class Orchestrator(Agent):
                     await self.sys.directors.review(order, result)
                 except Exception:
                     self.log.exception("the director could not review %s; it is reported as it is", order.id)
+                try:  # fact or fiction: an answer from fiction says so, and is never passed off as fact (P24)
+                    self.sys.realm.mark(order, result)
+                except Exception:
+                    self.log.exception("could not tell whether %s is fact or fiction", order.id)
                 try:  # after the knowledge context: its own thought, labelled, beside the answer (P17)
                     result.thought = self.sys.thinking.after(order, result)
+                    if result.thought and (result.realm or {}).get("realm") == "fiction":
+                        result.thought["realm"] = result.realm  # a thought about fiction is marked so (P24)
                 except Exception:
                     self.log.exception("no thought could be added to %s", order.id)
                 try:  # and the ego last, around everything: its own view, labelled, after the answer (P18)
                     result.ego = await self.sys.ego.after(order, result)
                 except Exception:
                     self.log.exception("the ego could not see %s off", order.id)
+                try:  # the turn, kept as the conversation's context (P25)
+                    self.sys.conversations.after(order, result)
+                except Exception:
+                    self.log.exception("could not keep %s in its conversation", order.id)
         finally:
             self.sys.inflight -= 1
             sem.release()
@@ -184,6 +198,8 @@ class Orchestrator(Agent):
                     res.ok, res.note = False, made[0]
                 res.trace.append(made[1])
                 return res
+        if not order.background and s.conversations.handle(order, res):  # told it something, or asked what you told it
+            return res
         from .objectives import objective_request  # (objectives.py builds on this module)
         aim = objective_request(order.text) if not order.background and s.objectives.enabled else None
         if aim is not None:  # "objective: ...": a long-term objective, pursued in the background (P16)
@@ -208,6 +224,12 @@ class Orchestrator(Agent):
         if mine is not None:
             res.route, res.output, res.confidence, res.served_by = "ego", mine[0], 1.0, "explicit"
             res.trace.append(f"answered by its ego ({mine[2]}): {mine[1]}")
+            return res
+        real = s.realm.answer(order.text)  # "is Gandalf real?": fact or fiction, said plainly (P24)
+        if real is not None:
+            res.route, res.output, res.confidence, res.served_by = "realm", real[0], 0.9, "nodes"
+            res.realm = {"realm": real[2], "work": real[3], "confidence": 0.9, "how": real[1]}
+            res.trace.append(f"its sense of fact and fiction answered: {real[1]}")
             return res
         thought = s.thinking.answer(order.text, order.id)  # what it thinks of a topic, or wants to find out (P17)
         if thought is not None:
@@ -239,6 +261,8 @@ class Orchestrator(Agent):
             kinds.append(inf.kind)
             conf = inf.confidence
             route = inf.label or DIRECT
+            if route == DIRECT and not is_question(order.text) and s.conversations.told(order, res):
+                return res  # a plain statement, in conversation: something you told it (conversation.py)
             if route.startswith("skill:"):
                 payload = skill_payload(order.text)
         else:
@@ -294,7 +318,7 @@ class Orchestrator(Agent):
             else:
                 timeout = tool.manifest.timeout_s or s.directives.tools.default_timeout_s
                 run = await self.run_tool(order, res, tool, payload, timeout)
-                s.record_tool_run(tool, run)
+                s.record_tool_run(tool, run, text=payload if isinstance(payload, str) else order.text)
                 res.trace.append(f"{route} {'ok' if run.ok else 'failed'} in {run.ms:.0f} ms")
                 if run.ok:
                     res.output = run.output
@@ -567,6 +591,9 @@ class Orchestrator(Agent):
         res.sources.append(source)
         res.trace.append(f"answered by memory node {node.id} (confidence {rec.confidence:.2f}; {node.spec()})"
                          + (f"; {rec.how}" if getattr(rec, "how", "") else ""))
+        if getattr(rec, "realm", ""):  # it learned this as fact, or as fiction (realm.py, P24)
+            res.realm = {"realm": rec.realm, "work": rec.work, "confidence": 0.9,
+                         "how": f"memory node {node.id} learned it as {rec.realm}" + (f" ({rec.work})" if rec.work else "")}
         self.sys.bus.publish("memory.recalled", node=node.id, question=res.text[:200], confidence=rec.confidence)
 
     def _remember(self, res: Result, question: str, answer: str, source: str) -> None:
@@ -1128,6 +1155,10 @@ class Explorer(Agent):
         if decision.verdict == Verdict.DENY:
             tool.state, tool.note = REJECTED, decision.reason
             s.bus.publish("tool.rejected", tool=manifest.name, reason=decision.reason)
+        elif s.tooldoctor.preapproved_digest(manifest.name, manifest.digest):
+            # a fix a person approved (or the files it replaced, put back): approved already; self-tested next
+            tool.state, tool.note = APPROVED, "a fix a person approved: self-testing it"
+            s.bus.publish("tool.approved", tool=manifest.name, by="its approved fix")
         elif manifest.author == "neuromesh" and not s.toolsmith.approved(manifest.name, manifest.digest):
             # code the mesh wrote itself runs only once a person has approved exactly these files (P15)
             tool.state, tool.note = PENDING, "written by its own toolsmith: a person must approve these files first (P15)"
@@ -1183,15 +1214,19 @@ class Explorer(Agent):
                 if run.ok and outputs_match(run.output, ex.get("expect")):
                     passed += 1
                 else:
+                    if run.ok:  # it ran, but gave the wrong answer
+                        run = ToolRun(False, run.output, f"expected {ex.get('expect')!r}, got {run.output!r}", run.ms)
                     failures.append({"input": ex["input"], "expected": ex.get("expect"),
                                      "got": run.output, "error": run.error})
+                    s.tooldoctor.note(tool, run, ex["input"], "self-test", ex.get("expect"))
         rate = passed / len(examples)
         if rate >= s.directives.tools.self_test_pass_rate:
             s.activate_tool(tool, f"self-tests passed {passed}/{len(examples)}")
         else:
             tool.state = QUARANTINED
             tool.note = f"self-tests passed {passed}/{len(examples)}"
-            tool.last_error = "; ".join((f["error"] or f"expected {f['expected']!r}, got {f['got']!r}") for f in failures[:2])[:600]
+            tool.last_error = "; ".join(dict.fromkeys((f["error"] or f"expected {f['expected']!r}, got {f['got']!r}")
+                                                      for f in failures[:2]))[:600]
             s.tools.persist(tool)
             s.guardian.audit("explorer", "tool.quarantined", tool.name, failures=failures[:3])
             s.bus.publish("tool.quarantined", tool=tool.name, reason=tool.note)

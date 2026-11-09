@@ -59,7 +59,14 @@ can give it a coding project in your Gitea, with objectives for what it should d
 changes, and once you approve one it opens a pull request on a new branch. A switch lets the code it
 writes run by itself (when harmless, or always), and Python code of its own that ran can become a
 tool it uses. Questions it asks you that nobody answers in time are searched on the web through your
-own SearXNG, and read by your Ollama teacher.
+own SearXNG, and read by your Ollama teacher. More challenges can be browsed and downloaded from the web
+page: the ready-made benchmarks, any dataset on the Hugging Face Hub (it guesses which column is the
+question and which the answer, and you can change that), or your own file. When a tool fails, it works
+out whether the fault is in the tool's code or outside it (the network, its server, its settings) and,
+for its code, writes a fix you approve; you can remove any tool. It keeps fact and fiction apart, in
+its memory and when it talks ("is Gandalf real?"). And it holds a conversation: follow-ups are read
+against what you asked before, and what you tell it goes into short-term memory nodes, kept word for
+word, until - after six quiet hours - its ego decides what to keep for good.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
@@ -1169,6 +1176,58 @@ Grounding with Google Search, which does give an AI answer built from Google's r
 program to store or learn from those answers. SearXNG can ask Google among its engines; whether that is
 allowed is between your instance and the engines it uses.
 
+### Fact and fiction
+Everything its memory holds, and everything it says, is marked **fact** (about the real world) or
+**fiction** (from a novel, a film, a game, a myth, your own story, a dream, something imagined), with
+the work it belongs to (`realm.py`, P24). How it tells, strongest first:
+
+1. What the text says: "in the novel Dune ...", "In The Hobbit, ...", "in my story ...", "once upon a
+   time", "I dreamed", "imagine ..." for fiction; "in real life", "historically", "really existed" for fact.
+2. Names it knows belong to a work - Gandalf, Hogwarts, Darth Vader, Sherlock Holmes, Narnia, Westeros,
+   the Loch Ness monster and a few hundred more, and any you add under `[realm.works]` - and what its
+   memory already holds: learned as fiction, it stays fiction. A question *about* a work ("who wrote The
+   Lord of the Rings?", "who played Gandalf?") is a fact about the real world.
+3. Its **realm node**, an internal capability taught by that policy and by people, which judges what
+   nothing in the text settles once it is validated.
+4. Otherwise fact, only as sure as the evidence ("nothing marks it as fiction").
+
+Every fact a memory node learns carries its realm and work (in the memory database's `tests` table;
+older databases gain the columns when opened), and so does each of its own statements (a dream is
+fiction). An answer from fiction says so - "a wizard who guides the Fellowship (in The Lord of the
+Rings: fiction, not fact)", "In The Lord of the Rings, Gandalf is a wizard." - and carries its realm,
+which the web page shows beside the answer and beside each fact in Memory. The ego notes on the way in
+whether its memory holds an answer as fact or fiction, and a remark of its own about something from
+fiction says so. Ask it straight out: "is Gandalf real?" → "No - Gandalf is from The Lord of the Rings:
+fiction, not fact." `/real <text>` and `GET /realm?text=` show how it would judge something.
+
+### Conversations and short-term memory
+It holds a conversation (`conversation.py`, P25): the web page sends its own conversation id (one per
+browser), other clients their source. Within a conversation:
+
+- **Follow-ups** are read against the last question: "what about Spain?" after "what is the capital of
+  France?" is "what is the capital of Spain?"; "how tall is it?" after a question about the Eiffel Tower
+  is "how tall is the Eiffel Tower?"; "when was he born?" asks about the person the last answer named.
+  The answer says how it read you.
+- **What you tell it** - "remember that the meeting is on Friday", "note: ...", "my dog is called Rex",
+  "I live in Leeds", "in my story the dragon Vex lives on the moon", or a plain statement its router
+  would otherwise have sent to a teacher - goes into a **short-term memory node**: one small node per
+  thing, kept exactly as you said it (short-term memory is never compressed), marked fact or fiction,
+  personal or not, about that moment or lasting, a secret or not. Saying it differently later ("my dog is
+  called Max") replaces the older one.
+- **Questions** are answered from short-term memory first: "what is my dog called?" → "Max - you told me
+  at 14:02." A secret is never repeated back.
+
+After `[conversation] idle_hours` (6) of quiet the conversation ends, and its **ego decides** for each
+short-term node, with its **keep node** (an internal capability taught by the keep policy and by what
+people choose): **keep** - re-designated as long-term memory, learned into a memory node as you would
+ask it ("what is my dog called" → "Max"), as fact or as fiction, reviewed by a director like any fact -
+or **let go**: a secret (never kept, and its words forgotten), something you corrected, something about
+that moment ("I'm tired today"), something it already knew. Something you asked about again is kept.
+Its ego notes what it kept, as its own statement. The web page's Memory has a *Short-term memory*
+section with *Keep now* and *Forget* on each node, when its ego will decide, what was settled and why,
+and *End now* for an open conversation. `/conversation [end]`, `/stm [keep|forget <id>]`,
+`GET /conversations`, `POST /memory/short {"id", "action"}`, `POST /conversations/end`.
+
 ### Was it right? Corrections and the next most likely answers
 Every answer (in the web interface, under the answer and in the closer look's orders) asks *Was
 this right?*
@@ -1406,6 +1465,29 @@ ones through the Hugging Face dataset viewer API into `state/challenges/`: `gsm8
 have a token. The format (`manifest.toml` + `items.jsonl`) is described in `challenges/README.md`,
 so you can add your own.
 
+**More suites, from the web page.** Status > Challenges > *Add challenges* has three tabs:
+
+- *Ready-made benchmarks*: the eight above, with how they are answered and their licence, and a
+  Download button with the number of rows.
+- *Search Hugging Face*: any dataset on the Hub (`hub_url`), most downloaded first. *Look* shows its
+  subsets and splits, its columns with the first row's values, and the first questions as it would
+  read them. It guesses which column is the question, which the answer, any passage to read and any
+  options, and how it is answered (a label, a number, an option, yes or no, a short answer; a
+  dataset's own class names become the labels). Change any of them and the preview follows (from the
+  rows it already has: the Hub isn't asked again). *Download* takes as many rows as you say. A
+  ready-made benchmark found this way is read the usual way.
+- *Your own file*: JSONL (`{"input": ..., "answer": ...}` per line), a JSON list, or CSV with input
+  and answer columns (`question`, `label`, `context`, `choices` work too); multiple choice adds
+  `"choices": [...]` and answers with the letter. A suite exported from another NeuroMesh is added as
+  it is.
+
+Every suite has *Export* (its manifest and items as one `.challenge.json`), and the ones you
+downloaded or added have *Remove* (two clicks; their results stay in the history). Suites in your
+`challenges/` folder are yours to delete there. From the console: `/challenge search <words>`,
+`/challenge look <owner/name> [subset] [split]`, `/challenge fetch <owner/name> [rows] [split]`,
+`/challenge remove <suite>`. A classification downloaded this way becomes a new skill the first time
+it is practised.
+
 **What to expect.** Offline, the mesh answers only what its tools, skills and lexicon can, so it
 scores low on word problems, multiple choice and reading comprehension. Those need an LLM teacher
 (Ollama or Claude), whose answers are graded and whose routes are learned, or retained knowledge
@@ -1445,7 +1527,7 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 |---|---|
 | P1 human authority | `/halt`, `POST /halt` or a `state/STOP` file stops all autonomous activity and order handling immediately |
 | P2 orders first | background work, background tasks included, waits while orders are in flight and is capped by `max_duty_cycle` |
-| P3 approved tools only | tools needing permissions wait for a human; forbidden permissions are always refused; changed tool code is re-vetted |
+| P3 approved tools only | tools needing permissions wait for a human; forbidden permissions are always refused; changed tool code is re-vetted; a fix the mesh writes for a failing tool is installed only once a person approves its diff, is never riskier than the code it replaces, is backed up and undone if it fails; a person can remove any tool |
 | P4 budgets | node budget, background compute budget, per-teacher LLM call/token budgets, research, investigation and background-task budgets per hour |
 | P5 no regression | a challenger is promoted, or a champion updated, only if it is not worse on held-out data; superseded nodes stay rollback-able for a grace period |
 | P6 auditability | every lifecycle change, tool decision, approval and denial goes to the audit log |
@@ -1465,6 +1547,8 @@ The constitution. **Prime directives** are enforced in code by the Guardian
 | P21 honest sight | what it says it sees or reads in an image names who said so; a person's word stands; its reading is measured against tesseract, a teacher or a person |
 | P22 lessons are lessons | idle-time orders from its teachers run on background capacity within budgets, pass the directors, teach as a teacher (never as a person), and don't count as people's orders |
 | P23 rewards steer | only people reward or punish; rewards steer preferences only (initiative, curiosity, remarks, the idle coin, the tool switch, lessons, evolution, its project) and fade; they never override a prime, the guardian, an approval or a person's teaching, never make an answer true or false, and are all audited |
+| P24 fact and fiction | every fact in memory and every statement of its own is marked fact or fiction (with its work); an answer from fiction says so; fiction is never passed off as fact; a person's word on which it is stands |
+| P25 short-term memory | what you tell it in conversation is kept word for word in short-term memory nodes, never compressed; only after `idle_hours` of quiet does its ego keep each (learned into long-term memory as fact or fiction, reviewed by a director) or let it go; a secret is never kept or repeated, and its words are forgotten; you can keep or forget any of them yourself |
 | P13 dreams are not facts | dreaming uses only what the mesh already holds, never a research tool or a teacher; an imagined response always says so and names the dream node it came from; imagination is never stored as a fact or used to answer an ordinary question |
 
 **Goals** are measured continuously and shown on the scorecard (`/status`): competence
@@ -1752,7 +1836,12 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | POST | `/investigate` | `{"goal": "..."}`: look into something now |
 | POST | `/tasks` | `{"spec": "learn the Krebs cycle every 5m"}`: set a background task |
 | POST | `/challenge` | `{"suite": "gsm8k", "mode": "exam" \| "practice", "n": 50}` |
-| POST | `/challenge/fetch` | `{"benchmark": "gsm8k", "rows": 300, "split": "test"}` |
+| POST | `/challenge/fetch` | `{"benchmark": "gsm8k", "rows": 300, "split": "test"}`, or any dataset on the Hub: `{"dataset": "owner/name", "config", "split", "rows", "name", "mapping": {"input", "answer", "kind", "context", "choices"}}` |
+| GET | `/challenges/catalog`, `/challenges/search?q=`, `/challenges/inspect?dataset=&config=&split=&mapping=<json>`, `/challenges/export?suite=` | the ready-made benchmarks; datasets on the Hub; a dataset's columns, first rows and how it would be read; a suite's manifest and items |
+| POST | `/challenges/import`, `/challenges/remove` | `{"name", "kind", "items": "<JSONL, JSON or CSV>", "labels"}` (or an exported suite as `items`); `{"suite": "..."}` |
+| POST | `/tools/diagnose`, `/tools/remove`, `/tools/restore` | `{"tool": "kiwix"}`: why it fails (and a fix to approve); take it out of the mesh (`"why"`); bring it back, re-vetted. `GET /tools/doctor`: every diagnosis and fix |
+| GET | `/conversations`, `/realm?text=` | conversations and short-term memory nodes (secrets hidden); fact or fiction for a text |
+| POST | `/memory/short`, `/conversations/end` | `{"id": "stm-3", "action": "keep" \| "forget"}`; `{"id": "conv-2"}`: its ego decides now. `POST /order` takes `"conversation": "<id>"` |
 | POST | `/task` | `{"id": "task-1", "action": "pause" \| "resume" \| "remove"}` |
 | POST | `/memorize` | `{"ask": "...", "answer": "..."}`: a fact for a memory node |
 | POST | `/memory/test` | run every memory node against its tests now |
@@ -2017,6 +2106,39 @@ Then: Guardian vets permissions → (human approval if needed) → sandboxed sel
 added to `dispatch` → manifest examples seeded → teachers write practice orders → Architect
 expands the routing node → Evaluator promotes it → old router disposed after the grace period.
 
+An error reply may carry `"trace": traceback.format_exc()` (every bundled plugin sends one): when the
+tool keeps failing, the tool doctor reads it to tell a fault in your code from one outside it.
+
+### When a tool fails: the tool doctor
+After `[repair] diagnose_after_failures` failed runs (any kind, offline ones too) within an hour, or
+when a tool is quarantined, it looks into why (`tooldoctor.py`):
+
+| cause | what it means | what happens |
+|---|---|---|
+| code | a fault in the tool's own code: a traceback through its files, a wrong answer to a self-test, output that isn't JSON | its LLM teacher reviews the code against the failures and writes a fix |
+| network | its server can't be reached: refused, unknown host, timed out | reported, with what to check |
+| service | the server answered with an error (5xx, 429) | reported; it is tested again later |
+| config | the address, a token, or the server's own settings (401, 403, 404) | reported: check `[tools.config.<name>]` |
+| environment | something missing on this machine: a module, a program, a permission | reported |
+| limits | it ran out of time, memory or CPU in the sandbox | reported, with which limit to raise |
+
+For a networked tool it also checks whether its server answers at all, so "it can't reach the server"
+is a finding, not a guess. With an LLM teacher, the teacher sees the tool's manifest, its code, the
+errors and tracebacks and that first look, and says which it is; only for a fault in the code does it
+write a fix. A fix is checked (it compiles; it may not do anything the old code didn't: no new network
+access, files, processes, `eval` or `exec`; it never touches the self-tests) and offered as an approval
+with its diff (P3, P15) - on Status > Approvals, under the tool in the Tools table, and as a question.
+Approved, the old files are backed up to `state/tool_backups/<tool>/`, the new ones installed with the
+version bumped, and the tool is self-tested again without asking a second time. If the tests still
+fail, the backup goes back and it tries again, told why the first fix didn't work (`attempts`), then
+gives up and says so. What it finds is under the tool on the web page (*Why does it fail?* asks now),
+in `/doctor` and `/tool <name> why`, and kept as an observation in its mind.
+
+**You have the last word.** *Remove* on any tool (or `/tool <name> remove [why]`, `POST /tools/remove`)
+takes it out of the mesh: its route is switched off, pending approvals and fixes are withdrawn, its
+worker stopped, and scans pass it by - across restarts. Its files stay in `plugins/`. *Restore*
+brings it back as if new: vetted, approved if it needs it, and self-tested.
+
 ### Adding a skill
 `/define <name> <labels>` at runtime, or a section in `capabilities.toml`. With the LLM
 teacher, a description and labels are enough; the offline teacher also needs a lexicon.
@@ -2187,6 +2309,9 @@ neuromesh/
   projects.py            its project in Gitea: objectives, drafting and checking changes, approval, pull requests, the Foreman (P20)
   codetools.py           its own code as tools: the demonstration's examples, the wrapper, offering or installing (P15)
   websearch.py           questions nobody answered in time, searched with your SearXNG and read by a teacher; the Searcher
+  tooldoctor.py          why a tool fails (its code, the network, its server, its settings), fixes you approve, backups, rollback (P3)
+  realm.py               fact and fiction: what the text says, names from works, the realm node, answers framed as fiction (P24)
+  conversation.py        conversations: follow-ups, short-term memory nodes, the keep node and its ego's decision, the Keeper (P25)
   agency.py              independent agency: the Director, its modes, the drive policy and the agency node (P12)
   directors.py           the directors: intake, review, second opinions, the memory gate, duplicates, the stance (P14)
   toolsmith.py           the toolsmith: the coder teacher, writing, checking and offering tools, approval, experiments, refinement (P15)
@@ -2203,7 +2328,7 @@ neuromesh/
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   287 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   308 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -2259,7 +2384,16 @@ tests/                   287 tests: nodes, guardian, LLM wire formats and a mock
                          memory; questions about you never sent; a person's answer replacing the web's;
                          reading the results itself without a teacher; its budget), objectives that end short
                          archived (off the list, write-up kept, tried again, removed, older ones archived
-                         at start) and it always having an objective to work on
+                         at start) and it always having an objective to work on, the challenge catalog (a
+                         mock Hub and dataset viewer: search, columns guessed and changed, any dataset
+                         downloaded and practised, your own JSONL/CSV, export and import, remove), the tool
+                         doctor (a fault in a tool's code found, fixed with a mock teacher, approved, backed
+                         up, undone when it still fails and fixed again; an unsafe fix never offered; a server
+                         that isn't there is not a fault in the code; remove and restore across restarts),
+                         fact and fiction (cues, works, framing, older memory databases migrated, memory
+                         and answers marked, "is Gandalf real?", its dreams), and conversations (follow-ups,
+                         what you tell it recalled verbatim, corrections, secrets never kept or repeated,
+                         its ego keeping and letting go after the quiet, keep and forget by hand)
 ```
 
 State lives in `state/` (SQLite database, node weights, log). Delete it to start fresh.

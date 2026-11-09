@@ -20,6 +20,12 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /tools                          tools and their states, and the tool switch
   /tools on|off|decide            the tool switch: use tools, never run them, or let it decide each time
   /tool <name> on|off|decide|default   set one tool apart from the switch (default: as the switch)
+  /tool <name> why                why it fails: its code, or the network, its server, its settings (and a fix to approve)
+  /tool <name> remove [why]       take it out of the mesh (its files stay); /tool <name> restore brings it back, re-vetted
+  /doctor                         tools it looked into, and the fixes it wrote
+  /conversation [end]             the conversation it is having: turns, and what you told it (end: its ego decides now)
+  /stm [keep|forget <id>]         short-term memory: what you told it, kept verbatim until its ego keeps or lets it go
+  /real <text>                    fact or fiction? (and how it tells)
   /code                           its scratch pad: code it wrote, checked, waiting for approval, and what ran
   /code write <what it should do> have it write code (a recipe, a teacher with Gitea examples, or the closest example)
   /code show|check|approve|decline|remove <id>   approve: it runs that exact code once (P20)
@@ -101,6 +107,10 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /challenge show <suite>         the last exam, question by question
   /challenge fetch <benchmark> [rows] [split]   download gsm8k, sst2, ag_news, boolq, arc_easy, arc_challenge,
                                   commonsense_qa or squad from Hugging Face   (/task challenge <suite> every 30m)
+  /challenge search <words>       find more datasets on the Hugging Face Hub
+  /challenge look <owner/name>    its columns, first rows and how it would be read
+  /challenge fetch <owner/name> [rows] [split]   download any of them as a suite (the web page lets you pick columns)
+  /challenge remove <suite>       remove a downloaded suite
   /inquiries                      questions the mesh is asking you      /reply <inq-id> <answer>
   /proposals                      capabilities the mesh would like      /adopt <prop-id> [labels]  /decline <prop-id>
   /opinions   /notes              the opinions and notes it shares (private ones are only counted)
@@ -608,16 +618,43 @@ async def challenge_command(system, rest: str) -> list[str]:
         for r in last["results"]:
             out.append(f"   {r['verdict']:<5} {r['input'][:60]:<60} want {str(r['want'])[:24]!r} got {str(r['got'])[:30]!r}")
         return out
+    if verb == "search":
+        if not args.strip():
+            return ["  usage: /challenge search <words>   (datasets on the Hugging Face Hub)"]
+        found = await asyncio.to_thread(ch.search, args)
+        if not found:
+            return [f"  no datasets on the Hub match {args.strip()!r}"]
+        return [f"  {d['id']:<44} {d['downloads']:>10,} downloads  {', '.join(d['tasks'][:2])}" for d in found[:12]] + \
+               ["  /challenge look <owner/name> shows its columns and first rows; /challenge fetch <owner/name> [rows] downloads it"]
+    if verb in ("look", "inspect"):
+        if not parts:
+            return ["  usage: /challenge look <owner/name> [subset] [split]"]
+        got = await asyncio.to_thread(ch.inspect, parts[0], parts[1] if len(parts) > 1 else "",
+                                      parts[2] if len(parts) > 2 else "")
+        g = got["guess"]
+        out = [f"  {got['dataset']} {got['config']}/{got['split']}: columns " +
+               ", ".join(f"{f['name']} ({f['kind']})" for f in got["features"]),
+               f"  read as: {g['kind'] or '?'} - question {g['input'] or '?'}, answer {g['answer'] or '?'}"
+               + (f", passage {g['context']}" if g["context"] else "") + (f", labels {', '.join(g['labels'][:8])}" if g["labels"] else "")]
+        for p in got["preview"][:4]:
+            out.append(f"   {p['input'][:70]!r} -> {str(p['answer'])[:30]!r}")
+        if not got["preview"]:
+            out.append("  it can't tell how to read it; the web page's Challenges lets you pick the columns")
+        return out
+    if verb == "remove":
+        ok, msg = ch.remove(parts[0] if parts else "", by)
+        return [f"  {msg}"]
     if verb == "fetch":
-        if not parts or parts[0] not in ADAPTERS:
-            return ["  usage: /challenge fetch <benchmark> [rows] [split]; benchmarks: " + ", ".join(ADAPTERS)]
+        if not parts:
+            return ["  usage: /challenge fetch <benchmark | owner/name> [rows] [split]; benchmarks: " + ", ".join(ADAPTERS)]
         rows = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
         split = parts[2] if len(parts) > 2 else ""
-        suite = await asyncio.to_thread(ch.fetch, parts[0], rows, split, "", by)
+        suite = await (ch.get(parts[0], limit=rows, split=split, by=by) if parts[0] in ADAPTERS else
+                       ch.get("", parts[0], {}, rows, "", split, "", "", by))
         return [f"  fetched {suite.name}: {len(suite.items)} items ({len(suite.practice())} practice, "
                 f"{len(suite.exam())} exam) from {suite.source}",
                 f"  /challenge run {suite.name} sits the exam; /challenge practice {suite.name} teaches"]
-    return ["  usage: /challenge run|practice|show|fetch ...  (/challenges lists the suites)"]
+    return ["  usage: /challenge run|practice|show|fetch|search|look|remove ...  (/challenges lists the suites)"]
 
 
 def mind_lines(system, view: str) -> list[str]:
@@ -906,11 +943,40 @@ async def execute(system, line: str) -> Output:
             out = await gitea_lines(system, rest)
         elif cmd == "tool":
             name, _, mode = rest.partition(" ")
+            verb, _, why = mode.strip().partition(" ")
+            who = os.environ.get("USER", "operator")
             if not name or not mode.strip():
-                out = ["  usage: /tool <name> on|off|decide|default"]
+                out = ["  usage: /tool <name> on|off|decide|default|why|remove|restore"]
+            elif verb == "remove":
+                ok, msg = await system.remove_tool(name.strip(), who, why.strip())
+                out = [f"  {msg}"]
+            elif verb == "restore":
+                ok, msg = system.restore_tool(name.strip(), who)
+                out = [f"  {msg}"]
+            elif verb in ("why", "diagnose"):
+                d = await system.tooldoctor.diagnose(name.strip(), "a person asked", who)
+                out = system.tooldoctor.lines(name.strip()) if d.get("ok") else [f"  {d.get('message')}"]
             else:
                 ok, msg = system.tool_switch.set_tool(name.strip(), mode.strip(), "console")
                 out = [f"  {msg}"]
+        elif cmd == "doctor":
+            out = system.tooldoctor.lines()
+        elif cmd in ("conversation", "conversations"):
+            if rest.strip().startswith("end"):
+                ok, msg = system.conversations.end_now(rest.strip()[3:].strip() or "user", os.environ.get("USER", "operator"))
+                out = [f"  {msg}"]
+            else:
+                out = system.conversations.lines()
+        elif cmd == "stm":
+            verb, _, sid = rest.strip().partition(" ")
+            if verb in ("keep", "forget") and sid.strip():
+                ok, msg = system.conversations.decide(sid.strip(), verb, os.environ.get("USER", "operator"))
+                out = [f"  {msg}"]
+            else:
+                out = system.conversations.lines()
+        elif cmd == "real":
+            j = system.realm.judge(rest, teach=False) if rest.strip() else None
+            out = [f"  {j.realm}" + (f" ({j.work})" if j.work else "") + f": {j.how}"] if j else ["  usage: /real <text>"]
         elif cmd == "teachers":
             out = teacher_lines(system)
         elif cmd == "research":

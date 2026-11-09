@@ -26,6 +26,9 @@ about people stay with the mind, and private (P9).
 
 It also answers questions about itself from the same picture: "tell me about yourself", "how are you
 feeling?", "what did you dream about?", "what do you like?".
+
+Fact and fiction (realm.py, P24): on the way in it notes whether its memory holds the answer as fact or as
+fiction; a remark of its own about something from fiction says so, and is kept in memory as fiction.
 """
 from __future__ import annotations
 
@@ -54,7 +57,7 @@ VALUES = {"mood": MOODS, "tone": ("neutral", "friendly", "frustrated", "hostile"
           "dreamt": ("no", "yes"), "view": ("none", "likes", "dislikes"), "spoke": ("not", "recent")}
 BRIGHT, LOW = ("upbeat", "content"), ("tense", "subdued", "wary")
 HELD = ("brief", "confirm", "defer", "block")
-SKIP_ROUTES = ("tasks", "objectives", "toolsmith", "ego", "mind", "thinking", "corrections", "scratch", "vision")
+SKIP_ROUTES = ("tasks", "objectives", "toolsmith", "ego", "mind", "thinking", "corrections", "scratch", "vision", "realm")
 MOOD_SAY = {"upbeat": "I'm in good spirits", "content": "I'm content", "steady": "I'm steady", "alert": "I'm alert",
             "subdued": "I'm feeling a little low", "tense": "I'm a bit tense", "wary": "I'm feeling wary"}
 LABEL = "my ego"
@@ -321,8 +324,9 @@ class Ego:
             return out
         try:
             r = mem.recall(text, quiet=True)
-            if r is not None:
-                out["fact"] = {"node": r.node.id, "answer": r.answer[:160], "confidence": round(r.confidence, 3)}
+            if r is not None:  # and as what it holds it: fact, or fiction from a work (realm.py, P24)
+                out["fact"] = {"node": r.node.id, "answer": r.answer[:160], "confidence": round(r.confidence, 3),
+                               "realm": getattr(r, "realm", "") or "", "work": getattr(r, "work", "") or ""}
             o = mem.recall_own(text, threshold=0.5)
             if o is not None:
                 out["said"] = {"node": o.node.id, "text": o.answer[:200]}
@@ -331,10 +335,11 @@ class Ego:
         self.stats["memory reads"] += 1
         return out
 
-    def remember(self, kind: str, text: str, about: str = "", mood: str = "", source: str = "") -> dict | None:
+    def remember(self, kind: str, text: str, about: str = "", mood: str = "", source: str = "",
+                 realm: str = "") -> dict | None:
         """What its ego said, kept in memory (untested: memory.py's own statements)."""
         try:
-            kept = self.sys.memory.remember_own(kind, text, about=about, mood=mood, source=source)
+            kept = self.sys.memory.remember_own(kind, text, about=about, mood=mood, source=source, realm=realm)
         except Exception:
             return None
         if kept:
@@ -371,7 +376,9 @@ class Ego:
         taken = self.taken.pop(order.id, None)
         if taken:
             m = taken.get("memory") or {}
-            seen = ([f"{m['fact']['node']} holds an answer"] if m.get("fact") else []) + \
+            seen = ([f"{m['fact']['node']} holds an answer"
+                     + (f" (as fiction, from {m['fact']['work'] or 'a story'})" if m["fact"].get("realm") == "fiction" else
+                        " (as fact)" if m["fact"].get("realm") == "fact" else "")] if m.get("fact") else []) + \
                    ([f"{m['said']['node']} recalls what it said before"] if m.get("said") else [])
             res.trace.insert(0, f"ego (the outer layer): took it in {a_mood(taken['mood'])}; its memory: "
                                 + (", ".join(seen) if seen else "nothing on this yet"))
@@ -431,6 +438,11 @@ class Ego:
             self.save()
             return None
         text, grounds = built
+        realm = getattr(res, "realm", None) or {}
+        if realm.get("realm") == "fiction" and kind in ("curious", "opinion", "doubt") and "fiction" not in text:
+            work = realm.get("work") or "a story"  # it never talks about fiction as if it were the world (P24)
+            text += f" (I know it as fiction{'' if work in ('a story', '') else ', from ' + work}, not as fact.)"
+            grounds = list(grounds) + [f"realm: fiction ({realm.get('how', '')})"]
         mood = ctx["snap"]["mood"]
         rem = {"kind": kind, "text": text, "grounds": grounds, "mood": mood, "about": ctx["name"] or "",
                "node": node or "ego policy", "how": how, "why": why, "order": order.id, "ts": round(time.time(), 1),
@@ -439,7 +451,8 @@ class Ego:
         self.last_spoke = s.order_count
         if kind == "curious" and ctx["name"] and self.pol.fascinate:
             self.fascinate(ctx["name"], f"its ego said it was curious about it ({order.id})")
-        kept = self.remember(f"ego:{kind}", text, about=ctx["name"] or "", mood=mood, source=order.id)
+        kept = self.remember(f"ego:{kind}", text, about=ctx["name"] or "", mood=mood, source=order.id,
+                             realm="fiction" if realm.get("realm") == "fiction" else "")
         rem["memory"] = (kept or {}).get("node") or ("kept" if kept else "")
         self.save()
         res.trace.append(f"ego: {kind} ({why}; decided by {how}), in {a_mood(mood)}"
@@ -447,6 +460,54 @@ class Ego:
         s.bus.publish("ego.spoke", order=order.id, kind=kind, mood=mood, about=(ctx["name"] or "")[:80], node=rem["node"],
                       text=text[:200])
         return rem
+
+    # ------------------------------------------------------------- what to keep from a conversation (P25)
+    def keep_situation(self, item: dict, convs=None) -> dict:
+        """A short-term memory node as the keep node sees it."""
+        from .conversation import KEEP_VALUES
+        kind = ("fiction" if item.get("realm") == "fiction" else "personal" if item.get("personal") and item.get("value")
+                else "fact" if item.get("value") else "chatter")
+        known = "no"
+        mem = self.sys.memory
+        if item.get("ask") and item.get("value") and mem.enabled:
+            try:
+                r = mem.recall(item["ask"], quiet=True)
+                if r is not None and r.answer.strip().lower() == str(item["value"]).strip().lower():
+                    known = "yes"
+            except Exception:
+                pass
+        liked = "neutral"
+        rw = getattr(self.sys, "rewards", None)
+        if rw is not None and rw.enabled:
+            pull = rw.score("memory", "keep")
+            liked = "liked" if pull > 0.4 else "disliked" if pull < -0.4 else "neutral"
+        f = {"kkind": kind, "ksecret": "yes" if item.get("secret") else "no",
+             "kstate": "corrected" if item.get("status") == "superseded" else "current",
+             "klasting": "passing" if item.get("transient") else "lasting", "kasked": "yes" if item.get("used") else "no",
+             "kknown": known, "kliked": liked}
+        return {k: v if v in KEEP_VALUES[k] else KEEP_VALUES[k][0] for k, v in f.items()}
+
+    def keep(self, item: dict, convs=None) -> tuple[str, str, str]:
+        """Keep it (long-term memory) or let it go: (decision, why, who decided). Its keep node decides once it is
+        validated; the keep policy decides until then, and keeps teaching it. A secret is never kept."""
+        from .conversation import KEEP, keep_policy, keep_text
+        s = self.sys
+        f = self.keep_situation(item, convs)
+        text = keep_text(f)
+        label, why = keep_policy(f)
+        by = "its ego's keep policy"
+        node = s.registry.champion(KEEP) if KEEP in s.capabilities else None
+        if (node is not None and {"keep", "let_go"} <= set(node.labels) and f["ksecret"] == "no"
+                and (node.metrics.get("holdout_acc") or 0.0) >= s.directives.nodes.serve_min_accuracy):
+            got, conf = node.predict(s.encode(text))
+            if got in ("keep", "let_go"):
+                if got != label:
+                    why = f"its keep node chose to {got.replace('_', ' ')} it ({conf:.0%} sure)"
+                label, by = got, f"its ego's keep node {node.id}"
+        if KEEP in s.capabilities:
+            s.learn(KEEP, text, keep_policy(f)[0], KEEP)  # the policy keeps teaching the keep node
+        self.stats["kept" if label == "keep" else "let go"] += 1
+        return ("keep" if label == "keep" else "let_go"), why, by
 
     # ------------------------------------------------------------- the ultimate arbitrator
     def arbitrate(self, kind: str, text: str, votes: list[dict], same=None) -> dict:

@@ -27,8 +27,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-ACTIVE, PENDING, APPROVED, REJECTED, QUARANTINED, RETIRED, DISCOVERED = (
-    "active", "pending_approval", "approved", "rejected", "quarantined", "retired", "discovered")
+ACTIVE, PENDING, APPROVED, REJECTED, QUARANTINED, RETIRED, DISCOVERED, REMOVED = (
+    "active", "pending_approval", "approved", "rejected", "quarantined", "retired", "discovered", "removed")
 
 
 def folder_digest(folder: Path) -> str:
@@ -115,6 +115,7 @@ class ToolRun:
     not_found: bool = False                     # the tool works but has no answer (e.g. no such article)
     query: dict | None = None                   # the tool asks a director for context before it can answer
     refused: bool = False                       # the tool switch is off for it: it never ran (toolgate.py)
+    trace: str = ""                             # the tool's traceback, when its own code failed (tooldoctor.py)
 
 
 _LAUNCHER = """
@@ -248,6 +249,11 @@ class Sandbox:
             await w.stop()
         self.workers.clear()
 
+    async def stop_worker(self, name: str) -> None:
+        w = self.workers.pop(name, None)
+        if w is not None:
+            await w.stop()
+
     def worker_status(self) -> dict:
         return {name: {"alive": w.alive, "served": w.served, "since": round(w.started, 1), "pid": w.proc.pid}
                 for name, w in self.workers.items()}
@@ -292,7 +298,8 @@ class Sandbox:
             return ToolRun(False, error=f"timeout after {timeout}s", ms=(time.perf_counter() - t0) * 1000)
         ms = (time.perf_counter() - t0) * 1000
         if proc.returncode != 0:
-            return ToolRun(False, error=(err.decode(errors="replace")[-400:] or f"exit {proc.returncode}"), ms=ms)
+            stderr = err.decode(errors="replace")
+            return ToolRun(False, error=(stderr[-400:] or f"exit {proc.returncode}"), ms=ms, trace=stderr[-4000:])
         lines = out.decode(errors="replace").strip().splitlines()
         try:
             data = json.loads(lines[-1]) if lines else {}
@@ -306,7 +313,7 @@ class Sandbox:
             return ToolRun(False, error="tool printed invalid JSON", ms=ms)
         if "error" in data:
             return ToolRun(False, error=str(data["error"]), ms=ms, transient=bool(data.get("transient")),
-                           not_found=bool(data.get("not_found")))
+                           not_found=bool(data.get("not_found")), trace=str(data.get("trace") or "")[-4000:])
         if data.get("query"):  # it asks a director for context (see the module docstring)
             q = data["query"] if isinstance(data["query"], dict) else {"ask": str(data["query"])}
             q = {k: str(v)[:300] for k, v in q.items() if k in ("ask", "about", "why")}
@@ -335,6 +342,11 @@ class ToolRegistry:
         self.store = store
         self.tools: dict[str, Tool] = {}
         self._persisted = store.load_tools()
+        # tools a person removed from the mesh: their files stay where they are, and scans pass them by
+        self.removed: dict[str, dict] = json.loads(store.get_kv("tools.removed") or "{}")
+
+    def save_removed(self) -> None:
+        self.store.set_kv("tools.removed", json.dumps(self.removed))
 
     def persist(self, tool: Tool) -> None:
         self.store.save_tool(tool.name, tool.state, tool.manifest.digest, tool.to_meta())
@@ -354,6 +366,12 @@ class ToolRegistry:
                     changes.append((None, f"invalid: {exc}", folder.name))
                     continue
                 seen.add(manifest.name)
+                if manifest.name in self.removed:  # removed by a person: shown, never vetted or run
+                    if manifest.name not in self.tools:
+                        r = self.removed[manifest.name]
+                        self.tools[manifest.name] = Tool(manifest, REMOVED, note=f"removed by {r.get('by', 'a person')}"
+                                                         + (f": {r['why']}" if r.get("why") else ""))
+                    continue
                 existing = self.tools.get(manifest.name)
                 if existing is None:
                     prior = self._persisted.get(manifest.name)
@@ -368,6 +386,6 @@ class ToolRegistry:
                 elif existing.manifest.digest != manifest.digest:
                     changes.append((manifest, "changed", manifest.name))
         for name, tool in self.tools.items():
-            if name not in seen and tool.state not in (RETIRED, REJECTED):
+            if name not in seen and tool.state not in (RETIRED, REJECTED, REMOVED):
                 changes.append((None, "removed", name))
         return changes

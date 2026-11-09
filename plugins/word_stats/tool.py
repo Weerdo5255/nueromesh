@@ -2,6 +2,7 @@
 import json
 import re
 import sys
+import traceback
 
 
 def target_text(text):
@@ -26,5 +27,5 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except Exception as exc:
-        print(json.dumps({"error": str(exc)}))
+    except Exception as exc:  # a fault in this code: the trace lets the mesh find it (tooldoctor.py)
+        print(json.dumps({"error": f"{type(exc).__name__}: {exc}", "trace": traceback.format_exc()[-3000:]}))

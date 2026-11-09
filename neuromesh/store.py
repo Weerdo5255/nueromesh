@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS images(id TEXT PRIMARY KEY, status TEXT, data TEXT, c
 CREATE TABLE IF NOT EXISTS lessons(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
 CREATE TABLE IF NOT EXISTS changes(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
 CREATE TABLE IF NOT EXISTS objective_archive(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
+CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
+CREATE TABLE IF NOT EXISTS short_memory(id TEXT PRIMARY KEY, status TEXT, data TEXT, created_at REAL);
 CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT, updated_at REAL);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, ts REAL, actor TEXT, kind TEXT, subject TEXT, detail TEXT);
 """
@@ -49,7 +51,7 @@ class Example:
 
 
 RECORD_TABLES = ("inquiries", "proposals", "bg_tasks", "challenge_runs", "objectives", "scratch", "images", "lessons", "changes",
-                 "objective_archive")
+                 "objective_archive", "conversations", "short_memory")
 
 
 class Store:

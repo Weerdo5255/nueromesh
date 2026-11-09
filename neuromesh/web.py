@@ -171,6 +171,7 @@ def memory_node(system, nid: str) -> dict | None:
             "first_bytes": n.first_bytes, "passed": n.passed, "total": n.total, "served": n.served,
             "file": mem.tests_ref(n), "failing": n.failing, "parts": n.parts or [n.id], "merged_from": n.merged_from,
             "facts": [{"ask": t.ask, "answer": t.answer, "source": t.source, "learned": t.learned, "by": t.by,
-                       "variants": [v.ask for v in n.tests if v.variant_of == t.ask]} for t in n.facts()],
+                       "variants": [v.ask for v in n.tests if v.variant_of == t.ask],
+                       "realm": t.realm, "work": t.work} for t in n.facts()],
             "unknowns": [{"ask": u.ask, "reason": u.reason} for u in n.unknowns],
             "history": [mem._history_line(h) for h in n.history[-30:]]}

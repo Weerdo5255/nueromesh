@@ -48,7 +48,7 @@
     sec = Math.max(0, Math.round(sec));
     if (sec < 90) return `${sec}s`;
     if (sec < 5400) return `${Math.round(sec / 60)}m`;
-    if (sec < 172800) return `${Math.floor(sec / 3600)}h ${pad(Math.round((sec % 3600) / 60))}m`;
+    if (sec < 172800) { const m = Math.round(sec / 60); return `${Math.floor(m / 60)}h ${pad(m % 60)}m`; }
     return `${Math.floor(sec / 86400)}d ${Math.floor((sec % 86400) / 3600)}h`;
   }
   function took(sec) { return sec < 1 ? `${Math.round(sec * 1000)}ms` : `${sec.toFixed(1)}s`; }
@@ -203,7 +203,7 @@
     const view = t.opinion ? (t.opinion.private ? "It has a view of this too, and keeps it to itself." : null) : null;
     return h("aside", { class: "thought", "aria-label": "Its own thinking" },
       h("p", { class: "thought-by" }, "Its own thinking", h("span", {}, ` ${t.node}, from ${t.grounds} fact${t.grounds === 1 ? "" : "s"} it holds; not part of the answer`)),
-      h("p", {}, t.text),
+      h("p", {}, t.text, t.realm?.realm === "fiction" ? realmChip(t.realm) : null),
       view ? h("p", { class: "dim small" }, view) : null);
   }
 
@@ -291,7 +291,7 @@
         const r = await api("/command", { line: text });
         showAnswer({ text, lines: r.lines });
       } else {
-        const r = await api("/order", { text, source: "web" });
+        const r = await api("/order", { text, source: "web", conversation: convId() });
         showAnswer({ text, order: r });
       }
       cmd.value = "";
@@ -332,6 +332,7 @@
     const m = text.match(/\n(Sources?: [\s\S]*)$/);
     const lead = m ? text.slice(0, m.index) : text;
     const kids = [h("div", { class: "lead" }, lead)];
+    if (r.conversation?.read_as) kids.push(h("div", { class: "read-as" }, `Read as “${r.conversation.read_as}”, following on from what you asked before.`));
     if (m) kids.push(h("div", { class: "src" }, m[1]));
     if (r.inquiry) {
       kids.push(h("div", { class: "ask" }, h("p", {}, r.inquiry.question), replyForm(r.inquiry.id, [])));
@@ -341,6 +342,10 @@
       h("span", {}, `served by ${r.served_by}`), h("span", {}, r.order_id),
     ];
     if (r.disposition) meta.push(h("span", {}, `temperament: ${r.disposition}`));
+    if (r.realm?.realm === "fiction") meta.unshift(realmChip(r.realm));
+    if (r.conversation?.recalled) meta.push(h("span", {}, `from what you told it at ${r.conversation.recalled}`));
+    if (r.conversation?.told) meta.push(h("a", { href: "#memory", onclick: () => { S.extraAt.conversations = 0; } }, `in short-term memory (${r.conversation.told})`));
+    else if (r.conversation?.turn > 1) meta.push(h("span", {}, `turn ${r.conversation.turn} of this conversation`));
     if (r.thought && r.route !== "thinking") kids.push(thoughtAside(r.thought));
     if (r.ego) kids.push(egoAside(r.ego));
     kids.push(h("div", { class: "meta" }, meta, close));
@@ -968,6 +973,13 @@ it decides whether to say something of its own after an answer, and what`))
             h("button", { type: "button", onclick: e => act(e.target, () => api("/approve", { id: a.id, approve: false, by: "web" }), `Declined ${a.subject}`) }, "Decline"))));
         continue;
       }
+      if (a.kind === "tool.fix") {  // a fix for a tool's code: why it failed, and the change
+        out.push(h("div", { class: "ask" }, fixApproval(a),
+          h("div", { class: "row" },
+            h("button", { type: "button", class: "primary", onclick: e => act(e.target, () => api("/approve", { id: a.id, approve: true, by: "web" }), `Approved: ${a.subject} v${a.detail?.to_version} is installed and tested`) }, "Approve the fix"),
+            h("button", { type: "button", onclick: e => act(e.target, () => api("/approve", { id: a.id, approve: false, by: "web" }), `Declined the fix for ${a.subject}`) }, "Decline"))));
+        continue;
+      }
       if (a.kind === "code") {  // code from its scratch pad: say what it reaches for, and where to read it
         out.push(h("div", { class: "ask" },
           h("p", {}, h("b", {}, `Run ${a.subject}`), ` from its scratch pad: ${cut(a.detail?.title || "", 80)}`),
@@ -1080,12 +1092,47 @@ it decides whether to say something of its own after an answer, and what`))
     renderMemory(true);
   }
 
+  // the conversation it is having (conversation.py): one id per browser, kept between visits
+  function convId() {
+    let id = store.get("conversation", "");
+    if (!id) { id = "web-" + Math.random().toString(36).slice(2, 10); store.set("conversation", id); }
+    return id;
+  }
+  // short-term memory: what you told it, verbatim, until its ego keeps it or lets it go
+  const STM_STATUS = { short: "short-term", long: "kept long-term", "let go": "let go", superseded: "replaced" };
+  function shortTermSection() {
+    const C = S.extra.conversations;
+    if (!C) return h("div", { class: "section" }, h("h2", {}, "Short-term memory"), h("p", { class: "dim" }, "Loading…"));
+    if (!C.enabled) return h("div", { class: "section" }, h("h2", {}, "Short-term memory"), h("p", { class: "dim" }, "Conversations are off ([conversation] enabled = false)."));
+    const live = C.short.filter(i => i.status === "short");
+    const settled = C.short.filter(i => i.status !== "short").slice(0, 30);
+    const decide = (i, action) => e => act(e.currentTarget, async () => { const r = await api("/memory/short", { id: i.id, action, by: "web" }); S.extraAt.conversations = 0; return r; }, r => r.message);
+    const left = i => i.expires_at ? Math.max(0, i.expires_at - Date.now() / 1000) : 0;
+    const item = i => h("li", { class: "stm" + (i.secret ? " stm-secret" : "") },
+      h("div", { class: "stm-text" }, h("span", {}, i.secret ? "A secret (hidden)" : `“${i.text}”`), i.realm === "fiction" ? realmChip(i) : null),
+      h("div", { class: "dim small" }, [i.subject && i.value && !i.secret ? `${i.subject}: ${i.value}` : "", `told ${dateTime(i.created_at)}`,
+        i.used ? `asked about ${i.used}×` : "", i.transient ? "about that moment" : "",
+        i.status === "short" ? (left(i) > 0 ? `its ego decides in ${span(left(i))}` : "its ego decides at its next look") : "",
+        i.status !== "short" ? `${STM_STATUS[i.status] || i.status}: ${i.why}${i.node ? ` (memory node ${i.node})` : ""}` : ""].filter(Boolean).join("; ")),
+      i.status === "short" ? h("div", { class: "row stm-acts" },
+        i.secret ? null : h("button", { type: "button", class: "small", onclick: decide(i, "keep") }, "Keep now"),
+        h("button", { type: "button", class: "small quiet", onclick: decide(i, "forget") }, "Forget")) : null);
+    const open = C.conversations.filter(c => c.status === "open");
+    return h("div", { class: "section", id: "short-term" }, h("h2", {}, "Short-term memory"),
+      h("p", { class: "lede" }, `What you tell it in conversation, kept exactly as you said it - never compressed. After ${C.idle_hours} hours of quiet, its ego decides what to keep as long-term memory, as fact or as fiction; a secret is never kept.`),
+      live.length ? h("ul", { class: "stm-list" }, live.map(item)) : h("p", { class: "dim" }, "Nothing yet. Tell it something - “my dog is called Rex”, “remember that the meeting is on Friday”, “in my story the dragon Vex lives on the moon”."),
+      open.length ? h("p", { class: "dim small" }, open.map(c => `${c.id}: ${c.turns} turns, ${c.items} things told`).join("; "), " ",
+        ...open.map(c => h("button", { type: "button", class: "small quiet", onclick: e => act(e.currentTarget, async () => { const r = await api("/conversations/end", { id: c.id, by: "web" }); S.extraAt.conversations = 0; return r; }, r => r.message) }, `End ${c.id} now`))) : null,
+      settled.length ? h("details", {}, h("summary", {}, `Settled (${settled.length})`), h("ul", { class: "stm-list" }, settled.map(item))) : null);
+  }
+
   function renderMemory(force) {
     const host = $("#memory");
     const mem = S.dash.status.memory;
     if (!force && busy(host)) return;
     if (!mem || !mem.enabled) {
-      fill(host, h("p", { class: "lede" }, "Memory nodes are off. Set enabled = true under [memory] in directives.toml to have NeuroMesh compress what it learns into tested nodes."));
+      fill(host, h("p", { class: "lede" }, "Memory nodes are off. Set enabled = true under [memory] in directives.toml to have NeuroMesh compress what it learns into tested nodes. What you tell it in conversation is still kept in short-term memory."),
+        shortTermSection());
       return;
     }
     const ask = h("input", { type: "text", placeholder: "Question", "aria-label": "Question" });
@@ -1119,6 +1166,7 @@ it decides whether to say something of its own after an answer, and what`))
     }, r => (r.passing ? "Every memory node passes its tests" : "Some tests fail - see below")) }, "Run every test");
 
     const kids = [
+      shortTermSection(),
       h("div", { class: "section" },
         h("p", { class: "lede" }, `${mem.facts} facts in ${mem.nodes.length} memory node${mem.nodes.length === 1 ? "" : "s"}, ${bytes(mem.bytes)}` +
           (mem.first_bytes > mem.bytes ? ` (first learned in ${bytes(mem.first_bytes)})` : "") +
@@ -1157,7 +1205,7 @@ it decides whether to say something of its own after an answer, and what`))
           (d.merged_from.length ? ` Merged from ${d.merged_from.join(" and ")}; made of ${d.parts.join(", ")}.` : "") + " File: ", h("code", {}, d.file)),
         h("div", { class: "cols" },
           h("div", {}, h("h3", {}, "What it knows"), h("ul", { class: "facts" }, d.facts.map(f => h("li", {},
-            h("div", {}, h("div", { class: "q" }, f.ask), h("div", { class: "a" }, f.answer),
+            h("div", {}, h("div", { class: "q" }, f.ask, realmChip(f)), h("div", { class: "a" }, f.answer),
               h("div", { class: "s" }, [f.source && `learned from ${f.source}`, f.learned, f.variants.length && `also asked as “${f.variants.join("”, “")}”`].filter(Boolean).join("; "))),
             h("button", { type: "button", class: "quiet small", title: "Forget this fact (its tests go too)", onclick: e => act(e.target, () => api("/command", { line: `/memory forget ${f.ask}` }), "Forgotten") }, "Forget"))))),
           h("div", {}, h("h3", {}, "How it was compressed"), h("ol", { class: "rows small" }, d.history.map(x => h("li", { style: "padding:3px 0" }, x))),
@@ -1165,6 +1213,15 @@ it decides whether to say something of its own after an answer, and what`))
               h("ul", { class: "rows small" }, d.unknowns.map(u => h("li", { style: "padding:3px 0" }, h("b", {}, u.ask), h("span", { class: "dim" }, ` ${u.reason.replace(/^auto: /, "")}`)))))))));
     }
     fill(host, kids);
+  }
+
+  // fact or fiction (realm.py): a small mark beside what it holds or says
+  function realmChip(r) {
+    if (!r || !r.realm) return null;
+    const fiction = r.realm === "fiction";
+    const work = r.work && !["a story", "imagination", "a dream"].includes(r.work) ? r.work : (r.work || "");
+    return h("span", { class: `realm-chip ${fiction ? "fiction" : "fact"}`, title: r.how || (fiction ? "learned as fiction" : "learned as fact") },
+      fiction ? (work ? `fiction: ${work}` : "fiction") : "fact");
   }
 
   // ------------------------------------------------------------------ tabs
@@ -1930,13 +1987,19 @@ it decides whether to say something of its own after an answer, and what`))
             st.scratch?.auto_run || "ask", null),
           h("div", { class: "scroll-x" }, h("table", { class: "tbl" },
           h("thead", {}, h("tr", {}, ["Tool", "State", "Use", "Runs", "Note"].map((t, i) => h("th", { class: i === 3 ? "n" : null }, t)))),
-          h("tbody", {}, Object.entries(st.tools).map(([name, t]) => h("tr", {},
-            h("td", {}, h("b", {}, name), rewardButtons(name, `using the ${name} tool`), h("div", { class: "dim small" }, `v${t.version}${t.permissions.length ? `, needs ${t.permissions.join(", ")}` : ""}`)),
-            h("td", { class: t.state === "active" ? "ok" : ["quarantined", "rejected"].includes(t.state) ? "no" : "wait" }, t.state.replace("_", " ")),
-            h("td", {}, toolChoice(name, t, st.tool_switch?.mode || "on")),
+          h("tbody", {}, Object.entries(st.tools).map(([name, t]) => [h("tr", { class: (t.state === "removed" ? "tool-removed" : "") + (t.diagnosis && t.state !== "removed" ? " has-diag" : "") || null },
+            h("td", {}, h("b", {}, name), t.state === "removed" ? null : rewardButtons(name, `using the ${name} tool`), h("div", { class: "dim small" }, `v${t.version}${t.permissions.length ? `, needs ${t.permissions.join(", ")}` : ""}`)),
+            h("td", { class: t.state === "active" ? "ok" : ["quarantined", "rejected"].includes(t.state) ? "no" : t.state === "removed" ? "dim" : "wait" }, t.state.replace("_", " ")),
+            h("td", {}, t.state === "removed" ? null : toolChoice(name, t, st.tool_switch?.mode || "on")),
             h("td", { class: "n" }, num(t.runs)), h("td", { class: "small" }, t.note,
               t.error ? h("div", { class: "no tool-error" }, t.error) : null,
-              ["quarantined"].includes(t.state) ? h("button", { type: "button", class: "small quiet", onclick: e => act(e.target, () => api("/tools/retest", { tool: name, by: "web" }), r => r.message) }, "Test again") : null)))))))),
+              h("div", { class: "row tool-acts" },
+                t.state === "quarantined" ? h("button", { type: "button", class: "small quiet", onclick: e => act(e.target, () => api("/tools/retest", { tool: name, by: "web" }), r => r.message) }, "Test again") : null,
+                ["quarantined", "active"].includes(t.state) && (t.error || t.state === "quarantined") ? h("button", { type: "button", class: "small quiet", title: "Look at its failures and its code: is it the code, or something outside it?",
+                  onclick: e => act(e.currentTarget, () => api("/tools/diagnose", { tool: name, by: "web" }), r => r.message) }, "Why does it fail?") : null,
+                t.state === "removed" ? h("button", { type: "button", class: "small", onclick: e => act(e.target, () => api("/tools/restore", { tool: name, by: "web" }), r => r.message) }, "Restore")
+                  : removeToolButton(name)))),
+            t.diagnosis && t.state !== "removed" ? h("tr", { class: "diag-row" }, h("td", { colspan: 5 }, diagnosisBlock(name, t.diagnosis))) : null])))))),
       h("div", { class: "section" }, h("h2", {}, "Background tasks"),
         st.tasks.enabled ? [addTask, st.tasks.tasks.length ? h("div", { class: "scroll-x" }, h("table", { class: "tbl" },
           h("thead", {}, h("tr", {}, ["Task", "What", "Every", "State", "Doing", ""].map(t => h("th", {}, t)))),
@@ -1946,18 +2009,253 @@ it decides whether to say something of its own after an answer, and what`))
               h("button", { type: "button", class: "small", onclick: e => act(e.target, () => api("/task", { id: t.id, action: t.status === "active" ? "pause" : "resume", by: "web" }), r => r.message) }, t.status === "active" ? "Pause" : "Resume"),
               h("button", { type: "button", class: "small quiet", onclick: e => act(e.target, () => api("/task", { id: t.id, action: "remove", by: "web" }), r => r.message) }, "Remove")))))))) : h("p", { class: "dim" }, "No background tasks."),
           h("p", { class: "dim small" }, `${st.tasks.usage.last_hour} of ${st.tasks.usage.limit} task runs this hour.`)] : h("p", { class: "dim" }, "Background tasks are off.")),
-      h("div", { class: "section" }, h("h2", {}, "Challenges"),
+      h("div", { class: "section", id: "challenges-section" }, h("h2", {}, "Challenges"),
         st.challenges.suites.length ? h("div", { class: "scroll-x" }, h("table", { class: "tbl" },
           h("thead", {}, h("tr", {}, ["Suite", "Kind", "Items", "Last exam", "Best", "Exams", ""].map((t, i) => h("th", { class: [2, 3, 4, 5].includes(i) ? "n" : null }, t)))),
           h("tbody", {}, st.challenges.suites.map(c => h("tr", {}, h("td", {}, h("b", {}, c.suite), h("div", { class: "dim small" }, cut(c.description || c.source, 70))), h("td", {}, c.kind),
             h("td", { class: "n" }, `${c.items} (${c.exam} exam)`), h("td", { class: "n" }, pct(c.last_exam)), h("td", { class: "n" }, pct(c.best_exam)), h("td", { class: "n" }, c.exams),
             h("td", {}, h("div", { class: "row" },
               h("button", { type: "button", class: "small", onclick: e => act(e.target, () => api("/challenge", { suite: c.suite, mode: "practice", by: "web" }), r => r.summary) }, "Practise"),
-              h("button", { type: "button", class: "small", onclick: e => act(e.target, () => api("/challenge", { suite: c.suite, mode: "exam", by: "web" }), r => r.summary) }, "Sit exam")))))))) : h("p", { class: "dim" }, "No challenge suites. /challenge fetch gsm8k 200 downloads one.")),
+              h("button", { type: "button", class: "small", onclick: e => act(e.target, () => api("/challenge", { suite: c.suite, mode: "exam", by: "web" }), r => r.summary) }, "Sit exam"),
+              h("button", { type: "button", class: "small quiet", title: "Save its questions and answers as a file another NeuroMesh can add", onclick: e => exportSuite(e.currentTarget, c.suite) }, "Export"),
+              c.downloaded ? removeSuiteButton(c.suite) : null))))))) : h("p", { class: "dim" }, "No challenge suites yet. Download one below, or add your own."),
+        catalogPanel(st)),
       h("div", { class: "section" }, h("h2", {}, "Knowledge"),
         h("p", { class: "lede" }, `${num(k.documents)} articles and ${num(k.passages)} passages retained; ${num(k.recalled)} recalled and ${num(k.researched)} researched this run; research ${k.research.last_hour} of ${k.research.limit} this hour; ${k.tool ? `researching with ${k.tool}` : "no research tool active"}.`),
         S.extra.knowledge?.documents?.length ? h("ul", { class: "rows" }, S.extra.knowledge.documents.slice(0, 25).map(d => h("li", { style: "padding:4px 0;border-bottom:1px solid var(--rule)" },
           h("a", { href: d.url, target: "_blank", rel: "noopener" }, d.title), h("span", { class: "dim small" }, ` ${d.passages} passages, used ${d.hits}×, ${d.reason}`)))) : null));
+  }
+
+  // ------------------------------------------------------------------ challenges: more suites to test it with
+  const KIND_SAY = { classify: "a label for each text", numeric: "a number", choice: "one of several options",
+    yesno: "yes or no", short: "a short written answer" };
+  S.cat = { tab: "benchmarks", catalog: null, found: null, q: "", look: null, changed: false, armed: "", err: "" };
+  function saveFile(name, text, type = "application/json") {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = h("a", { href: url, download: name });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+  async function exportSuite(btn, suite) {
+    await act(btn, async () => {
+      const r = await api(`/challenges/export?suite=${encodeURIComponent(suite)}`);
+      saveFile(`${suite}.challenge.json`, JSON.stringify(r, null, 1));
+      return r;
+    }, `Saved ${suite}.challenge.json`);
+  }
+  function removeSuiteButton(suite) {
+    const armed = S.cat.armed === suite;
+    return h("button", { type: "button", class: "small danger" + (armed ? " armed" : ""), onclick: e => {
+      if (S.cat.armed !== suite) {
+        S.cat.armed = suite;
+        e.currentTarget.textContent = "Remove it?";
+        e.currentTarget.classList.add("armed");
+        const b = e.currentTarget;
+        setTimeout(() => { if (S.cat.armed === suite) { S.cat.armed = ""; b.textContent = "Remove"; b.classList.remove("armed"); } }, 4000);
+        return;
+      }
+      S.cat.armed = "";
+      act(e.currentTarget, () => api("/challenges/remove", { suite, by: "web" }), r => r.message);
+    } }, armed ? "Remove it?" : "Remove");
+  }
+
+  function catalogPanel(st) {
+    if (!S.catEl) S.catEl = buildCatalog(st);
+    S.catEl.refresh(st);
+    return S.catEl;
+  }
+  function buildCatalog(st) {
+    const root = h("details", { class: "cat" });
+    if (!st.challenges.suites.length) root.open = true;
+    const tabs = h("div", { class: "seg", role: "tablist", "aria-label": "Where the challenges come from" });
+    const panes = { benchmarks: h("div", { role: "tabpanel" }), search: h("div", { role: "tabpanel" }), own: h("div", { role: "tabpanel" }) };
+    const names = [["benchmarks", "Ready-made benchmarks"], ["search", "Search Hugging Face"], ["own", "Your own file"]];
+    let last = st;
+    const showTab = () => {
+      tabs.replaceChildren(...names.map(([k, label]) => h("button", { type: "button", role: "tab", "aria-selected": String(S.cat.tab === k),
+        class: S.cat.tab === k ? "on" : "", onclick: () => { S.cat.tab = k; showTab(); } }, label)));
+      for (const [k, el] of Object.entries(panes)) el.hidden = S.cat.tab !== k;
+    };
+    root.append(h("summary", {}, h("b", {}, "Add challenges"), h("span", { class: "dim small" }, "  benchmarks, any dataset on Hugging Face, or your own questions")),
+      h("div", { class: "cat-body" }, tabs, panes.benchmarks, panes.search, panes.own));
+
+    // ready-made benchmarks
+    const drawBench = () => {
+      const c = S.cat.catalog;
+      if (!c) return fill(panes.benchmarks, h("p", { class: "dim" }, S.cat.err || "Loading the catalog…"));
+      const have = new Set(last.challenges.suites.map(x => x.suite));
+      fill(panes.benchmarks,
+        h("p", { class: "lede small" }, `Well-known open benchmarks, read the right way already. Each download takes the first rows of its test split from Hugging Face (${num(c.fetch_limit)} unless you say otherwise); about ${100 - (last.challenges.exam_percent || 30)}% become practice it learns from, the rest an exam it never learns from.`),
+        h("div", { class: "scroll-x" }, h("table", { class: "tbl" },
+          h("thead", {}, h("tr", {}, ["Benchmark", "Answers with", "Licence", ""].map(t => h("th", {}, t)))),
+          h("tbody", {}, c.benchmarks.map(b => {
+            const got = have.has(b.name) || [...have].some(n => n.startsWith(b.name + "-"));
+            const rows = h("input", { type: "number", min: 1, max: 5000, step: 50, value: c.fetch_limit, class: "num-input", "data-free": "1", "aria-label": `Rows of ${b.name} to download` });
+            return h("tr", {}, h("td", {}, h("b", {}, b.name), h("div", { class: "dim small" }, b.description)),
+              h("td", { class: "small" }, KIND_SAY[b.kind] || b.kind), h("td", { class: "small" }, b.license || "see the dataset"),
+              h("td", {}, h("div", { class: "row" }, got ? h("span", { class: "ok small" }, "Downloaded") : null, rows,
+                h("button", { type: "button", class: "small", onclick: e => act(e.currentTarget, () => api("/challenge/fetch", { benchmark: b.name, rows: +rows.value || 0, by: "web" }), r => r.message) }, got ? "Download again" : "Download"))));
+          })))));
+    };
+
+    // search the Hub, look at a dataset, choose how to read it, download
+    const q = h("input", { type: "search", placeholder: "emotion, trivia, math word problems…", "data-free": "1", "aria-label": "Search datasets on Hugging Face" });
+    const found = h("div", { class: "cat-found" });
+    const insp = h("div", { class: "cat-insp" });
+    const search = async btn => {
+      const words = q.value.trim();
+      if (!words) return;
+      S.cat.q = words;
+      fill(found, h("p", { class: "dim small" }, `Searching Hugging Face for “${words}”…`));
+      if (btn) btn.disabled = true;
+      try {
+        const r = await api(`/challenges/search?q=${encodeURIComponent(words)}`);
+        S.cat.found = r.datasets;
+        drawFound();
+      } catch (e) { fill(found, h("p", { class: "no small" }, e.message)); }
+      finally { if (btn) btn.disabled = false; }
+    };
+    const hubLink = id => `${(S.cat.catalog?.hub || "https://huggingface.co").replace(/\/$/, "")}/datasets/${id}`;
+    const drawFound = () => {
+      const list = S.cat.found || [];
+      if (!list.length) return fill(found, h("p", { class: "dim small" }, `No datasets match “${S.cat.q}”. Try fewer or broader words.`));
+      fill(found, h("ul", { class: "cat-list" }, list.map(d => h("li", {},
+        h("div", {}, h("a", { href: hubLink(d.id), target: "_blank", rel: "noopener" }, d.id),
+          h("div", { class: "dim small" }, [`${num(d.downloads)} downloads`, d.tasks.join(", "), d.license && `licence ${d.license}`].filter(Boolean).join("; "))),
+        h("div", { class: "row" }, d.adapter ? h("span", { class: "chip" }, `ready-made: ${d.adapter}`) : null,
+          h("button", { type: "button", class: "small", onclick: () => look(d.id) }, "Look"))))));
+    };
+    const look = async (dataset, config = "", split = "", mapping = null) => {
+      if (!mapping) { S.cat.changed = false; fill(insp, h("p", { class: "dim small" }, `Reading the first rows of ${dataset}…`)); }
+      insp.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+      try {
+        const qs = new URLSearchParams({ dataset, config, split });
+        if (mapping) qs.set("mapping", JSON.stringify(mapping));
+        S.cat.look = await api(`/challenges/inspect?${qs}`);
+        drawInsp();
+      } catch (e) { fill(insp, h("p", { class: "no small" }, `${dataset}: ${e.message}`)); }
+    };
+    const drawInsp = () => {
+      const r = S.cat.look;
+      if (!r) return fill(insp);
+      const m = r.mapping;
+      const cols = r.features.map(f => f.name);
+      const change = (k, v) => { S.cat.changed = true; look(r.dataset, r.config, r.split, { ...m, [k]: v, labels: k === "answer" ? [] : m.labels }); };
+      const pick = (k, label, opts, optional) => h("label", { class: "cat-field" }, h("span", {}, label),
+        h("select", { onchange: e => change(k, e.target.value) },
+          optional ? h("option", { value: "", selected: !m[k] }, "none") : null,
+          opts.map(([v, t]) => h("option", { value: v, selected: m[k] === v }, t))));
+      const colOpts = cols.map(c => [c, c]);
+      const first = r.rows[0] || {};
+      const custom = S.cat.changed || !r.adapter;
+      const name = h("input", { type: "text", "data-free": "1", placeholder: r.adapter && !custom ? r.adapter : r.dataset.split("/").pop(), "aria-label": "Name for the suite" });
+      const rows = h("input", { type: "number", min: 1, max: 5000, step: 50, value: r.fetch_limit, class: "num-input", "data-free": "1", "aria-label": "Rows to download" });
+      const answerShown = p => r.mapping.kind === "choice" && p.choices.length
+        ? `${p.answer}: ${(p.choices.find(c => c[0] === p.answer) || [])[1] ?? "?"}` : Array.isArray(p.answer) ? p.answer.join(" / ") : String(p.answer);
+      fill(insp,
+        h("div", { class: "cat-head" }, h("h3", {}, h("a", { href: hubLink(r.dataset), target: "_blank", rel: "noopener" }, r.dataset)),
+          h("select", { "aria-label": "Subset and split", onchange: e => { const [c, sp] = e.target.value.split("\u0000"); look(r.dataset, c, sp); } },
+            r.splits.map(x => h("option", { value: `${x.config}\u0000${x.split}`, selected: x.config === r.config && x.split === r.split }, x.config === "default" ? x.split : `${x.config} / ${x.split}`)))),
+        r.adapter && !custom ? h("p", { class: "small ok" }, `This is the ready-made ${r.adapter} benchmark, already read the right way.`) : null,
+        h("div", { class: "scroll-x" }, h("table", { class: "tbl small cat-cols" },
+          h("thead", {}, h("tr", {}, ["Column", "Holds", "First row"].map(t => h("th", {}, t)))),
+          h("tbody", {}, r.features.map(f => h("tr", {}, h("td", {}, h("b", {}, f.name)),
+            h("td", {}, f.kind === "class" ? `label (${f.labels.slice(0, 4).join(", ")}${f.labels.length > 4 ? "…" : ""})` : f.kind),
+            h("td", { class: "dim" }, cut(typeof first[f.name] === "object" ? JSON.stringify(first[f.name]) : first[f.name], 90))))))),
+        h("p", { class: "small", style: "margin:10px 0 4px" }, "How to read it:"),
+        h("div", { class: "cat-map" },
+          pick("input", "Question", colOpts), pick("answer", "Answer", colOpts),
+          pick("kind", "Answered with", Object.entries(KIND_SAY).map(([k, t]) => [k, t])),
+          pick("context", "Passage to read", colOpts, true),
+          m.kind === "choice" ? pick("choices", "Options", colOpts, true) : null),
+        m.kind === "classify" && m.labels.length ? h("p", { class: "dim small" }, `Labels: ${m.labels.join(", ")}`) : null,
+        r.problem ? h("p", { class: "wait small" }, r.problem) : null,
+        r.preview.length ? [h("p", { class: "small", style: "margin:10px 0 4px" }, `The first ${r.preview.length} questions, read this way:`),
+          h("div", { class: "scroll-x" }, h("table", { class: "tbl small" }, h("thead", {}, h("tr", {}, h("th", {}, "Question"), h("th", {}, "Answer"))),
+            h("tbody", {}, r.preview.map(p => h("tr", {}, h("td", {}, cut(p.input, 140), p.context ? h("div", { class: "dim" }, `passage: ${cut(p.context, 80)}`) : null),
+              h("td", {}, cut(answerShown(p), 60)))))))] : null,
+        r.have.length ? h("p", { class: "dim small" }, `Already downloaded as ${r.have.join(", ")}.`) : null,
+        h("div", { class: "row cat-get" }, h("label", { class: "cat-field" }, h("span", {}, "Name"), name), h("label", { class: "cat-field" }, h("span", {}, "Rows"), rows),
+          h("button", { type: "button", class: "primary", disabled: !r.preview.length, onclick: e => act(e.currentTarget, async () => {
+            const res = await api("/challenge/fetch", { dataset: r.dataset, config: r.config, split: r.split, mapping: custom ? m : {}, rows: +rows.value || 0, name: name.value.trim(), by: "web" });
+            S.cat.look = { ...r, have: [...r.have, res.suite] }; drawInsp();
+            return res;
+          }, x => x.message) }, "Download")));
+    };
+    const searchForm = h("form", { class: "row cat-search", onsubmit: e => { e.preventDefault(); search(e.target.querySelector("button")); } }, q, h("button", { type: "submit" }, "Search"));
+    fill(panes.search, h("p", { class: "lede small" }, "Any public dataset with questions and answers can become a challenge. Look at one to see its columns and first rows; it guesses which column is the question and which the answer, and you can change that before downloading."),
+      searchForm, found, insp);
+
+    // your own questions
+    const ownName = h("input", { type: "text", "data-free": "1", placeholder: "my-quiz", "aria-label": "Suite name" });
+    const kind = h("select", { "aria-label": "Answered with" }, Object.entries(KIND_SAY).map(([k, t]) => h("option", { value: k, selected: k === "short" }, t)));
+    const labels = h("input", { type: "text", "data-free": "1", placeholder: "for labels: happy, sad, angry", "aria-label": "Labels" });
+    const text = h("textarea", { rows: 7, "data-free": "1", spellcheck: "false", class: "mono", "aria-label": "Questions and answers",
+      placeholder: '{"input": "What is the capital of Peru?", "answer": "Lima"}\n{"input": "How many legs does a spider have?", "answer": "8"}' });
+    const file = h("input", { type: "file", accept: ".jsonl,.json,.csv,.txt", "aria-label": "Choose a file", onchange: async e => {
+      const f = e.target.files[0];
+      if (!f) return;
+      if (f.size > 20 * 1048576) { toast("That file is larger than 20 MB"); return; }
+      text.value = await f.text();
+      if (!ownName.value.trim()) ownName.value = f.name.replace(/\.(challenge\.json|jsonl|json|csv|txt)$/i, "");
+      toast(`Read ${f.name}`);
+    } });
+    fill(panes.own,
+      h("p", { class: "lede small" }, "One question per line as JSON ({\"input\": …, \"answer\": …}), a JSON list, or a CSV file with input and answer columns. Multiple-choice items add \"choices\": [\"…\", \"…\"] and answer with the letter; a passage to read goes in \"context\". A suite exported from another NeuroMesh can be added as it is."),
+      h("div", { class: "cat-map" }, h("label", { class: "cat-field" }, h("span", {}, "Name"), ownName), h("label", { class: "cat-field" }, h("span", {}, "Answered with"), kind),
+        h("label", { class: "cat-field" }, h("span", {}, "Labels"), labels), h("label", { class: "cat-field" }, h("span", {}, "File"), file)),
+      text,
+      h("div", { class: "row", style: "margin-top:8px" }, h("button", { type: "button", class: "primary", onclick: e => act(e.currentTarget, async () => {
+        const r = await api("/challenges/import", { name: ownName.value.trim(), kind: kind.value, items: text.value,
+          labels: labels.value.split(",").map(x => x.trim()).filter(Boolean), by: "web" });
+        text.value = ""; ownName.value = ""; file.value = "";
+        return r;
+      }, r => r.message) }, "Add suite")));
+
+    root.refresh = st2 => {
+      last = st2;
+      if (!S.cat.catalog && !S.cat.loading) {
+        S.cat.loading = true;
+        api("/challenges/catalog").then(c => { S.cat.catalog = c; S.cat.err = ""; drawBench(); })
+          .catch(e => { S.cat.err = e.message; drawBench(); }).finally(() => { S.cat.loading = false; });
+      }
+      if (!panes.benchmarks.contains(document.activeElement)) drawBench();
+    };
+    showTab();
+    return root;
+  }
+
+  // why a tool fails (tooldoctor.py), the fix it wrote, and a person's last word: remove it
+  const CAUSE_SAY = { code: "a fault in its own code", network: "the network: its server can't be reached", service: "its server answered with an error",
+    config: "its settings: the address, a token, or the server's settings", environment: "this machine: something it needs is missing",
+    limits: "the sandbox's limits: time or memory", unknown: "it can't tell yet" };
+  function fixApproval(a) {
+    return [h("p", {}, h("b", {}, `Install a fix for ${a.subject}`), ` (v${a.detail?.version} → v${a.detail?.to_version})`),
+      h("p", { class: "why" }, `Why it fails: ${a.detail?.why || ""}`, h("br"), `The fix, by ${a.detail?.teacher || "its teacher"}: ${a.detail?.explanation || ""}`),
+      a.detail?.diff ? h("details", { class: "change" }, h("summary", {}, `The change to ${(a.detail.files || []).join(", ")}`), diffBlock(a.detail.diff)) : null];
+  }
+  function diagnosisBlock(name, d) {
+    const fix = d.fix;
+    const decide = ok => e => act(e.currentTarget, () => api("/approve", { id: fix.approval, approve: ok, by: "web" }), ok ? `Approved: ${name} v${fix.to_version} is installed and tested` : `Declined the fix for ${name}`);
+    return h("div", { class: `diag diag-${d.where}` },
+      h("p", {}, h("b", {}, d.where === "code" ? "Its code: " : d.where === "outside" ? "Not its code: " : "Unsure: "), CAUSE_SAY[d.cause] || d.cause),
+      h("p", { class: "dim" }, cut(d.why, 260)),
+      d.probe && !d.why.includes(d.probe) ? h("p", { class: "dim" }, `Its server: ${d.probe === "answers" ? "answers now" : d.probe}`) : null,
+      d.outcome ? h("p", {}, d.outcome) : d.advice && d.where !== "code" ? h("p", {}, `What to do: ${d.advice}`) : null,
+      fix && fix.diff ? h("details", { class: "change" }, h("summary", {}, `The fix (v${fix.to_version}): ${fix.status}`), h("p", { class: "small" }, fix.explanation), diffBlock(fix.diff),
+        fix.status === "awaiting approval" && fix.approval ? h("div", { class: "row" }, h("button", { type: "button", class: "primary small", onclick: decide(true) }, "Approve the fix"),
+          h("button", { type: "button", class: "small", onclick: decide(false) }, "Decline")) : null) : null);
+  }
+  function removeToolButton(name) {
+    return h("button", { type: "button", class: "small danger", title: "Take it out of the mesh: it won't be used, tested or fixed. Its files stay; Restore brings it back.", onclick: e => {
+      const b = e.currentTarget;
+      if (!b.classList.contains("armed")) {
+        b.classList.add("armed"); b.textContent = `Remove ${name}?`;
+        setTimeout(() => { b.classList.remove("armed"); b.textContent = "Remove"; }, 4000);
+        return;
+      }
+      act(b, () => api("/tools/remove", { tool: name, by: "web" }), r => r.message);
+    } }, "Remove");
   }
 
   // the tool switch: on, off, or it decides each time (toolgate.py), and one tool set apart
@@ -2230,8 +2528,12 @@ it decides whether to say something of its own after an answer, and what`))
   const WROTE = x => (x === "mechanical" ? "itself (no teacher needed)" : x);
   const CHANGE_STATE = { "awaiting approval": "hit", approved: "hit", pushed: "ok", merged: "ok", closed: "dim", declined: "dim", failed: "no", "does not check out": "no", drafted: "dim" };
   function diffBlock(text) {
-    return h("pre", { class: "diff" }, text.split("\n").slice(0, 400).map(line => h("span", { class: line.startsWith("+++") || line.startsWith("---") ? "d-file" :
-      line.startsWith("@@") ? "d-hunk" : line.startsWith("+") ? "d-add" : line.startsWith("-") ? "d-del" : null }, line + "\n")));
+    // changed lines are blocks of their own (a run of them stays one per line, however wide the diff)
+    return h("pre", { class: "diff" }, text.split("\n").slice(0, 400).map(line => {
+      const cls = line.startsWith("+++") || line.startsWith("---") ? "d-file" : line.startsWith("@@") ? "d-hunk" :
+        line.startsWith("+") ? "d-add" : line.startsWith("-") ? "d-del" : null;
+      return cls === "d-add" || cls === "d-del" ? h("span", { class: cls }, line || " ") : h("span", { class: cls }, line + "\n");
+    }));
   }
   function projectPanel(P) {
     if (!P) return h("p", { class: "dim" }, "Loading…");
@@ -2362,6 +2664,7 @@ it decides whether to say something of its own after an answer, and what`))
       if (due("knowledge", 10000)) jobs.push(get("knowledge", "/knowledge?n=25"));
     }
     if (S.view === "memory" && due("own", 5000)) jobs.push(get("own", "/memory/own?limit=20"));
+    if (S.view === "memory" && due("conversations", 4000)) jobs.push(get("conversations", "/conversations"));
     if (S.view === "code" && due("code", 3000)) jobs.push(get("code", "/code"));
     if (S.view === "images" && due("images", 4000)) jobs.push(get("images", "/images"));
     if (S.view === "mind" && S.mindTab === "lessons" && due("lessons", 4000)) jobs.push(get("lessons", "/lessons"));

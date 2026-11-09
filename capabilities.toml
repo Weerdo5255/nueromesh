@@ -319,3 +319,29 @@ brief = "show the first sentences verbatim; the full answer waits for /release"
 confirm = "hold it until the person asks for it with /release"
 defer = "hold it for a short while, then /release works"
 block = "withhold it, saying so, while the conversation is hostile"
+
+[realm]
+answer = "I'd say that is {label}."
+description = "The realm node: given a statement or a question, whether it is about the real world (fact) or from a story, a film, a game, a myth, a dream or something imagined (fiction). Its memory marks every fact it learns with it, and its ego marks what it says and what it is told: an answer from fiction says so, and fiction is never passed off as fact (realm.py, P24)."
+labels = ["fact", "fiction"]
+open_labels = false
+internal = true
+kind = "realm"
+teachers = ["human", "realm"]             # people, and the fact/fiction policy (what the text says, names from works)
+
+[realm.label_descriptions]
+fact = "about the real world"
+fiction = "from a story, a film, a game, a myth or legend, a dream, or something imagined"
+
+[keep]
+answer = "I would {label} it."
+description = "The keep node: when a conversation has gone quiet, given something a person told it - about them, a fact, their story, or conversation; a secret or not; corrected or not; lasting or about that moment; asked about again or not; already known or not - decide whether its ego keeps it in long-term memory or lets it go. A secret is never kept, whatever the node says (conversation.py, P25)."
+labels = ["keep", "let_go"]
+open_labels = false
+internal = true
+kind = "keep"
+teachers = ["human", "keep"]              # people (Keep / Forget in the web page), and the keep policy
+
+[keep.label_descriptions]
+keep = "re-designate it as long-term memory: learn it into a memory node, as fact or fiction"
+let_go = "forget it"

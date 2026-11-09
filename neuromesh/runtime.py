@@ -18,6 +18,8 @@ from .agency import AgencyTeacher, Director
 from .ego import Ego, EgoTeacher
 from .ensemble import NodePool, members as ensemble_members
 from .journal import MindJournal
+from .conversation import Conversations, Keeper, KeepTeacher
+from .realm import Realm, RealmTeacher
 from .toolgate import ToolGateTeacher, ToolSwitch
 from .gitea import Apprentice, CodeStudy, CodeTeacher
 from .scratchpad import ScratchPad
@@ -27,6 +29,7 @@ from .tutor import Schoolroom, Tutor
 from .rewards import Rewards
 from .codetools import CodeTools
 from .projects import Foreman, Projects
+from .tooldoctor import ToolDoctor
 from .websearch import Searcher, WebSearch
 from .anatomy import record as record_firing
 from .directors import DirectorPool
@@ -56,7 +59,7 @@ from .avatar import ComfyTTS
 from .curiosity import Curiosity
 from .seeker import Seeker
 from .thinking import Thinker, ThinkingBank
-from .tools import ACTIVE, APPROVED, QUARANTINED, RETIRED, Sandbox, Tool, ToolRegistry, ToolRun
+from .tools import ACTIVE, APPROVED, PENDING, QUARANTINED, REMOVED, RETIRED, Sandbox, Tool, ToolRegistry, ToolRun
 
 log = logging.getLogger("neuromesh")
 
@@ -110,6 +113,8 @@ class System:
         teachers["planner"] = PlannerTeacher(seed)      # specialist: the strategies' cues, for the planner node
         teachers["ego"] = EgoTeacher(seed)              # specialist: the ego policy, for the ego node
         teachers["toolgate"] = ToolGateTeacher(seed)    # specialist: the gate policy, for the tool-gate node
+        teachers["realm"] = RealmTeacher(seed, dict(self.directives.realm.works))  # specialist: fact from fiction
+        teachers["keep"] = KeepTeacher(seed)            # specialist: what to keep from a conversation, for the keep node
         teachers["gitea"] = CodeTeacher(self.code_study, seed)  # specialist: people's code, for the code-kind node
         teachers["vision"] = VisionTeacher(self.vision)  # specialist: an LLM teacher that can see, for the sight node
         teachers["sight"] = SightTeacher(self.vision)    # specialist: its own measures (text, blank), for the sight node
@@ -157,6 +162,10 @@ class System:
         self.codetools = CodeTools(self)      # its own code, kept as tools it can use
         self.bus.listen(self.codetools.on_event)
         self.websearch = WebSearch(self)      # questions nobody answered in time, searched with your SearXNG
+        self.tooldoctor = ToolDoctor(self)    # a tool that fails: its code, or outside it? A fix for its code (P3, P15)
+        self.realm = Realm(self)              # fact and fiction: in its memory, in what it says and is told (P24)
+        self.conversations = Conversations(self)  # the conversation it is having, and short-term memory (P25)
+        self.bus.listen(self.tooldoctor.on_event)
         self.bus.listen(self.scratch.on_event)
         self.bus.listen(self.journal.on_event)
         for cap in self.capabilities:  # what people taught, exactly as they put it, stands (P1)
@@ -183,7 +192,8 @@ class System:
         self.dreamer = Dreamer(self)    # idle: the coin flip (an objective, or sleep), and dreaming
         self.agents = [self.directors, self.orchestrator, Architect(self), Trainer(self), Evaluator(self), Curator(self),
                        Explorer(self), self.researcher, self.investigator, TaskRunner(self), Compressor(self),
-                       self.director, self.dreamer, Ruminator(self), Thinker(self), Reader(self), Apprentice(self), Looker(self), Schoolroom(self), Foreman(self), Searcher(self), Sentinel(self)]
+                       self.director, self.dreamer, Ruminator(self), Thinker(self), Reader(self), Apprentice(self), Looker(self), Schoolroom(self), Foreman(self), Searcher(self), Sentinel(self),
+                       Keeper(self)]
 
     # ------------------------------------------------------------- lifecycle
     async def start(self) -> "System":
@@ -237,8 +247,8 @@ class System:
             await asyncio.sleep(0.02)
 
     # ---------------------------------------------------------------- orders
-    async def submit(self, text: str, source: str = "user") -> Result:
-        order = Order(text=text, source=source)
+    async def submit(self, text: str, source: str = "user", conversation: str = "") -> Result:
+        order = Order(text=text, source=source, conversation=conversation)
         order.future = asyncio.get_running_loop().create_future()
         await self.orders.put(order)
         return await order.future
@@ -536,6 +546,56 @@ class System:
         self.guardian.audit("explorer", "tool.retired", tool.name, reason=reason)
         self.bus.publish("tool.retired", tool=tool.name, reason=reason)
 
+    def _diagnosis_brief(self, name: str, tool: Tool) -> dict | None:
+        """The tool doctor's last look at a tool, while it still applies (the same files)."""
+        d = self.tooldoctor.diagnoses.get(name)
+        if d is None or d.get("digest") != tool.manifest.digest and not d.get("fix"):
+            return None
+        fix = self.tooldoctor.fixes.get(d.get("fix") or "")
+        return {"cause": d["cause"], "where": d["where"], "why": d["why"][:300], "probe": d.get("probe", ""),
+                "advice": d.get("advice", ""), "outcome": d.get("outcome", ""), "at": d["at"],
+                "fix": {"id": fix["id"], "status": fix["status"], "to_version": fix["to_version"],
+                        "approval": fix.get("approval", ""), "diff": fix["diff"][:8000],
+                        "explanation": fix["explanation"]} if fix else None}
+
+    async def remove_tool(self, name: str, by: str, why: str = "") -> tuple[bool, str]:
+        """A person's last word on a tool: out of the mesh. Its files stay where they are; scans pass it by."""
+        tool = self.tools.tools.get(name)
+        if tool is None:
+            return False, f"no tool {name}"
+        if tool.state == REMOVED:
+            return False, f"{name} is already removed"
+        self.tools.removed[name] = {"by": by, "at": round(time.time(), 1), "why": why[:200], "was": tool.state,
+                                    "version": tool.manifest.version}
+        self.tools.save_removed()
+        if tool.state == ACTIVE:
+            self.dispatch.deactivate(tool.manifest.route)
+            self.save_capability(self.dispatch)
+        if tool.state == PENDING and tool.approval_id:
+            self.guardian.withdraw(tool.approval_id, f"{name} was removed by {by}", by)
+        self.tooldoctor.withdraw(name, f"{name} was removed by {by}", by)
+        tool.state, tool.note = REMOVED, f"removed by {by}" + (f": {why}" if why else "")
+        self.tools.persist(tool)
+        try:
+            await self.sandbox.stop_worker(name)
+        except Exception:
+            pass
+        self.guardian.audit(by, "tool.removed", name, why=why[:200], version=tool.manifest.version)
+        self.bus.publish("tool.removed", tool=name, by=by, why=why[:200])
+        return True, f"removed {name}: it won't be used, tested or fixed; its files stay in {tool.manifest.path}"
+
+    def restore_tool(self, name: str, by: str) -> tuple[bool, str]:
+        """Back into the mesh: vetted (approved if it needs it) and self-tested again, like a new tool."""
+        if name not in self.tools.removed:
+            return False, f"{name} wasn't removed"
+        self.tools.removed.pop(name)
+        self.tools.save_removed()
+        self.tools.tools.pop(name, None)
+        self.tools._persisted.pop(name, None)
+        self.guardian.audit(by, "tool.restored_by_person", name)
+        self.bus.publish("tool.restored", tool=name, by=by, state="discovered")
+        return True, f"restored {name}: it is vetted and self-tested again"
+
     def retest_tool(self, name: str) -> tuple[bool, str]:
         tool = self.tools.tools.get(name)
         if tool is None or tool.state not in (QUARANTINED, ACTIVE):
@@ -553,7 +613,7 @@ class System:
                 cfg["url"] = legacy
         return cfg
 
-    def record_tool_run(self, tool: Tool, run: ToolRun, exploratory: bool = False) -> None:
+    def record_tool_run(self, tool: Tool, run: ToolRun, exploratory: bool = False, text: str = "") -> None:
         """exploratory: the mesh tried the tool on its own initiative. A failure then says more
         about the attempt than the tool, so it never counts towards quarantine or the run tally."""
         if run.refused:  # the tool switch is off for it: it never ran, so nothing counts
@@ -564,6 +624,8 @@ class System:
         if exploratory and not run.ok:
             tool.last_error = run.error[:300]
             return
+        if not run.ok:  # the tool doctor looks into why, if it keeps happening (tooldoctor.py)
+            self.tooldoctor.note(tool, run, text)
         tool.runs += 1
         if not run.ok and (run.transient or run.not_found):  # offline, or no such article: not a broken tool
             tool.last_error = run.error[:300]
@@ -715,7 +777,8 @@ class System:
             "tools": {n: {"state": t.state, "version": t.manifest.version, "runs": t.runs,
                           "permissions": list(t.manifest.permissions), "note": t.note,
                           "error": t.last_error[:400] if t.state == "quarantined" and t.last_error else "",
-                          "switch": self.tool_switch.mode_of(n), "set_apart": n in self.tool_switch.per_tool}
+                          "switch": self.tool_switch.mode_of(n), "set_apart": n in self.tool_switch.per_tool,
+                          "diagnosis": self._diagnosis_brief(n, t), "removed": self.tools.removed.get(n)}
                       for n, t in sorted(self.tools.tools.items())},
             "tool_switch": {"mode": self.tool_switch.mode, "set_by": self.tool_switch.set_by},
             "tutor": {"enabled": self.tutor.enabled, "count": self.tutor.stats.get("lessons", 0),

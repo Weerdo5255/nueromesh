@@ -19,7 +19,7 @@ text = "User orders take precedence over background self-improvement and backgro
 
 [[prime]]
 id = "P3-approved-tools-only"
-text = "Only active, vetted tools are executed. Tools needing elevated permissions require explicit human approval; forbidden permissions are always refused; a tool whose code changes is re-vetted. A tool is given only the secrets its manifest lists (such as the gitea plugin's GITEA_TOKEN), which a person sees on its approval - a tool that lists one always needs that approval - and never a teacher's API key. People can switch tools off - all of them or one - and then none runs, for anything; or let the mesh decide each time, when its tool-gate node weighs the tool's record, its mood and what else could answer, always runs a tool a person named, says in the trace what it decided and why, and never counts against a tool a run it did not make. (Enforced in code by neuromesh/toolgate.py and the sandbox.)"
+text = "Only active, vetted tools are executed. Tools needing elevated permissions require explicit human approval; forbidden permissions are always refused; a tool whose code changes is re-vetted. When a tool fails, the mesh may work out why - a fault in its code, or the network, its server, its settings, the machine or the sandbox's limits - and may write a fix for a fault in its code, but a fix is only installed once a person approved exactly that change (the diff they saw): it may not do anything the old code did not (no new network access, files, processes, eval or exec), never changes the tool's self-tests, keeps a backup, is self-tested again and is undone if it fails. Anything outside the code is reported, never patched around. A person has the last word on any tool: removing it takes it out of the mesh (its files stay), and restoring it vets and tests it again. A tool is given only the secrets its manifest lists (such as the gitea plugin's GITEA_TOKEN), which a person sees on its approval - a tool that lists one always needs that approval - and never a teacher's API key. People can switch tools off - all of them or one - and then none runs, for anything; or let the mesh decide each time, when its tool-gate node weighs the tool's record, its mood and what else could answer, always runs a tool a person named, says in the trace what it decided and why, and never counts against a tool a run it did not make. (Enforced in code by neuromesh/toolgate.py, neuromesh/tooldoctor.py and the sandbox.)"
 
 [[prime]]
 id = "P4-budgets"
@@ -100,6 +100,14 @@ text = "When no person has given it an order for a while, its Ollama teachers ma
 [[prime]]
 id = "P23-rewards-steer"
 text = "People may reward or punish anything the mesh does - an answer, a line of its activity, a node, a tool, code, an image, a lesson, a change to its project - or a direction in words, from -3 to +3. Only people give them: never a teacher, a node, a director or the mesh itself. A reward or punishment steers its preferences only - its initiative, its curiosity, its ego's remarks, the coin it tosses when idle, the tool switch, its lessons, evolution and its project's order of work - and it fades unless repeated. It never overrides a prime, the guardian, a person's approval, or what a person taught (P1); it never makes an answer true or false (P11) and never changes an answer's words (P8). Every reward and punishment is felt, remembered, logged and audited with who gave it and why. (Enforced in code by neuromesh/rewards.py.)"
+
+[[prime]]
+id = "P24-fact-and-fiction"
+text = "The mesh keeps fact and fiction apart. Every fact its memory learns, and every one of its own statements, is marked fact or fiction - fiction with the work it belongs to (a novel, a film, a game, a myth, a person's own story, a dream, something imagined) - from what the text itself says, the names it knows belong to works, and its realm node. Fiction is true only within its work: an answer from fiction says so, it never passes fiction off as fact when it talks, and asked whether something is real it says what it knows of it. What it learned as fiction stays fiction. A person's word on which a thing is stands (P1). (Enforced in code by neuromesh/realm.py, neuromesh/memory.py and neuromesh/ego.py.)"
+
+[[prime]]
+id = "P25-short-term-memory"
+text = "In a conversation, what a person tells the mesh goes into short-term memory nodes: kept exactly as they said it, never compressed, marked fact or fiction, and used to answer them while they talk. Only after the conversation has been quiet for [conversation] idle_hours does its ego decide, for each, whether to keep it - re-designated as long-term memory, learned into a memory node as fact or fiction and reviewed by a director like any fact (P14) - or to let it go. A secret (a password, a PIN, an account or card number, a key) is never kept in long-term memory, whatever its keep node says, never repeated back, and its words are forgotten when the conversation ends. A person can keep or forget any of them themselves at any time (P1). (Enforced in code by neuromesh/conversation.py and neuromesh/ego.py.)"
 
 # ------------------------------------------------------------------------- goals
 [[goals]]
@@ -411,6 +419,11 @@ close_tolerance = 0.01                  # numeric answers within 1% count as clo
 api_url = "https://datasets-server.huggingface.co"   # the Hugging Face dataset viewer (/rows)
 fetch_limit = 500                       # rows per benchmark fetched by default
 token_env = "HF_TOKEN"                  # optional Hugging Face token, read from this environment variable
+hub_url = "https://huggingface.co"      # where the web page's catalog searches for more datasets
+# More suites: the web page's Challenges > Add challenges - the ready-made benchmarks, any dataset on the
+# Hugging Face Hub (search, look at its columns and first rows, choose which is the question and which the
+# answer, download), or your own JSONL/CSV file. Suites can be exported and added to another mesh, and
+# downloaded ones removed.   /challenge search <words>   /challenge look <owner/name>   /challenge remove <suite>
 
 [orders]
 confidence_threshold = 0.75     # below this a node defers to a teacher
@@ -775,3 +788,43 @@ min_active = 1                          # objectives it keeps going (not just wa
 keep_busy_seconds = 30                  # how often it looks for a next objective when it has none
 retry_after_days = 7                    # an archived objective may be tried again after this long
 keep_archived = 300
+
+[repair]
+# When a tool fails (tooldoctor.py, P3): why - a fault in its own code, or the network, its server, its
+# settings, this machine, the sandbox's limits - and, for a fault in its code, a fix written by an LLM teacher
+# that you approve (the diff is on its approval). Approved: the old files are backed up (state/tool_backups),
+# the new ones installed with the version bumped, and it is self-tested again; still failing, the backup goes
+# back and it tries again, then gives up and says so. Remove a tool from the web page's Tools (or /tool <name>
+# remove); Restore brings it back, re-vetted.   /doctor   /tool <name> why
+enabled = true
+diagnose_after_failures = 2             # failed runs within window_seconds before it looks into why
+window_seconds = 3600
+cooldown_seconds = 1800                 # between looks at the same tool (a quarantine or new version always counts)
+write_fixes = true                      # an LLM teacher reviews the code and writes a fix for a fault in it
+attempts = 2                            # fixes per broken version before it gives up
+probe_network = true                    # checks whether a networked tool's server answers at all
+keep_backups = 5
+
+[conversation]
+# The conversation it is having with you (conversation.py, P25): follow-ups ("what about Spain?", "how tall is
+# it?") are read against the last turn, and what you tell it ("my dog is called Rex", "remember that ...", "in my
+# story ...") goes into short-term memory nodes, kept verbatim - never compressed - and used to answer you. After
+# idle_hours of quiet its ego decides what to keep as long-term memory (as fact or fiction) and lets the rest go;
+# a secret is never kept. The web page's Memory shows them, with Keep now and Forget.   /conversation   /stm
+enabled = true
+idle_hours = 6.0
+turns = 40                              # turns kept as context
+check_every_seconds = 300
+follow_ups = true
+capture = true
+max_short = 400
+
+[realm]
+# Fact and fiction (realm.py, P24): every fact in memory, and every answer, is marked fact or fiction (with the
+# work it is from), from what the text says ("in my story", "in the novel Dune", "I dreamed"), names it knows
+# belong to works, and its realm node. An answer from fiction says so; "is Gandalf real?" gets a straight answer.
+#   /real <text>
+enabled = true
+frame_answers = true                    # "In The Lord of the Rings, Gandalf is a wizard."
+# [realm.works]                         # more names it should know are fiction
+# "Kvothe" = "The Kingkiller Chronicle"

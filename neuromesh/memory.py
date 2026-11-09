@@ -198,6 +198,8 @@ class Test:
     variant_of: str = ""      # another way of asking an earlier test; its answer follows that test
     by: str = ""
     reason: str = ""          # unknown tests: why it must not be answered ("auto: ..." = generated)
+    realm: str = ""           # "fact" or "fiction" (realm.py, P24); "" learned before it told them apart
+    work: str = ""            # fiction: the work it belongs to ("The Lord of the Rings", "your story")
 
     @property
     def auto(self) -> bool:
@@ -504,6 +506,12 @@ class MemoryNode:
         t = next((t for t in self.tests if t.answer == answer and t.source), None)
         return t.source if t else ""
 
+    def realm_of(self, answer: str) -> tuple[str, str]:
+        """As what it learned this answer: ("fact" | "fiction" | "", the work)."""
+        t = next((t for t in self.tests if t.answer == answer and t.realm and not t.variant_of), None) or \
+            next((t for t in self.tests if t.answer == answer and t.realm), None)
+        return (t.realm, t.work) if t else ("", "")
+
     def predict(self, X_full: np.ndarray):
         P = softmax(forward(self.params, fold(X_full, self.inputs))[0])
         top = P.argmax(axis=1)
@@ -517,6 +525,8 @@ class Recall:
     confidence: float
     source: str
     how: str = ""                   # memory nodes that answered with it, or how the ego settled their disagreement
+    realm: str = ""                 # as what it was learned: fact or fiction (realm.py)
+    work: str = ""
 
 
 # =============================================================================== jobs
@@ -706,7 +716,8 @@ class MemoryBank:
         return [n for n in self.nodes.values() if n.own]
 
     # -------------------------------------------------------------- its own statements (untested)
-    def remember_own(self, kind: str, text: str, about: str = "", mood: str = "", source: str = "") -> dict | None:
+    def remember_own(self, kind: str, text: str, about: str = "", mood: str = "", source: str = "",
+                     realm: str = "") -> dict | None:
         """Keep one of its own statements - an opinion, what its ego said, how its ego settled a disagreement -
         in memory, without tests. One about something is learned by an own-memory node (the newest statement
         for the same question wins); every statement stays in the memory database's own table."""
@@ -717,7 +728,10 @@ class MemoryBank:
             return None
         ask = own_ask(kind, about)
         node = self._own_node_for(ask) if ask else None
-        rid = self.db.add_own(kind, text, about=about, ask=ask, mood=mood, source=source, node=node.id if node else "")
+        if not realm and any(w in kind for w in ("dream", "imagin")):  # what it dreamt or imagined: fiction (P13, P24)
+            realm = "fiction"
+        rid = self.db.add_own(kind, text, about=about, ask=ask, mood=mood, source=source, node=node.id if node else "",
+                              realm=realm)
         if node is not None:
             self._load_own(node)
             node.version += 1
@@ -910,7 +924,7 @@ class MemoryBank:
         if node.own or self.readonly:
             return
         tests = [{"ask": t.ask, "answer": t.answer, "variant_of": t.variant_of, "source": t.source, "learned": t.learned,
-                  "by": t.by} for t in node.tests]
+                  "by": t.by, "realm": t.realm, "work": t.work} for t in node.tests]
         unknowns = [{"ask": u.ask, "reason": u.reason} for u in node.unknowns]
         node.rev = self.db.write(node.id, tests, unknowns, self.summary(node))
 
@@ -923,7 +937,7 @@ class MemoryBank:
                  f"size = {_q(info['size'])}", f"passing = {_q('untested' if node.own else info['passing'])}"]
         for t in node.tests:
             lines += ["", "[[test]]" if not node.own else "[[statement]]", f"ask = {_q(t.ask)}", f"answer = {_q(t.answer)}"]
-            for k in ("variant_of", "source", "learned", "by"):
+            for k in ("variant_of", "source", "learned", "by", "realm", "work"):
                 if getattr(t, k):
                     lines.append(f"{k} = {_q(getattr(t, k))}")
         for u in node.unknowns:
@@ -944,8 +958,10 @@ class MemoryBank:
             if not isinstance(ask, str) or not isinstance(answer, str) or not ask.strip() or not answer.strip():
                 malformed += 1
                 continue
+            realm = str(e.get("realm") or "").strip().lower()
             tests.append(Test(" ".join(ask.split()), answer.strip(), str(e.get("source") or ""), str(e.get("learned") or ""),
-                              " ".join(str(e.get("variant_of") or "").split()), str(e.get("by") or "") or "a person"))
+                              " ".join(str(e.get("variant_of") or "").split()), str(e.get("by") or "") or "a person",
+                              "", realm if realm in ("fact", "fiction") else "", str(e.get("work") or "")[:120]))
         primaries = {t.ask: t for t in tests if not t.variant_of}
         kept = []
         for t in tests:
@@ -954,6 +970,7 @@ class MemoryBank:
                 if p is None:  # its question was deleted: so is this way of asking it
                     continue
                 t.answer = p.answer
+                t.realm, t.work = p.realm, p.work
             kept.append(t)
         node.tests = kept
         node.unknowns = [Test(" ".join(str(e["ask"]).split()), reason=str(e.get("reason") or "") or "added by a person")
@@ -1000,10 +1017,12 @@ class MemoryBank:
         return {"ok": True, "node": node_id, "touched": touched}
 
     # ------------------------------------------------------------- learning
-    def learn(self, ask: str, answer, source: str = "", by: str = "", kind: str = "people", reviewed: bool = False):
+    def learn(self, ask: str, answer, source: str = "", by: str = "", kind: str = "people", reviewed: bool = False,
+              realm: str | None = None, work: str = ""):
         """Remember a question and its answer. Returns (node id, "new" | "updated" | "known") or None.
         Nothing is stored without a director's review (P14): an order's facts are reviewed with the
-        order (reviewed=True); anything else is reviewed here."""
+        order (reviewed=True); anything else is reviewed here. Every fact is marked fact or fiction (realm:
+        given, or judged here from the question and answer; realm.py, P24)."""
         if not self.allows(kind):
             return None
         directors = getattr(self.sys, "directors", None)
@@ -1016,6 +1035,10 @@ class MemoryBank:
             return None
         if any(key(p) == k for p in PROBES):
             return None
+        if realm not in ("fact", "fiction"):
+            sense = getattr(self.sys, "realm", None)
+            j = sense.judge(f"{ask} {answer}"[:600]) if sense is not None else None
+            realm, work = (j.realm, j.work or work) if j is not None and j.confidence > 0 else ("", work)
         now = time.strftime("%Y-%m-%d %H:%M")
         n_ask = _norm(ask)
         for node in self.fact_nodes():
@@ -1023,12 +1046,13 @@ class MemoryBank:
             for t in node.facts():
                 if key(t.ask) != k and t.ask not in same:
                     continue
-                if t.answer == answer:
+                if t.answer == answer and (t.realm == realm or not realm):
                     return node.id, "known"
                 for u in node.tests:  # a correction: the newest answer wins, for every way of asking
                     if u is t or u.variant_of == t.ask:
                         u.answer = answer
                         u.learned = now
+                        u.realm, u.work = realm, work
                 t.source, t.by = source, by
                 self._changed(node)
                 self.stats["updated"] += 1
@@ -1037,13 +1061,13 @@ class MemoryBank:
                 return node.id, "updated"
         node = self._open_node()
         vs = variants(ask)
-        node.tests.append(Test(vs[0], answer, source, now, "", by))
+        node.tests.append(Test(vs[0], answer, source, now, "", by, "", realm, work))
         for v in vs[1:]:
-            node.tests.append(Test(v, answer, "", now, vs[0], by))
+            node.tests.append(Test(v, answer, "", now, vs[0], by, "", realm, work))
         self._changed(node)
         self.stats["facts"] += 1
         self.sys.bus.publish("memory.fact", node=node.id, ask=ask[:200], answer=answer[:200], source=source[:200],
-                             kind="new", by=by)
+                             kind="new", by=by, realm=realm, work=work)
         return node.id, "new"
 
     def learn_article(self, doc) -> None:
@@ -1223,7 +1247,7 @@ class MemoryBank:
                 continue
             if any(t.answer == answer and t.ask in n.failing for t in n.tests):
                 continue
-            found.append(Recall(n, answer, c, n.source_of(answer)))
+            found.append(Recall(n, answer, c, n.source_of(answer), "", *n.realm_of(answer)))
         found.sort(key=lambda r: -r.confidence)
         best = found[0] if found else None
         if best is not None and len(found) > 1:

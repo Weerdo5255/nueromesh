@@ -24,6 +24,7 @@ once, over kept-alive connections.
 import gzip
 import http.client
 import json
+import traceback
 import zlib
 import os
 import re
@@ -269,8 +270,8 @@ def reply(request: dict) -> dict:
         return handle(request)
     except Transient as exc:
         return {"error": str(exc), "transient": True}
-    except Exception as exc:
-        return {"error": f"{type(exc).__name__}: {exc}"}
+    except Exception as exc:  # a fault in this code: the trace lets the mesh find it (tooldoctor.py)
+        return {"error": f"{type(exc).__name__}: {exc}", "trace": traceback.format_exc()[-3000:]}
 
 
 def serve() -> None:

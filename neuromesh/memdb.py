@@ -7,7 +7,9 @@
     nodes   one row a node: its revision and a summary for people (facts, size, passing, history)
     own     its own statements, kept in memory WITHOUT tests: its opinions, what its ego said, how its ego
             settled a disagreement between its nodes. Nothing checks them - they are its own views, never
-            facts - so they are never served as an answer about the world (P8, P18).
+            facts - so they are never served as an answer about the world (P8, P18). A dream or something it
+            imagined is marked fiction (realm).
+Every test carries a realm - "fact" or "fiction" - and, for fiction, the work it belongs to (realm.py, P24).
 
 Test files (memory_tests/<node>.toml, as earlier versions kept them) are imported once and moved aside.
 """
@@ -25,11 +27,13 @@ CREATE TABLE IF NOT EXISTS nodes(id TEXT PRIMARY KEY, rev INTEGER NOT NULL DEFAU
 CREATE TABLE IF NOT EXISTS tests(node TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'test',
                                  ask TEXT NOT NULL, answer TEXT NOT NULL DEFAULT '', variant_of TEXT NOT NULL DEFAULT '',
                                  source TEXT NOT NULL DEFAULT '', learned TEXT NOT NULL DEFAULT '', by TEXT NOT NULL DEFAULT '',
-                                 reason TEXT NOT NULL DEFAULT '', PRIMARY KEY(node, seq));
+                                 reason TEXT NOT NULL DEFAULT '', realm TEXT NOT NULL DEFAULT '',
+                                 work TEXT NOT NULL DEFAULT '', PRIMARY KEY(node, seq));
 CREATE INDEX IF NOT EXISTS tests_node ON tests(node);
 CREATE TABLE IF NOT EXISTS own(id INTEGER PRIMARY KEY, ts REAL NOT NULL, kind TEXT NOT NULL, about TEXT NOT NULL DEFAULT '',
                                ask TEXT NOT NULL DEFAULT '', text TEXT NOT NULL, mood TEXT NOT NULL DEFAULT '',
-                               source TEXT NOT NULL DEFAULT '', node TEXT NOT NULL DEFAULT '');
+                               source TEXT NOT NULL DEFAULT '', node TEXT NOT NULL DEFAULT '',
+                               realm TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS own_about ON own(about);
 CREATE INDEX IF NOT EXISTS own_ts ON own(ts);
 CREATE TRIGGER IF NOT EXISTS tests_added AFTER INSERT ON tests BEGIN
@@ -46,7 +50,9 @@ CREATE TRIGGER IF NOT EXISTS node_removed AFTER DELETE ON nodes BEGIN
   DELETE FROM tests WHERE node = OLD.id;
 END;
 """
-FIELDS = ("ask", "answer", "variant_of", "source", "learned", "by", "reason")
+FIELDS = ("ask", "answer", "variant_of", "source", "learned", "by", "reason", "realm", "work")
+# columns later versions added (fact and fiction, realm.py): older databases gain them when opened
+ADDED = (("tests", "realm"), ("tests", "work"), ("own", "realm"))
 
 
 class MemoryDB:
@@ -66,6 +72,14 @@ class MemoryDB:
             self.db = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None, timeout=10)
             self.db.execute("PRAGMA journal_mode=WAL")
             self.db.executescript(SCHEMA)
+            for table, col in ADDED:
+                if col not in self._columns(table):
+                    self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+        self.fields = tuple(f for f in FIELDS if f in self._columns("tests"))   # (a read-only older database lacks some)
+        self.own_realm = "realm" in self._columns("own")
+
+    def _columns(self, table: str) -> set[str]:
+        return {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
 
     def close(self) -> None:
         with self.lock:
@@ -87,11 +101,11 @@ class MemoryDB:
             row = self.db.execute("SELECT rev, summary FROM nodes WHERE id = ?", (node_id,)).fetchone()
             if row is None:
                 return None
-            rows = self.db.execute(f"SELECT kind, {', '.join(FIELDS)} FROM tests WHERE node = ? ORDER BY seq",
+            rows = self.db.execute(f"SELECT kind, {', '.join(self.fields)} FROM tests WHERE node = ? ORDER BY seq",
                                    (node_id,)).fetchall()
         tests, unknowns = [], []
         for r in rows:
-            item = dict(zip(FIELDS, r[1:]))
+            item = {**dict.fromkeys(FIELDS, ""), **dict(zip(self.fields, r[1:]))}
             (unknowns if r[0] == "unknown" else tests).append(item)
         return {"tests": tests, "unknowns": unknowns, "rev": int(row[0]), "summary": json.loads(row[1] or "{}")}
 
@@ -128,10 +142,11 @@ class MemoryDB:
 
     # ------------------------------------------------------------------ its own statements (untested)
     def add_own(self, kind: str, text: str, about: str = "", ask: str = "", mood: str = "", source: str = "",
-                node: str = "", ts: float | None = None) -> int:
+                node: str = "", ts: float | None = None, realm: str = "") -> int:
         with self.lock:
-            cur = self.db.execute("INSERT INTO own(ts, kind, about, ask, text, mood, source, node) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                                  (ts or time.time(), kind, about[:200], ask[:400], text[:2000], mood, source[:300], node))
+            cur = self.db.execute("INSERT INTO own(ts, kind, about, ask, text, mood, source, node, realm) VALUES "
+                                  "(?, ?, ?, ?, ?, ?, ?, ?, ?)", (ts or time.time(), kind, about[:200], ask[:400], text[:2000],
+                                                                  mood, source[:300], node, realm))
             return int(cur.lastrowid)
 
     def own(self, kind: str | tuple | None = None, about: str | None = None, limit: int = 50, since: float = 0.0,
@@ -151,9 +166,10 @@ class MemoryDB:
             where.append("node = ?")
             args.append(node)
         with self.lock:
-            rows = self.db.execute(f"SELECT id, ts, kind, about, ask, text, mood, source, node FROM own WHERE {' AND '.join(where)} "
+            rows = self.db.execute(f"SELECT id, ts, kind, about, ask, text, mood, source, node"
+                                   f"{', realm' if self.own_realm else ''} FROM own WHERE {' AND '.join(where)} "
                                    f"ORDER BY ts DESC, id DESC LIMIT ?", (*args, limit)).fetchall()
-        keys = ("id", "ts", "kind", "about", "ask", "text", "mood", "source", "node")
+        keys = ("id", "ts", "kind", "about", "ask", "text", "mood", "source", "node") + (("realm",) if self.own_realm else ())
         return [dict(zip(keys, r)) for r in rows]
 
     def own_asks(self, node: str) -> list[dict]:
