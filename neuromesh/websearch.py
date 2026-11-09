@@ -77,6 +77,61 @@ class WebSearch:
         self.counts: Counter = Counter(st.get("counts", {}))
         self.times: deque = deque(st.get("times", []), maxlen=500)
         self._busy = False
+        self.settings: dict = st.get("settings", {})  # what a person set on the page: the window, on/off, SearXNG's address
+        self._apply()
+
+    def _apply(self) -> None:
+        st = self.settings
+        if st.get("after_minutes") is not None:
+            self.pol.answer_after_minutes = float(st["after_minutes"])
+        if st.get("enabled") is not None:
+            self.pol.enabled = bool(st["enabled"])
+        given = self.sys.directives.tools.config.get("searxng", {}).get("url")
+        if st.get("url") and (not given or given == st.get("url") or st.get("url_over")):
+            self.sys.directives.tools.config.setdefault("searxng", {})["url"] = st["url"]
+
+    def url(self) -> tuple[str, str]:
+        """Where its SearXNG is, and who said so."""
+        t = self.sys.tools.tools.get("searxng")
+        given = self.sys.directives.tools.config.get("searxng", {}).get("url")
+        if self.settings.get("url") and given == self.settings["url"]:
+            return given, "set on this page" + ("" if self.settings.get("url_by") in (None, "", "web") else f" by {self.settings['url_by']}")
+        if given:
+            return given, "--searxng or [tools.config.searxng] url"
+        return (t.manifest.config.get("url", "") if t else "http://localhost:8888"), "the plugin's default"
+
+    def configure(self, by: str, after_minutes=None, enabled=None, url=None) -> tuple[bool, str]:
+        """A person sets how long a question waits before it is searched, web search on or off, or SearXNG's address."""
+        said = []
+        if after_minutes is not None:
+            try:
+                m = float(after_minutes)
+            except (TypeError, ValueError):
+                return False, "the wait is a number of minutes"
+            if not 1 <= m <= 7 * 24 * 60:
+                return False, "the wait is between 1 minute and a week"
+            self.settings["after_minutes"] = self.pol.answer_after_minutes = m
+            said.append(f"questions nobody answers within {m:g} minute{'s' if m != 1 else ''} are searched on the web")
+        if enabled is not None:
+            on = enabled if isinstance(enabled, bool) else str(enabled).lower() in ("1", "true", "on", "yes")
+            self.settings["enabled"] = self.pol.enabled = on
+            said.append("web search is " + ("on" if on else "off: questions wait for you"))
+        if url is not None:
+            u = str(url).strip().rstrip("/")
+            if not re.match(r"^https?://[^\s/]+", u):
+                return False, "SearXNG's address starts with http:// or https://"
+            self.settings.update(url=u, url_by=by, url_over=True)
+            self.sys.directives.tools.config.setdefault("searxng", {})["url"] = u
+            said.append(f"SearXNG is at {u}")
+            t = self.sys.tools.tools.get("searxng")
+            if t is not None and t.state in ("quarantined", "active"):
+                self.sys.retest_tool("searxng")
+                said.append("its self-test runs again")
+        self.save()
+        self.sys.guardian.audit(by, "websearch.settings", "websearch", **{k: v for k, v in self.settings.items() if k != "url_over"})
+        self.sys.bus.publish("web.settings", by=by, after_minutes=self.pol.answer_after_minutes, enabled=self.pol.enabled,
+                             url=self.url()[0])
+        return True, "; ".join(said) or "nothing changed"
 
     @property
     def enabled(self) -> bool:
@@ -85,7 +140,8 @@ class WebSearch:
     def save(self) -> None:
         tried = dict(sorted(self.tried.items(), key=lambda kv: kv[1])[-500:])
         self.sys.store.set_kv("websearch.state", json.dumps({"history": list(self.history), "tried": tried,
-                                                             "counts": dict(self.counts), "times": list(self.times)}))
+                                                             "counts": dict(self.counts), "times": list(self.times),
+                                                             "settings": self.settings}))
 
     def tool(self):
         from .tools import ACTIVE
@@ -282,7 +338,13 @@ class WebSearch:
 
     def status(self) -> dict:
         t = self.sys.tools.tools.get("searxng")
+        url, url_from = self.url()
+        approval = self.sys.guardian.approval_for(t.approval_id, "tool", "searxng") if t is not None else None
         return {"enabled": self.enabled, "tool": t.state if t else "missing", "after_minutes": self.pol.answer_after_minutes,
+                "url": url, "url_from": url_from, "tool_note": t.note if t else "the searxng plugin isn't installed",
+                "tool_error": t.last_error[:400] if t is not None and t.state == "quarantined" else "",
+                "approval": approval.id if approval is not None and approval.status == "pending" else "",
+                "settings": {k: v for k, v in self.settings.items() if k != "url_over"},
                 "kinds": list(self.pol.kinds), "budget": self.budget(), "max_per_hour": self.pol.max_per_hour,
                 "counts": dict(self.counts), "history": list(self.history)[-30:][::-1],
                 "teacher": self.pol.teacher and self.sys.teachers.has_llm(),

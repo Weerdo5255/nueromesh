@@ -1360,6 +1360,38 @@ it decides whether to say something of its own after an answer, and what`))
         h("div", {}, h("h3", {}, "Recent dreams"), recent.length ? h("ul", { class: "rows" }, recent) : h("p", { class: "dim" }, "None yet."))));
   }
 
+  // web search: how long a question waits for you before it is searched with your SearXNG, and whether it can be
+  const TOOL_SAY = { active: "ready", pending_approval: "waiting for your approval", approved: "being tested", quarantined: "its self-test failed",
+    rejected: "declined", missing: "not installed", discovered: "being checked" };
+  function webPanel(w) {
+    if (!w) return h("div", { class: "section" }, h("h2", {}, "When nobody answers"), h("p", { class: "dim" }, "Loading…"));
+    const mins = h("input", { type: "number", min: "1", max: "10080", step: "1", value: String(w.after_minutes), "aria-label": "Minutes a question waits for you", class: "num-input" });
+    const url = h("input", { type: "url", value: w.url || "", placeholder: "http://localhost:8080", "aria-label": "SearXNG's address" });
+    const save = (btn, body) => act(btn, () => api("/websearch", { ...body, by: "web" }), r => { S.extraAt.websearch = 0; return r.message; });
+    const tool = w.tool || "missing";
+    const c = w.counts || {};
+    return h("div", { class: "section web-panel" }, h("h2", {}, "When nobody answers"),
+      h("p", { class: "lede" }, `A question it could find out for itself (what an order meant or what its answer is, or what an objective couldn't find out) waits for you first. If nobody answers in time, it searches the web through your SearXNG, and ${w.teacher ? "your Ollama teacher reads the results" : "it reads the results itself (no teacher is available)"}. Approvals, proposals and questions about you are never searched.`),
+      h("div", { class: "tool-switch" },
+        h("span", { class: "switch-label" }, "Search the web"),
+        h("div", { class: "seg", role: "group", "aria-label": "Search the web for unanswered questions" },
+          [[true, "On"], [false, "Off"]].map(([v, label]) => h("button", { type: "button", "aria-pressed": String(w.enabled === v), class: w.enabled === v ? "on" : "",
+            onclick: e => { if (w.enabled !== v) save(e.currentTarget, { enabled: v }); } }, label)))),
+      h("form", { class: "row web-row", onsubmit: e => { e.preventDefault(); save(e.target.querySelector("button"), { after_minutes: Number(mins.value) }); } },
+        h("label", { class: "switch-label" }, "Wait for you"), mins, h("span", { class: "small" }, "minutes"), h("button", { type: "submit", class: "small" }, "Save")),
+      h("form", { class: "row web-row", onsubmit: e => { e.preventDefault(); if (url.value.trim()) save(e.target.querySelector("button"), { url: url.value.trim() }); } },
+        h("label", { class: "switch-label" }, "Your SearXNG"), url, h("button", { type: "submit", class: "small" }, "Save and test")),
+      h("p", { class: "small" }, h("span", { class: tool === "active" ? "ok" : tool === "quarantined" ? "no" : "wait" }, `The searxng tool: ${TOOL_SAY[tool] || tool}`),
+        h("span", { class: "dim" }, ` (${w.url_from}). `),
+        w.approval ? h("button", { type: "button", class: "small primary", onclick: e => act(e.target, () => api("/approve", { id: w.approval, approve: true, by: "web" }), "Approved the searxng tool: it tests itself next") }, "Approve it") : null,
+        ["quarantined", "active"].includes(tool) ? h("button", { type: "button", class: "small quiet", onclick: e => act(e.target, () => api("/tools/retest", { tool: "searxng", by: "web" }), r => r.message) }, "Test again") : null),
+      w.tool_error ? h("p", { class: "small no web-error" }, w.tool_error) : null,
+      h("p", { class: "dim small" }, `${c.searched || 0} searched, ${c.answered || 0} answered; ${w.budget} of ${w.max_per_hour} searches left this hour.` +
+        ((w.waiting || []).length ? ` Waiting for you now: ${w.waiting.map(x => `${x.id} (${x.minutes} min)`).join(", ")}.` : "")),
+      (w.history || []).length ? fold("web:history", `What it searched lately (${w.history.length})`, h("ul", { class: "rows small" }, w.history.slice(0, 12).map(r => h("li", { style: "padding:4px 0" },
+        h("time", { class: "dim" }, clock(r.ts)), ` ${r.inquiry}: `, h("b", {}, cut(r.question, 90)), r.ok ? ` → ${cut(r.answer, 120)} (${r.read_by})` : h("span", { class: "dim" }, ` - ${cut(r.why, 120)}`))))) : null);
+  }
+
   // a question nobody answered in time is searched on the web (websearch.py): when, and Search the web now
   function webNote(q) {
     const w = q.web;
@@ -1754,7 +1786,7 @@ it decides whether to say something of its own after an answer, and what`))
     S.archivedNow = 0;
     const d = lastDay;  // the last day only: anything older is in the archive
     const panel = {
-      questions: () => questionsPanel(d(st.mind)),
+      questions: () => h("div", {}, webPanel(S.extra.websearch), questionsPanel(d(st.mind))),
       ego: () => egoPanel(d(S.extra.ego), st.ego),
       thinking: () => thinkingPanel(d(S.extra.thinking), st.thinking),
       curiosity: () => curiosityPanel(d(S.extra.curiosity), st.curiosity),
@@ -1877,13 +1909,18 @@ it decides whether to say something of its own after an answer, and what`))
             h("td", { class: t.available ? (t.in_order ? "ok" : "dim") : "dim" }, t.available ? (t.in_order ? "ready" : "ready, not in order") : "off"),
             h("td", { class: "n" }, num(t.lessons)),
             h("td", { class: "small" }, [t.detail, usage[name] && `${usage[name].calls_last_hour} calls this hour`].filter(Boolean).join("; ")))))))),
-        h("div", { class: "section", id: "tools-section" }, h("h2", {}, "Tools"), toolSwitch(st), h("div", { class: "scroll-x" }, h("table", { class: "tbl" },
+        h("div", { class: "section", id: "tools-section" }, h("h2", {}, "Tools"), toolSwitch(st),
+          codeSwitch("auto_run", "Run code it writes", [["ask", "Ask me first"], ["harmless", "When harmless"], ["always", "Always"]], AUTORUN_SAY,
+            st.scratch?.auto_run || "ask", null),
+          h("div", { class: "scroll-x" }, h("table", { class: "tbl" },
           h("thead", {}, h("tr", {}, ["Tool", "State", "Use", "Runs", "Note"].map((t, i) => h("th", { class: i === 3 ? "n" : null }, t)))),
           h("tbody", {}, Object.entries(st.tools).map(([name, t]) => h("tr", {},
             h("td", {}, h("b", {}, name), rewardButtons(name, `using the ${name} tool`), h("div", { class: "dim small" }, `v${t.version}${t.permissions.length ? `, needs ${t.permissions.join(", ")}` : ""}`)),
             h("td", { class: t.state === "active" ? "ok" : ["quarantined", "rejected"].includes(t.state) ? "no" : "wait" }, t.state.replace("_", " ")),
             h("td", {}, toolChoice(name, t, st.tool_switch?.mode || "on")),
-            h("td", { class: "n" }, num(t.runs)), h("td", { class: "small" }, t.note)))))))),
+            h("td", { class: "n" }, num(t.runs)), h("td", { class: "small" }, t.note,
+              t.error ? h("div", { class: "no tool-error" }, t.error) : null,
+              ["quarantined"].includes(t.state) ? h("button", { type: "button", class: "small quiet", onclick: e => act(e.target, () => api("/tools/retest", { tool: name, by: "web" }), r => r.message) }, "Test again") : null)))))))),
       h("div", { class: "section" }, h("h2", {}, "Background tasks"),
         st.tasks.enabled ? [addTask, st.tasks.tasks.length ? h("div", { class: "scroll-x" }, h("table", { class: "tbl" },
           h("thead", {}, h("tr", {}, ["Task", "What", "Every", "State", "Doing", ""].map(t => h("th", {}, t)))),
@@ -1961,6 +1998,10 @@ it decides whether to say something of its own after an answer, and what`))
           onclick: e => { if (mode !== m) set(e.currentTarget, m); } }, text))),
       h("p", { class: "dim small" }, (say[mode] || "") + (setBy && setBy !== "directives.toml" ? ` Set by ${setBy}.` : "")));
   }
+  function codeSwitches(sp) {
+    return [codeSwitch("auto_run", "Run code automatically", [["ask", "Ask me first"], ["harmless", "When harmless"], ["always", "Always"]], AUTORUN_SAY, sp?.auto_run || "ask", sp?.modes?.auto_run?.by),
+      codeSwitch("make_tools", "Its code as tools", [["off", "Off"], ["ask", "Offer them"], ["auto", "Install them"]], MAKETOOLS_SAY, sp?.make_tools || "ask", sp?.modes?.make_tools?.by)];
+  }
   function codeItem(item, sp) {
     const runs = sp.runnable.includes(item.language);
     const area = h("textarea", { class: "code-edit", spellcheck: "false", "data-free": "1", readonly: true, rows: Math.min(18, Math.max(6, item.code.split("\n").length + 1)),
@@ -2027,11 +2068,10 @@ it decides whether to say something of its own after an answer, and what`))
     const practise = h("button", { type: "button", class: "small quiet", disabled: !g.examples, onclick: e => act(e.target, () => api("/code", { practice: true, by: "web" }), r => `Practised on ${r.name}: ${r.ok ? "it checks out" : r.ok === false ? "it does not check out" : "nothing to write it from"}`) }, "Practise now");
     const kinds = Object.entries(g.kinds || {}).sort((a, b) => b[1] - a[1]);
     fill(host,
+      h("div", { class: "section", id: "code-switches" }, h("h2", {}, "Running its code"), codeSwitches(sp)),
       projectPanel(S.extra.projects),
       h("div", { class: "section" }, h("h2", {}, "Scratch pad"),
         h("p", { class: "lede" }, `It writes code here: from a recipe in its code library, with a teacher following the closest code it studied in your Gitea, or by adapting that code. A validator checks every piece (${Object.entries(sp.checkers || {}).map(([l, c]) => `${l}: ${c}`).join("; ")}). Runs here: ${sp.runnable.join(", ") || "nothing"}.`),
-        codeSwitch("auto_run", "Run code it writes", [["ask", "Ask me"], ["harmless", "When harmless"], ["always", "Always"]], AUTORUN_SAY, sp.auto_run || "ask", sp.modes?.auto_run?.by),
-        codeSwitch("make_tools", "Its code as tools", [["off", "Off"], ["ask", "Offer them"], ["auto", "Install them"]], MAKETOOLS_SAY, sp.make_tools || "ask", sp.modes?.make_tools?.by),
         write,
         h("div", { class: "code-cols" }, h("div", {}, list), sel ? codeItem(sel, sp) : h("div", {}))),
       h("div", { class: "cols" },
@@ -2310,6 +2350,7 @@ it decides whether to say something of its own after an answer, and what`))
     if (S.view === "images" && due("images", 4000)) jobs.push(get("images", "/images"));
     if (S.view === "mind" && S.mindTab === "lessons" && due("lessons", 4000)) jobs.push(get("lessons", "/lessons"));
     if (S.view === "mind" && S.mindTab === "rewards" && due("rewards", 3000)) jobs.push(get("rewards", "/rewards"));
+    if (S.view === "mind" && S.mindTab === "questions" && due("websearch", 3000)) jobs.push(get("websearch", "/websearch"));
     if (S.view === "code" && due("projects", 3000)) jobs.push(get("projects", "/projects"));
     if (S.view === "memory" && S.memNode && due("memNode", 3000)) {
       S.extraAt.memNode = now;

@@ -656,3 +656,9 @@ pre.diff .d-file { color: var(--ink-2); font-weight: 600; }
 .web-note { gap: 8px 12px; margin: 4px 0 6px; }
 .web-sources { margin: 4px 0 0; padding-left: 18px; }
 .web-sources li { margin: 2px 0; overflow-wrap: anywhere; }
+
+/* web search: the wait, SearXNG's address, and what went wrong */
+.web-row { align-items: center; gap: 8px 10px; margin: 6px 0; }
+.web-row input[type=url] { flex: 1 1 260px; }
+.web-row .num-input, .num-input { flex: 0 0 6.5em; width: 6.5em; min-width: 0; }
+.web-error, .tool-error { overflow-wrap: anywhere; margin-top: 4px; }

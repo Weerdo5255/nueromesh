@@ -256,9 +256,13 @@ class _SearXNG(BaseHTTPRequestHandler):
         pass
 
     def _send(self, payload, code=200):
+        import gzip
         data = json.dumps(payload).encode()
         self.send_response(code)
         self.send_header("content-type", "application/json")
+        if "gzip" in self.headers.get("accept-encoding", ""):  # as a real SearXNG behind a proxy would
+            data = gzip.compress(data)
+            self.send_header("content-encoding", "gzip")
         self.send_header("content-length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -267,7 +271,14 @@ class _SearXNG(BaseHTTPRequestHandler):
         owner = self.server.owner
         u = urllib.parse.urlsplit(self.path)
         q = dict(urllib.parse.parse_qsl(u.query))
-        owner.requests.append({"path": u.path, "query": q, "agent": self.headers.get("user-agent", "")})
+        owner.requests.append({"path": u.path, "query": q, "agent": self.headers.get("user-agent", ""),
+                               "headers": dict(self.headers)})
+        if owner.limiter:  # SearXNG's bot detection: a client that doesn't look like a browser is turned away (429)
+            h = {k.lower(): v for k, v in self.headers.items()}
+            if ("text/html" not in h.get("accept", "") or not h.get("accept-language", "").strip()
+                    or not any(x in h.get("accept-encoding", "") for x in ("gzip", "deflate"))
+                    or h.get("connection", "").lower() == "close" or "python" in h.get("user-agent", "").lower()):
+                return self._send({"message": "Too Many Requests"}, 429)
         if u.path == "/config":
             return self._send({"instance_name": "Home SearXNG", "version": "2026.10.1",
                                "engines": [{"name": n, "enabled": True, "categories": ["general"]} for n in ("google", "duckduckgo", "wikipedia")]})
@@ -284,10 +295,13 @@ class _SearXNG(BaseHTTPRequestHandler):
 
 class MockSearXNG(_Server):
     """A SearXNG: /config, and /search?format=json with the results set in .answers ({words in the query: {"results":
-    [{title, url, content, engines}], "answers": [...], "infoboxes": [...]}}). .json = False refuses JSON (403)."""
+    [{title, url, content, engines}], "answers": [...], "infoboxes": [...]}}). .json = False refuses JSON (403);
+    .limiter (on) turns away clients without a browser's Accept, Accept-Language and Accept-Encoding (429), and it
+    answers in gzip when asked."""
 
     def __init__(self):
         self.answers: dict = {}
         self.requests: list[dict] = []
         self.json = True
+        self.limiter = True            # its bot detection is on, as in SearXNG's Docker set-up
         super().__init__(_SearXNG)

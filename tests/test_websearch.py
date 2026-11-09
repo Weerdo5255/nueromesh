@@ -61,9 +61,15 @@ class HelperTests(unittest.TestCase):
             said = tool.handle({"input": "search the web for the Eiffel Tower height", "config": cfg})
             self.assertIn("330 metres", said["output"])
             self.assertEqual(sx.requests[-1]["query"]["q"], "the Eiffel Tower height")
+            h = {k.lower(): v for k, v in last["headers"].items()}             # what SearXNG's bot detection looks for
+            self.assertIn("text/html", h["accept"])
+            self.assertTrue(h["accept-language"] and "gzip" in h["accept-encoding"])  # (and its answer in gzip is read)
             sx.json = False
             refused = tool.reply({"input": json.dumps({"op": "search", "q": "eiffel"}), "config": cfg})
             self.assertIn("settings.yml", refused["error"])
+            tool._JSON_OK.clear()
+            failed = tool.reply({"input": "__selftest__", "config": cfg})            # the self-test says what to change
+            self.assertIn("formats: [html, json]", failed["error"])
             down = tool.reply({"input": json.dumps({"op": "search", "q": "x"}), "config": {"url": "http://127.0.0.1:9"}})
             self.assertTrue(down.get("transient"), down)
         finally:
@@ -160,6 +166,24 @@ class WebSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, 200, body)
         self.assertEqual(q.status, "answered")
         self.assertIn("its own reading", q.by)
+        # a person sets the wait, turns it off and on, and moves SearXNG, on the page
+        status, body = await _route(s, "POST", "/websearch", {}, {"after_minutes": 15, "by": "tester"})
+        self.assertEqual((status, body["after_minutes"]), (200, 15))
+        self.assertEqual(s.directives.websearch.answer_after_minutes, 15)
+        self.assertEqual((await _route(s, "POST", "/websearch", {}, {"after_minutes": 0, "by": "tester"}))[0], 400)
+        status, body = await _route(s, "POST", "/websearch", {}, {"url": "http://127.0.0.1:9", "by": "tester"})
+        self.assertEqual((status, body["url"]), (200, "http://127.0.0.1:9"))
+        self.assertIn("set on this page", body["url_from"])
+        self.assertTrue(await wait_for(lambda: s.tools.tools["searxng"].state == "quarantined", 30))
+        status, body = await _route(s, "GET", "/websearch", {}, {})
+        self.assertIn("no SearXNG at http://127.0.0.1:9", body["tool_error"])       # the reason, not just "0/1"
+        self.assertIn("no SearXNG", s.status()["tools"]["searxng"]["error"])
+        await _route(s, "POST", "/websearch", {}, {"url": self.sx.url, "by": "tester"})
+        self.assertTrue(await wait_for(lambda: s.tools.tools["searxng"].state == "active", 30), s.tools.tools["searxng"].last_error)
+        status, body = await _route(s, "POST", "/websearch", {}, {"enabled": False, "by": "tester"})
+        self.assertFalse(body["enabled"])
+        self.assertEqual(s.websearch.due(), [])
+        await _route(s, "POST", "/websearch", {}, {"enabled": True, "by": "tester"})
         s.directives.websearch.max_per_hour = 0                             # its budget of searches
         again = await s.submit("how tall is the Eiffel Tower, really")
         q3 = s.mind.ask("clarify", "Do you know?", "a test", order_id=again.order_id)

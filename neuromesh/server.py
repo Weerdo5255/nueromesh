@@ -299,6 +299,9 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                 except (TypeError, ValueError):
                     return 400, {"error": "attempts is a whole number from 1 to 10"}
             return 400, {"error": 'action is "spawn" or "retire", or give "attempts"'}
+        if path == "/tools/retest":  # {"tool": "searxng"}: run its self-tests again (after fixing what failed)
+            ok, msg = system.retest_tool(str(body.get("tool", "")))
+            return (200 if ok else 400), {"ok": ok, "message": msg}
         if path == "/tools/switch":  # {"mode": "on"|"off"|"decide"} for all tools; {"tool": "calculator", "mode": ...|"default"}
             by = str(body.get("by") or "web")
             if body.get("tool"):
@@ -345,8 +348,14 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             else:
                 return 400, {"error": "say what to do: focus, clear, objective, objective_id+action, work, change+action"}
             return (200 if ok else 400), {"ok": ok, "message": msg, **p.status()}
-        if path == "/websearch":  # {"inquiry": "inq-3"}: search the web for that question now
-            rec = await system.websearch.now(str(body.get("inquiry", "")), str(body.get("by") or "web"))
+        if path == "/websearch":  # {"inquiry": "inq-3"}: search the web for that question now; or its settings:
+            #                       {"after_minutes": 30} | {"enabled": false} | {"url": "http://localhost:8080"}
+            ws, by = system.websearch, str(body.get("by") or "web")
+            if any(k in body for k in ("after_minutes", "enabled", "url")):
+                ok, msg = ws.configure(by, after_minutes=body.get("after_minutes"), enabled=body.get("enabled"),
+                                       url=body.get("url"))
+                return (200 if ok else 400), {"ok": ok, "message": msg, **ws.status()}
+            rec = await ws.now(str(body.get("inquiry", "")), by)
             msg = (f"answered {rec.get('inquiry')}: {rec['answer'][:160]}" if rec.get("ok") else
                    f"no answer from the web: {rec.get('why', '')}")
             return (200 if rec.get("ok") else 400), {**rec, "message": msg}

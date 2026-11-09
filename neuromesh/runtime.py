@@ -714,6 +714,7 @@ class System:
             "capabilities": caps,
             "tools": {n: {"state": t.state, "version": t.manifest.version, "runs": t.runs,
                           "permissions": list(t.manifest.permissions), "note": t.note,
+                          "error": t.last_error[:400] if t.state == "quarantined" and t.last_error else "",
                           "switch": self.tool_switch.mode_of(n), "set_apart": n in self.tool_switch.per_tool}
                       for n, t in sorted(self.tools.tools.items())},
             "tool_switch": {"mode": self.tool_switch.mode, "set_by": self.tool_switch.set_by},

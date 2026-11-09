@@ -3,7 +3,12 @@ Google, DuckDuckGo, Bing, Wikipedia and others at once and returns their results
 
 Only searches: GET /search?q=...&format=json on the configured SearXNG (JSON must be allowed in its settings.yml:
 search: formats: [html, json]). It never opens the pages it finds and sends nothing else anywhere. Its user agent is
-a plain "neuromesh" - no one's name or address.
+a plain "neuromesh" - no one's name or address. It sends the headers SearXNG's bot detection looks for (Accept with
+text/html, Accept-Language, Accept-Encoding gzip/deflate), so an instance with its limiter on doesn't take it for a
+scraper; with the limiter on, SearXNG still allows only a few JSON searches an hour from one address (add the mesh's
+address to pass_ip in limiter.toml, or turn the limiter off for your own instance).
+
+Its self-test: SearXNG answers (/config), and a search in JSON is allowed - each failure says what to change.
 
 Requests (the "input"):
     "__selftest__"                              SearXNG answers in JSON: "searxng ok: <instance> <version>, 12 engines"
@@ -16,12 +21,15 @@ Requests (the "input"):
 Speed: started with --serve (manifest: persistent = true) it stays running and answers requests as JSON lines, many at
 once, over kept-alive connections.
 """
+import gzip
 import http.client
 import json
+import zlib
 import os
 import re
 import sys
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -30,6 +38,7 @@ from concurrent.futures import ThreadPoolExecutor
 DEFAULTS = {"url": "http://localhost:8888", "engines": "", "categories": "general", "language": "en", "safesearch": 1,
             "results": 8, "use_proxy": False, "timeout": 20, "user_agent": "neuromesh"}
 LOCAL = ("localhost", "127.0.0.1", "::1")
+_JSON_OK: dict = {}  # SearXNG address -> when a search in JSON last worked (the health check need not search again)
 LEADS = re.compile(r"^\s*(?:please\s+)?(?:(?:can|could)\s+you\s+)?(?:search\s+(?:the\s+)?(?:web|internet|online)\s+(?:for|about)|"
                    r"google|look\s+up|find|search\s+online\s+for|search\s+for|what\s+does\s+the\s+(?:web|internet)\s+say\s+about)\s+",
                    re.I)
@@ -80,9 +89,16 @@ class SearXNG:
             os.environ.get("HTTPS_PROXY" if self.scheme == "https" else "HTTP_PROXY")
         self.proxy = proxy if (proxy and cfg.get("use_proxy") and not local) else None
 
+    def headers(self) -> dict:
+        lang = str(self.cfg.get("language") or "en").split("-")[0] or "en"
+        return {"accept": "application/json, text/html;q=0.9, */*;q=0.8",       # SearXNG's bot detection wants text/html
+                "accept-language": f"{lang},en;q=0.8" if lang != "en" else "en-US,en;q=0.9",  # ... a language
+                "accept-encoding": "gzip, deflate",                                # ... and gzip or deflate
+                "user-agent": str(self.cfg.get("user_agent") or "neuromesh")}
+
     def get(self, path: str, params: dict | None = None):
         q = ("?" + urllib.parse.urlencode(params)) if params else ""
-        headers = {"accept": "application/json", "user-agent": str(self.cfg.get("user_agent") or "neuromesh")}
+        headers = self.headers()
         if self.proxy:
             status, body = self._via_proxy(f"{self.base}{path}{q}", headers)
         else:
@@ -92,19 +108,22 @@ class SearXNG:
                 try:
                     c.request("GET", f"{self.prefix}{path}{q}", headers=headers)
                     r = c.getresponse()
-                    status, body = r.status, r.read()
+                    status, body = r.status, _decoded(r.read(), r.getheader("content-encoding", ""))
                     if r.will_close:
                         POOL.drop(self.scheme, self.netloc)
                     break
                 except (http.client.HTTPException, OSError) as exc:
                     POOL.drop(self.scheme, self.netloc)
                     if attempt:
-                        raise Transient(f"no SearXNG at {self.base} ({exc})")
+                        raise Transient(f"no SearXNG at {self.base} ({exc}): is it running there? Set its address with "
+                                        "--searxng URL, [tools.config.searxng] url, or the web search panel")
         if status == 403 and path == "/search":
-            raise RuntimeError("SearXNG refused JSON (403): allow it in its settings.yml - search: formats: [html, json]")
+            raise RuntimeError("SearXNG refused JSON (403): allow it in its settings.yml - search: formats: [html, json] - "
+                               "and restart SearXNG")
         if status == 429:
-            raise Transient("SearXNG is limiting requests (429): turn its limiter off for the mesh, or add its address "
-                            "to pass_ip in limiter.toml")
+            raise Transient("SearXNG's limiter blocked it (429): for your own instance, set server: limiter: false in "
+                            "settings.yml, or add the mesh's address to pass_ip in limiter.toml (with the limiter on, "
+                            "SearXNG allows only a few JSON searches an hour)")
         if status == 404:
             raise RuntimeError(f"not on SearXNG: {path}")
         if status >= 500:
@@ -120,15 +139,18 @@ class SearXNG:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({self.scheme: self.proxy}))
         try:
             with opener.open(urllib.request.Request(url, headers=headers), timeout=self.timeout) as resp:
-                return resp.status, resp.read()
+                return resp.status, _decoded(resp.read(), resp.headers.get("content-encoding", ""))
         except urllib.error.HTTPError as exc:
             return exc.code, b""
+        # (urllib does not undo gzip: the answer is read below by _decoded)
         except (urllib.error.URLError, OSError) as exc:
             raise Transient(f"no SearXNG at {self.base} ({getattr(exc, 'reason', exc)})")
 
     def config(self) -> dict:
         try:
             return self.get("/config")
+        except Transient:
+            raise
         except RuntimeError:
             return {}
 
@@ -143,6 +165,7 @@ class SearXNG:
             if v:
                 params[k] = v
         data = self.get("/search", params)
+        _JSON_OK[self.base] = time.time()
         n = int(results or self.cfg.get("results") or 8)
         out = []
         for r in data.get("results") or []:
@@ -176,6 +199,21 @@ class SearXNG:
                 "total": int(data.get("number_of_results") or 0)}
 
 
+def _decoded(body: bytes, encoding: str) -> bytes:
+    enc = (encoding or "").lower()
+    try:
+        if "gzip" in enc:
+            return gzip.decompress(body)
+        if "deflate" in enc:
+            try:
+                return zlib.decompress(body)
+            except zlib.error:
+                return zlib.decompress(body, -zlib.MAX_WBITS)
+    except (OSError, zlib.error, EOFError):
+        return body
+    return body
+
+
 def topic_of(text: str) -> str:
     t = LEADS.sub("", str(text).strip(), count=1)
     t = TAILS.sub("", t)
@@ -186,14 +224,22 @@ def handle(request: dict) -> dict:
     cfg = {**DEFAULTS, **(request.get("config") or {})}
     raw = request.get("input", "")
     sx = SearXNG(cfg)
-    if raw == "__selftest__":
+    if raw == "__selftest__":  # SearXNG answers, and allows JSON; whether its engines answered doesn't matter here
         conf = sx.config()
-        found = sx.search("neuromesh", results=1)
         engines = [e for e in conf.get("engines") or [] if isinstance(e, dict) and e.get("enabled", True)]
         name = conf.get("instance_name") or "SearXNG"
+        try:
+            if time.time() - _JSON_OK.get(sx.base, 0) < 3600:  # checked within the hour: no search (the limiter counts them)
+                got = "JSON checked within the hour"
+            else:
+                found = sx.search("searxng", results=1)
+                got = f"{len(found['results'])} result(s) for a test search"
+        except Transient as exc:
+            if "429" in str(exc) or "no SearXNG" in str(exc):
+                raise
+            got = f"its engines didn't answer a test search ({exc}), but it answers in JSON"
         return {"output": f"searxng ok: {name} {conf.get('version', '')}".rstrip()
-                          + (f", {len(engines)} engines" if engines else "")
-                          + f" at {sx.base}; JSON allowed ({len(found['results'])} result for a test search)"}
+                          + (f", {len(engines)} engines" if engines else "") + f" at {sx.base}; JSON allowed; {got}"}
     req = None
     if isinstance(raw, str) and raw.strip().startswith("{"):
         try:

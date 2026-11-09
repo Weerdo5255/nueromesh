@@ -76,7 +76,9 @@ class StaticFileTests(unittest.TestCase):
         for part in ('api("/code", { [which]: m, by: "web" })', 'codeSwitch("auto_run"', 'codeSwitch("make_tools"',
                      'api("/code", { id: item.id, action: "tool", by: "web" })', '"Make it a tool"',
                      'api("/websearch", { inquiry: q.id, by: "web" })', '"Search the web now"', "md?.web_answers",
-                     '"Correct it"'):
+                     '"Correct it"', "function webPanel(w)", 'get("websearch", "/websearch")', '{ after_minutes: Number(mins.value) }',
+                     '"Save and test"', 'api("/tools/retest", { tool: name, by: "web" })', '"Run code automatically"',
+                     'h("h2", {}, "Running its code"), codeSwitches(sp)', 'st.scratch?.auto_run'):
             self.assertIn(part, script)
 
     def test_rewards_and_the_project(self):

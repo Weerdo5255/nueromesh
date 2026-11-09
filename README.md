@@ -547,8 +547,9 @@ and tools it wrote that were waiting ask again when it starts, with new numbers.
 on from the last run (`apv-57`, not `apv-1` again), and each approval acts only on the thing it was asked
 for (its kind and subject), so approving one thing never runs, pushes or installs another.
 
-**Auto-run.** A switch in the Code view (`/code autorun`, `[code] auto_run`) decides what happens to code it
-writes itself. **Ask me** (the default): it waits for your approval, as above. **When harmless**: it runs
+**Auto-run.** **Run code automatically**, at the top of the Code view under "Running its code" (and in the
+Tools section, beside the tool switch; `/code autorun`, `[code] auto_run`), decides what happens to code it
+writes itself. **Ask me first** (the default): it waits for your approval, as above. **When harmless**: it runs
 straight away, without asking, when it checks out and reaches for nothing (no files, network, other
 programs or modules beyond the basics); anything else still waits. **Always**: it runs straight away
 whenever it checks out. Either way it runs in a fresh folder within the same limits and without keys;
@@ -1127,6 +1128,11 @@ is, or what an objective couldn't find out - and nobody answers within `[websear
      objective, it carries on with it
 ```
 
+**On the page.** The Mind's Questions tab opens with **When nobody answers**: web search **On**/**Off**, how
+many minutes a question **waits for you** first, **your SearXNG**'s address (**Save and test** runs the
+searxng tool's self-test again), whether the tool is ready - and if its self-test failed, why, with **Test
+again** - and what it searched lately. What you set there is kept across restarts (`POST /websearch`).
+
 The web's answer is a teacher's, not yours (P1): **Correct it** under "Answered from the web" in the Mind's
 Questions (or `/reply inq-3 answer: ...`) and yours replaces it. Each question is searched once on its own;
 **Search the web now** on a question (or `/web inq-3`) searches it straight away. `[websearch] max_per_hour`
@@ -1135,8 +1141,11 @@ caps the searches (your SearXNG asks its engines for each). `/web` lists what it
 **Setting it up.** Run SearXNG yourself (its Docker image is the quickest) and allow JSON in its
 `settings.yml` (`search: formats: [html, json]`); a public instance usually refuses JSON. Start the mesh with
 `--searxng http://localhost:8888` (or `[tools.config.searxng] url`), and approve the searxng tool once, like
-Kiwix. Its self-test checks that SearXNG answers in JSON. If SearXNG's limiter blocks it (429), turn the
-limiter off for your own instance or add the mesh's address to `pass_ip`. Asked an order ("search the web
+Kiwix. Its self-test checks that SearXNG answers, and that it allows JSON; when it fails, the reason is on the
+page (no SearXNG at that address, JSON not allowed, or the limiter). The tool sends the headers SearXNG's bot
+detection looks for (`Accept` with `text/html`, `Accept-Language`, `Accept-Encoding: gzip`). With SearXNG's limiter
+on, it still allows only a few JSON searches an hour from one address (429): for your own instance, set
+`server: limiter: false` in `settings.yml`, or add the mesh's address to `pass_ip` in `limiter.toml`. Asked an order ("search the web
 for ...", "google ..."), the tool lists what it found. It never opens the pages it finds, and its user
 agent is a plain `neuromesh`.
 
@@ -1631,8 +1640,9 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
   view shows where the tests are kept (the memory database) and **its own statements**, untested.
 - **Mind**: divided into tabs, each with its own address (`#mind/tools`), and the one you used
   last opens next time. Arrow keys move between them. **Questions** (with a count of what is
-  waiting): its questions for you (reply; when it will search the web for one, and **Search the web
-  now**), what it answered from the web (with its sources; **Correct it**), and its proposals (adopt or
+  waiting): **When nobody answers** (web search on or off, how long a question waits for you, your
+  SearXNG's address with Save and test, the tool's state and why its self-test failed), its questions for
+  you (reply; when it will search the web for one, and **Search the web now**), what it answered from the web (with its sources; **Correct it**), and its proposals (adopt or
   decline). **Ego** (with its
   mood): how it feels, what it is curious about, its likes and dislikes with its reasons, its ego
   nodes and what it said lately; ask it about itself, turn it off or on. **Thinking** (with
@@ -1667,8 +1677,8 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
 - **Code** (with a count of code waiting for your approval): the scratch pad - ask it to write
   code, each piece with how it was written, the validator's verdict and what it reaches for, edit
   it, check it again, **Approve and run** it, **Make it a tool** (Python code that ran), and its
-  output; the two switches: **Run code it writes** (Ask me, When harmless, Always) and **Its code as
-  tools** (Off, Offer them, Install them); what it studies in Gitea
+  output; at the top, **Running its code**: **Run code automatically** (Ask me first, When harmless,
+  Always) and **Its code as tools** (Off, Offer them, Install them); what it studies in Gitea
   (repositories, kinds of code, recent visits, Study now); and how its practice is going. At the top,
   **its project**: the repository it focuses on, its objectives (add one; work on it now, done, drop,
   reopen), and the changes it proposed, each with its diff file by file, the validator's verdict,
@@ -1682,8 +1692,8 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
 - **Logs**: the activity log (search, filter by kind, hide routine work), the audit log, every
   event, and the family tree of every node ever built.
 - **Status**: directive goals, approvals (code to run shows what it reaches for, with a link to read
-  it first; a project change shows its files and size, with a link to its diff), teachers, tools with **the tool switch** (On, Off, Let it decide) and each tool's own
-  setting, background tasks (add, pause, remove), challenges (practise, sit the exam), retained
+  it first; a project change shows its files and size, with a link to its diff), teachers, tools with **the tool switch** (On, Off, Let it decide), **Run code it writes** (as in the
+  Code view), each tool's own setting, and why a tool's self-test failed (**Test again**), background tasks (add, pause, remove), challenges (practise, sit the exam), retained
   knowledge.
 - **Command bar**: any order or `/command`. The answer appears below it first, then its sources,
   its own thinking when a thinking node has something to add (marked as such, beside the answer),
@@ -1764,7 +1774,8 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | GET | `/code/item`, `/code/examples` | `?id=code-3`: one scratch pad item with its code, check and runs; `?q=&kind=&lang=`: functions it studied |
 | POST | `/code` | `{"write": "...", "language": "python"}` writes code; `{"add": "<code>", "language", "title"}` puts yours in; `{"id", "code"}` changes it; `{"id", "action": "ask" \| "approve" \| "decline" \| "remove" \| "check" \| "tool"}` (`tool`: make Python code that ran into a tool); `{"auto_run": "ask" \| "harmless" \| "always"}`; `{"make_tools": "off" \| "ask" \| "auto"}`; `{"study": true, "repo": "owner/name"}`; `{"practice": true}` |
 | GET | `/websearch` | questions searched on the web: what it searched, what it found and who read it, what is due, its budget |
-| POST | `/websearch` | `{"inquiry": "inq-3"}`: search the web for that question now |
+| POST | `/websearch` | `{"inquiry": "inq-3"}`: search the web for that question now; `{"after_minutes": 30}`, `{"enabled": false}`, `{"url": "http://localhost:8080"}`: its settings (kept across restarts; a new address runs the tool's self-test again) |
+| POST | `/tools/retest` | `{"tool": "searxng"}`: run a tool's self-tests again (after fixing what failed) |
 | GET | `/images` | what its optical nodes took in: each image, what it sees, the text it read, its reader and sight nodes, its teachers |
 | GET | `/images/file` | `?id=img-3` (or `?sha=`): the image itself |
 | POST | `/images` | `{"name", "data": "<base64 or a data: URL>"}`, or the image itself with `content-type: image/png` (`?name=`) |

@@ -1191,7 +1191,7 @@ class Explorer(Agent):
         else:
             tool.state = QUARANTINED
             tool.note = f"self-tests passed {passed}/{len(examples)}"
-            tool.last_error = str(failures[:2])
+            tool.last_error = "; ".join((f["error"] or f"expected {f['expected']!r}, got {f['got']!r}") for f in failures[:2])[:600]
             s.tools.persist(tool)
             s.guardian.audit("explorer", "tool.quarantined", tool.name, failures=failures[:3])
             s.bus.publish("tool.quarantined", tool=tool.name, reason=tool.note)
