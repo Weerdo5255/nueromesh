@@ -491,6 +491,9 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                 if obj is None:
                     return 404, {"ok": False, "message": f"no objective {oid}"}
                 return 200, {"ok": True, "message": await book.ruminate(obj, by)}
+            if action == "retry":  # try an archived objective again
+                ok, msg = await book.retry(oid, by)
+                return (200 if ok else 400), {"ok": ok, "message": msg}
             if action in ("pause", "resume", "remove"):
                 ok, msg = book.set_status(oid, {"pause": "paused", "resume": "active", "remove": "removed"}[action], by)
                 return (200 if ok else 400), {"ok": ok, "message": msg}

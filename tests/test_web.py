@@ -78,7 +78,8 @@ class StaticFileTests(unittest.TestCase):
                      'api("/websearch", { inquiry: q.id, by: "web" })', '"Search the web now"', "md?.web_answers",
                      '"Correct it"', "function webPanel(w)", 'get("websearch", "/websearch")', '{ after_minutes: Number(mins.value) }',
                      '"Save and test"', 'api("/tools/retest", { tool: name, by: "web" })', '"Run code automatically"',
-                     'h("h2", {}, "Running its code"), codeSwitches(sp)', 'st.scratch?.auto_run'):
+                     'h("h2", {}, "Running its code"), codeSwitches(sp)', 'st.scratch?.auto_run',
+                     'api("/objectives", { id: o.id, action: "retry", by: "web" })', '"objectives:archive"', "ob.always"):
             self.assertIn(part, script)
 
     def test_rewards_and_the_project(self):

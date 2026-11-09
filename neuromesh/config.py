@@ -487,6 +487,13 @@ class ObjectivesPolicy:
     second_thoughts: int = 3                # recent answers it thinks over again in one go (agency mode ruminate)
     doubt_confidence: float = 0.6           # answers less sure than this are worth second thoughts
     second_thought_after_seconds: float = 120.0  # how long after an order before it thinks it over again
+    archive_ended_short: bool = True        # an objective that ends short (unmet) leaves the list for the archive
+    always: bool = True                     # it always has an objective to work on: when none is left (or all wait
+                                            # for you), it sets itself the next one
+    min_active: int = 1                     # objectives it keeps going (not just waiting for a person) at once
+    keep_busy_seconds: float = 30.0         # how often it looks for a next objective when it has none
+    retry_after_days: float = 7.0           # an archived objective may be tried again after this long (it may know more)
+    keep_archived: int = 300
 
 
 @dataclass

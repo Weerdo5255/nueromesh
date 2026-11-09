@@ -40,6 +40,10 @@ def describe_event(ev: Event) -> str | None:
             return (f"[approval] {d['id']}: '{d['subject']}' was written by its own toolsmith; a person must approve "
                     f"these exact files before it runs (/approve {d['id']})")
         return f"[approval] {d['id']}: {d['kind']} '{d['subject']}' needs a human decision (permissions: {perms})"
+    if t == "objective.archived":
+        return f"[objective] {d['id']} ended short and was archived: {_cut(d['text'], 60)} ({_cut(d.get('note', ''), 80)})"
+    if t == "objective.kept_busy":
+        return f"[objective] set itself {d['id']} to keep working ({d['how']}): {_cut(d['text'], 70)}"
     if t == "approval.decided":
         if d.get("status") == "withdrawn":
             return f"[approval] {d['id']} for {d.get('subject', '')} withdrawn: what it asked about changed, so it asks again"

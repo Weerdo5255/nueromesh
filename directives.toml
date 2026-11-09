@@ -71,7 +71,7 @@ text = "The mesh may write tools of its own for requests no tool could meet, but
 
 [[prime]]
 id = "P16-honest-objectives"
-text = "The mesh pursues long-term objectives - set by people, or by its own initiative within [agency] max_self_objectives (P12) - only on background capacity (P2), within [objectives] budgets (P4), and never while asleep, halted or paused (P1). Every question it asks itself is an order that passes a director on the way in and out (P14). What it finds keeps its source and confidence, and whether a second source confirmed it; disagreements are recorded and settled, not hidden; what it could not find out is written up as open, never filled in (P7). It asks a person only one question at a time per objective, and a person's answer stands (P1). People can pause, change or remove any objective, and every step is logged and audited. (Enforced in code by neuromesh/objectives.py.)"
+text = "The mesh pursues long-term objectives - set by people, or by its own initiative within [agency] max_self_objectives (P12), and, with [objectives] always, one it sets itself whenever it has none left to work on - only on background capacity (P2), within [objectives] budgets (P4), and never while asleep, halted or paused (P1). Every question it asks itself is an order that passes a director on the way in and out (P14). What it finds keeps its source and confidence, and whether a second source confirmed it; disagreements are recorded and settled, not hidden; what it could not find out is written up as open, never filled in (P7). An objective that ends short is archived with its write-up, not deleted, and is tried again only by a person or after [objectives] retry_after_days. It asks a person only one question at a time per objective, and a person's answer stands (P1). People can pause, change or remove any objective, and every step is logged and audited. (Enforced in code by neuromesh/objectives.py.)"
 
 [[prime]]
 id = "P17-own-thoughts"
@@ -764,3 +764,14 @@ llm_summary = true                      # an LLM teacher may write the summary o
 second_thoughts = 3                     # recent answers it thinks over again in one go (agency mode ruminate)
 doubt_confidence = 0.6                  # answers less sure than this are worth a second thought
 second_thought_after_seconds = 120      # how long after an order before it thinks it over again
+# An objective that ends short (unmet) leaves the list for the archive (the Objectives tab's "Ended short, archived";
+# /objective archive), with its write-up; Try again (or /objective retry <id>) plans it afresh. And it always has an
+# objective to work on: when none is left, or every one waits for you, it sets itself the next one when it is idle -
+# from its initiative's aims (your interests, its curiosity, its thinking nodes' desires), else an archived one it
+# may try again, else something it has read about, else a topic from its planner's practice.
+archive_ended_short = true
+always = true
+min_active = 1                          # objectives it keeps going (not just waiting for you) at once
+keep_busy_seconds = 30                  # how often it looks for a next objective when it has none
+retry_after_days = 7                    # an archived objective may be tried again after this long
+keep_archived = 300

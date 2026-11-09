@@ -744,7 +744,7 @@ class Director(Agent):
         areas people keep asking about, goals of its own, and topics it has read up on."""
         s = self.sys
         out: dict[str, dict] = {}
-        taken = {_aim_key(o.text) for o in s.objectives.items.values() if o.status != "removed"}
+        taken = {_aim_key(t) for t in s.objectives.blocking()}  # its objectives, and ones that ended short lately
 
         def add(target: str, text: str, why: str, kind: str, score: float, **extra) -> None:
             t = _clean_topic(target) if kind == "interest" else " ".join(target.split())

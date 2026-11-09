@@ -77,6 +77,7 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /objective <what>               set one (also as an order: "objective: understand the Berlin Wall")
   /objective show|report|pause|resume|remove|think <id>    a plan and its answers; the write-up; think it over now
   /objective <id> ask <question>  add a question to an objective     /ruminate   think again about recent answers
+  /objective archive              objectives that ended short     /objective retry <id>   try an archived one again
   /kiwix                          its Kiwix sources (every book on every server) and its recent searches
   /kiwix <question>               search Kiwix for the answer now (up to [research] kiwix_attempts searches)
   /thoughts                       its thinking nodes: thoughts in its own words, with its opinions and desires
@@ -426,6 +427,15 @@ async def objective_command(system, cmd: str, rest: str) -> list[str]:
         return book.lines()
     sub, _, arg = rest.partition(" ")
     arg = arg.strip()
+    if sub == "archive" and not arg:
+        cut = {o.id: o for o in book.archive.values()}
+        return ([f"  {len(cut)} objective(s) ended short and archived (/objective retry <id> tries one again):"]
+                + [f"  {o.id} {o.text} - {o.progress()[0]}/{o.progress()[1]} found; {o.note[:100]}"
+                   + (f" (tried again as {o.retried_as})" if o.retried_as else "")
+                   for o in sorted(cut.values(), key=lambda o: -o.archived_at)[:20]]) if cut else ["  nothing archived"]
+    if sub == "retry" and arg:
+        ok, msg = await book.retry(arg, by)
+        return [f"  {msg}"]
     if sub in ("show", "report", "pause", "resume", "remove", "think") and arg:
         if sub == "show":
             return book.show(arg)

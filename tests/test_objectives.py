@@ -17,7 +17,7 @@ from neuromesh.tasks import Result
 from test_research import MockWikipedia, start_wiki
 from test_system import FAST, make_root, wait_for
 
-OBJ = {**FAST, "memory": {"enabled": True}, "objectives": {"step_seconds": 0, "second_thought_after_seconds": 0}}
+OBJ = {**FAST, "memory": {"enabled": True}, "objectives": {"step_seconds": 0, "second_thought_after_seconds": 0, "always": False}}
 
 
 async def drive(book, obj, limit=40, answer=None):
@@ -86,6 +86,66 @@ class PlanningTests(unittest.TestCase):
         self.assertFalse(fits("Who wrote Hamlet?", "Hamlet is a play."))
         self.assertTrue(fits("How many bones are in the human body?", "An adult has 206 bones."))
         self.assertTrue(fits("What is jazz?", "Music."))
+
+
+class AlwaysWorkingTests(unittest.IsolatedAsyncioTestCase):
+    """Objectives that end short are archived; it always has an objective to work on ([objectives] always)."""
+
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = make_root(Path(self.tmp.name))
+        self.over = {**OBJ, "objectives": {**OBJ["objectives"], "always": True, "keep_busy_seconds": 0, "steps_per_hour": 0}}
+        self.system = System(self.root, overrides=self.over, seed=13)
+        await self.system.start()
+
+    async def asyncTearDown(self):
+        if not self.system.stopping:
+            await self.system.stop()
+        self.tmp.cleanup()
+
+    async def test_it_always_works_on_an_objective(self):
+        s, book = self.system, self.system.objectives
+        self.assertIsNone(await book.keep_busy())                              # no budget of steps: it waits
+        book.pol.steps_per_hour = 120
+        self.assertTrue(await wait_for(lambda: len(book.active()) >= 1, 20))   # nothing to work on: it sets one itself
+        first = book.active()[0]
+        self.assertTrue(first.self_set)
+        self.assertTrue(any(e.topic == "objective.kept_busy" for e in s.bus.recent("objective.*", 20)))
+        book.pol.always = False                                                # (hold still while it is ended)
+        await book.finish(first, "tester")                                     # it ends short
+        self.assertEqual(first.status, "unmet")
+        self.assertNotIn(first.id, book.items)
+        self.assertIn(first.id, book.archive)
+        self.assertTrue(any(e.topic == "objective.archived" for e in s.bus.recent("objective.*", 20)))
+        self.assertIn(first.text, book.blocking())                             # not set again straight away
+        status, body = await _route(s, "GET", "/objectives", {}, {})
+        self.assertEqual([o["id"] for o in body["archived"]], [first.id])
+        self.assertNotIn(first.id, [o["id"] for o in body["objectives"]])
+        book.pol.always = True
+        self.assertTrue(await wait_for(lambda: len(book.active()) >= 1, 20))   # and it carries on with another
+        second = book.active()[0]
+        self.assertNotEqual(second.text, first.text)
+        # a person tries the archived one again; after retry_after_days it may itself
+        status, body = await _route(s, "POST", "/objectives", {}, {"id": first.id, "action": "retry", "by": "tester"})
+        self.assertEqual(status, 200, body)
+        again = book.get(first.retried_as)
+        self.assertEqual((again.text, again.retry_of, again.status), (first.text, first.id, "active"))
+        self.assertFalse((await book.retry(first.id, "tester"))[0])            # once at a time
+        ok, msg = book.set_status(first.id, "removed", "tester")              # removed from the archive
+        self.assertTrue(ok, msg)
+        self.assertNotIn(first.id, book.archive)
+        await s.stop()
+        # objectives that ended short before there was an archive are archived when it starts
+        old = s.objectives.items[second.id]
+        old.status, old.ended_at = "unmet", time.time()
+        from dataclasses import asdict
+        from neuromesh.store import Store
+        Store(s.store.path).save_record("objectives", old.id, old.status, asdict(old))
+        self.system = s = System(self.root, overrides={**self.over, "objectives": {**self.over["objectives"], "always": False}}, seed=13)
+        await s.start()
+        self.assertIn(second.id, s.objectives.archive)
+        self.assertNotIn(second.id, s.objectives.items)
+        self.assertIn("ended short and archived", "\n".join(s.objectives.lines()))
 
 
 class ObjectiveTests(unittest.IsolatedAsyncioTestCase):
@@ -162,6 +222,9 @@ class ObjectiveTests(unittest.IsolatedAsyncioTestCase):
         await drive(book, obj2, answer=lambda q: "skip")
         self.assertEqual(obj2.status, "unmet", book.show(obj2.id))
         self.assertIn("could not find out: How many moons Neptune has?", obj2.note)
+        self.assertNotIn(obj2.id, book.items)                                  # it ended short: archived, off the list
+        self.assertIs(book.get(obj2.id), obj2)
+        self.assertTrue(obj2.archived_at and book.report_path(obj2).exists())   # its write-up stays
 
     async def test_disagreeing_sources_are_settled_not_hidden(self):
         s, book = self.system, self.system.objectives

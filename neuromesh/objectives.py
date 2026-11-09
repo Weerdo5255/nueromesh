@@ -17,6 +17,13 @@ writes up (P16).
                            its answer, source, confidence and whether a second source confirmed it, what it
                            could not find out, and how it got there
       --> met              every core question answered, nothing contradicted; or it ends and says what is missing
+      --> archived         one that ended short leaves the list for the archive ([objectives] archive_ended_short):
+                           its write-up stays, and it may be tried again later, when it may know more
+
+Always working ([objectives] always): when it has no objective left to work on (or every one waits for a person),
+the Ruminator sets it the next one when it is idle - from its initiative's aims (what you said you are interested
+in, its curiosity's gaps and areas, its thinking nodes' desires), else an archived objective it may try again
+(after [objectives] retry_after_days), else something it has read about, else a topic from its planner's practice.
 
 Rumination also turns on its own experience: "second thoughts" re-ask recent questions it answered
 unsurely or not at all, and note what it would say now (agency mode ruminate).
@@ -387,6 +394,9 @@ class Objective:
     rounds: int = 0
     next_at: float = 0.0
     ended_at: float = 0.0
+    archived_at: float = 0.0        # it ended short and was moved to the archive
+    retry_of: str = ""              # an archived objective this one tries again
+    retried_as: str = ""            # (archived) the objective that tries it again
     note: str = ""
     summary: str = ""
     summary_by: str = ""
@@ -417,8 +427,15 @@ class Objectives:
         self.items: dict[str, Objective] = {}
         for d in system.store.load_records("objectives"):
             self.items[d["id"]] = Objective(**{k: v for k, v in d.items() if k in names})
-        nums = [int(i.split("-")[-1]) for i in self.items if i.split("-")[-1].isdigit()]
+        self.archive: dict[str, Objective] = {}
+        for d in system.store.load_records("objective_archive"):
+            self.archive[d["id"]] = Objective(**{k: v for k, v in d.items() if k in names})
+        nums = [int(i.split("-")[-1]) for i in list(self.items) + list(self.archive) if i.split("-")[-1].isdigit()]
         self._ids = itertools.count(max(nums, default=0) + 1)
+        self._kept_busy = 0.0
+        if self.pol.archive_ended_short:  # ones that ended short before there was an archive
+            for o in [o for o in self.items.values() if o.status == "unmet"]:
+                self.archive_objective(o, "it ended short", "objectives", quiet=True)
         raw = system.store.get_kv("objectives.state")
         st = json.loads(raw) if raw else {}
         self.recent: deque = deque(t for t in st.get("recent", []) if time.time() - t < 3600)  # steps this hour (P4)
@@ -433,7 +450,8 @@ class Objectives:
 
     def save(self, obj: Objective | None = None) -> None:
         if obj is not None:
-            self.sys.store.save_record("objectives", obj.id, obj.status, asdict(obj))
+            table = "objective_archive" if obj.archived_at else "objectives"
+            self.sys.store.save_record(table, obj.id, obj.status, asdict(obj))
         self.sys.store.set_kv("objectives.state", json.dumps({"recent": list(self.recent), "second": list(self.second),
                                                                "reconsidered": self.reconsidered[-300:],
                                                                "counts": self.counts}))
@@ -448,7 +466,108 @@ class Objectives:
         self.counts[key] = self.counts.get(key, 0) + n
 
     def get(self, oid: str) -> Objective | None:
-        return self.items.get(oid)
+        return self.items.get(oid) or self.archive.get(oid)
+
+    # ---------------------------------------------------------------- the archive
+    def archive_objective(self, obj: Objective, why: str, by: str, quiet: bool = False) -> None:
+        """An objective that ended short leaves the list: kept in the archive, with its write-up."""
+        s = self.sys
+        obj.archived_at = time.time()
+        self.items.pop(obj.id, None)
+        self.archive[obj.id] = obj
+        s.store.delete_record("objectives", obj.id)
+        s.store.save_record("objective_archive", obj.id, obj.status, asdict(obj))
+        old = sorted(self.archive.values(), key=lambda o: o.archived_at)
+        while len(old) > self.pol.keep_archived:
+            gone = old.pop(0)
+            self.archive.pop(gone.id, None)
+            s.store.delete_record("objective_archive", gone.id)
+        if not quiet:
+            s.guardian.audit(by, "objective.archived", obj.id, text=obj.text, why=why, note=obj.note[:200])
+            s.bus.publish("objective.archived", id=obj.id, text=obj.text[:200], why=why, note=obj.note[:200], by=by)
+
+    async def retry(self, oid: str, by: str) -> tuple[bool, str]:
+        """Try an archived objective again: a new objective, planned afresh, with what it knows now."""
+        old = self.archive.get(oid)
+        if old is None:
+            return False, f"no archived objective {oid}"
+        if old.retried_as and self.items.get(old.retried_as) is not None:
+            return False, f"{oid} is being tried again as {old.retried_as}"
+        done, total = old.progress()
+        try:
+            obj = await self.add(old.text, by=by, self_set=old.self_set,
+                                 why=f"trying {oid} again: it ended short ({done} of {total} found); it may know more now")
+        except ValueError as exc:
+            return False, str(exc)
+        obj.retry_of, old.retried_as = oid, obj.id
+        self.save(obj)
+        self.save(old)
+        return True, f"{obj.id} tries {oid} again: {obj.text}"
+
+    def blocking(self) -> list[str]:
+        """Aims it should not set itself again yet: its objectives, and ones that ended short lately."""
+        cut = time.time() - self.pol.retry_after_days * 86400
+        return ([o.text for o in self.items.values() if o.status != "removed"]
+                + [o.text for o in self.archive.values() if o.archived_at > cut or (o.retried_as and o.retried_as in self.items)])
+
+    # ---------------------------------------------------------------- always working
+    def working(self) -> list[Objective]:
+        """Active objectives with work it can do (not only waiting for a person)."""
+        out = []
+        for o in self.active():
+            todo = any(q["status"] == "todo" for q in o.questions)
+            waiting = any(q["status"] == "waiting" for q in o.questions)
+            if todo or not waiting:
+                out.append(o)
+        return out
+
+    async def keep_busy(self, by: str = "ruminator") -> Objective | None:
+        """It always has an objective to work on ([objectives] always): when it has none, it sets itself the next."""
+        s, pol = self.sys, self.pol
+        if not self.enabled or not pol.always or self.budget_left() <= 0 or len(self.working()) >= pol.min_active:
+            return None
+        if len([o for o in self.items.values() if o.status in ("active", "paused")]) >= pol.max_objectives:
+            return None
+        now = time.time()
+        if now - self._kept_busy < pol.keep_busy_seconds:
+            return None
+        self._kept_busy = now
+        before = set(self.items)
+        d = getattr(s, "director", None)
+        if d is not None and d.enabled:  # its initiative's own aims: your interests, its curiosity, its desires
+            rec = await d.pursue_now(by=by)
+            obj = self.items.get((rec or {}).get("task", "")) if rec else None
+            if obj is not None and obj.id not in before:
+                self._kept(obj, "its initiative's next aim", by)
+                return obj
+        cut = now - pol.retry_after_days * 86400
+        again = sorted((o for o in self.archive.values() if o.archived_at <= cut and not o.retried_as),
+                       key=lambda o: (-(o.progress()[0] / max(1, o.progress()[1])), o.archived_at))
+        for old in again:  # one that ended short a while ago: it may know more now
+            ok, _ = await self.retry(old.id, by)
+            if ok:
+                obj = self.items[old.retried_as]
+                self._kept(obj, f"trying {old.id} again", by)
+                return obj
+        taken = {o.lower() for o in self.blocking()}
+        read = [doc.title for doc in s.knowledge.documents(40)] if getattr(s, "knowledge", None) is not None else []
+        for text, why in ([(f"understand {t}", f"it has read about {t}, and wants to understand it properly") for t in read]
+                          + [(f"understand {t}", "it had nothing else to work on: a topic from its planner's practice")
+                             for t in random.sample(TOPICS, len(TOPICS))]):
+            if text.lower() in taken:
+                continue
+            try:
+                obj = await self.add(text, by=by, self_set=True, why=why)
+            except ValueError:
+                continue
+            self._kept(obj, why, by)
+            return obj
+        return None
+
+    def _kept(self, obj: Objective, how: str, by: str) -> None:
+        self._count("kept busy")
+        self.sys.guardian.audit(by, "objective.kept_busy", obj.id, text=obj.text, how=how)
+        self.sys.bus.publish("objective.kept_busy", id=obj.id, text=obj.text[:200], how=how, by=by)
 
     def active(self) -> list[Objective]:
         return [o for o in self.items.values() if o.status == "active"]
@@ -542,6 +661,12 @@ class Objectives:
 
     def set_status(self, oid: str, status: str, by: str) -> tuple[bool, str]:
         obj = self.items.get(oid)
+        if obj is None and status == "removed" and oid in self.archive:  # deleted from the archive
+            gone = self.archive.pop(oid)
+            self.sys.store.delete_record("objective_archive", oid)
+            self.sys.guardian.audit(by, "objective.removed", oid, text=gone.text, archived=True)
+            self.sys.bus.publish("objective.removed", id=oid, text=gone.text[:200], by=by)
+            return True, f"{oid} ({gone.text}) removed from the archive"
         if obj is None:
             return False, f"no objective {oid} (/objectives lists them)"
         if status == "removed":
@@ -984,6 +1109,8 @@ class Objectives:
                          answered=done, core=total)
         s.bus.publish("objective.ended", id=obj.id, text=obj.text[:200], status=obj.status, note=obj.note[:300],
                       steps=obj.steps, rounds=obj.rounds, report=str(report))
+        if not met and self.pol.archive_ended_short:  # it ended short: off the list, into the archive
+            self.archive_objective(obj, "it ended short", by)
         return obj.note
 
     async def _summary(self, obj: Objective) -> tuple[str, str]:
@@ -1179,12 +1306,21 @@ class Objectives:
                 "counts": dict(self.counts), "doubts": len(self.doubts(10)),
                 "objectives": [{**asdict(o), "progress": o.progress(), "report": str(self.report_path(o))}
                                for o in sorted(self.items.values(), key=lambda o: o.created_at)],
+                "archived": [{"id": o.id, "text": o.text, "note": o.note, "summary": o.summary[:400], "progress": o.progress(),
+                              "steps": o.steps, "ended_at": o.ended_at, "archived_at": o.archived_at, "self_set": o.self_set,
+                              "retried_as": o.retried_as, "report": str(self.report_path(o)),
+                              "retry_at": o.archived_at + self.pol.retry_after_days * 86400}
+                             for o in sorted(self.archive.values(), key=lambda o: -o.archived_at)[:60]],
+                "archived_count": len(self.archive), "always": self.pol.always, "min_active": self.pol.min_active,
+                "working": [o.id for o in self.working()],
                 "second_thoughts": list(self.second)[-12:]}
 
     def lines(self) -> list[str]:
         if not self.enabled:
             return ["  objectives are off ([objectives] enabled = false in the directives)"]
-        out = [f"  {len(self.active())} active objectives; {self.budget_left()} of {self.pol.steps_per_hour} steps left this hour"]
+        out = [f"  {len(self.active())} active objectives; {self.budget_left()} of {self.pol.steps_per_hour} steps left this hour"
+               + (f"; it always keeps {self.pol.min_active} going" if self.pol.always else "")
+               + (f"; {len(self.archive)} ended short and archived (/objective archive)" if self.archive else "")]
         if not self.items:
             out.append("  none yet: /objective understand the Berlin Wall   (or as an order: objective: ...)")
         for o in sorted(self.items.values(), key=lambda o: o.created_at):
@@ -1241,6 +1377,9 @@ class Ruminator(Agent):
             return
         if s.inflight or not s.guardian.background_allowed():
             return
+        made = await book.keep_busy(by="ruminator")  # it always has an objective to work on ([objectives] always)
+        if made is not None:
+            self.stats["set itself"] += 1
         obj = book.due()
         if obj is None:
             return

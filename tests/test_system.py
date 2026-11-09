@@ -25,6 +25,7 @@ FAST = {
     "agency": {"enabled": False},       # no initiative of its own unless a test asks (see test_agency)
     "dreams": {"enabled": False},       # it does not fall asleep unless a test asks (see test_dreams)
     "directors": {"consult": False},    # no second opinions unless a test asks (see test_directors)
+    "objectives": {"always": False},    # it sets itself no objectives unless a test asks (see test_objectives)
 }
 
 

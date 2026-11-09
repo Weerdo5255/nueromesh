@@ -369,7 +369,7 @@ class Curiosity:
         if not self.enabled:
             return []
         s = self.sys
-        taken = {aim_key(o.text) for o in s.objectives.items.values() if o.status != "removed"}
+        taken = {aim_key(t) for t in s.objectives.blocking()}  # its objectives, and ones that ended short lately
         out: list[dict] = []
         p = self.pol
         for a in self.ranked(60):

@@ -730,7 +730,21 @@ With an LLM teacher, the teacher drafts the questions (`llm_plan`) and can write
 - **Follow-ups.** An explain objective follows up names its answers mention (a bounded number per
   round), and a survey looks into each member of the list it found.
 - **Its end.** Met when every core question is answered and nothing is disputed. Otherwise it ends
-  and says what it found, what it could not find out, and what its sources disagree on.
+  short and says what it found, what it could not find out, and what its sources disagree on.
+
+**Ended short: the archive.** An objective that ends short leaves the list for the archive
+(`[objectives] archive_ended_short`): "Ended short, archived" under its objectives in the Mind's
+Objectives tab, or `/objective archive`. Its write-up stays. **Try again** (`/objective retry obj-4`)
+plans it afresh with what it knows now; **Remove** deletes it from the archive. It doesn't set itself
+the same aim again until `retry_after_days` (7) have passed, and then it may try it again itself.
+
+**Always working.** It always has an objective to work on (`[objectives] always`, `min_active`): when
+none is left, or every one is only waiting for your answer, the Ruminator sets it the next one as soon
+as it is idle - from its initiative's aims (what you said you are interested in, its curiosity's gaps
+and areas, its thinking nodes' desires), else an archived objective it may try again, else something
+it has read about, else a topic from its planner's practice. Each says why it set itself that one,
+and the activity log shows "set itself obj-7 to keep working". It still works only on background
+capacity and within `steps_per_hour`; with no budget left it waits.
 
 **The write-up** (`state/objectives/<id>.md`, `/objective report <id>`, or the web) has what it
 found in a paragraph, every question with its answer, source, confidence and whether a second source
@@ -744,7 +758,7 @@ would now answer it differently, in the notes it shares. `/ruminate` does it now
 Objectives run only on background capacity (P2), within `steps_per_hour` (P4), never while asleep,
 halted or paused (P1). `/objectives` lists them; `/objective show obj-1` shows the plan and every
 answer; `/objective pause|resume|remove obj-1`; `/objective think obj-1` thinks it over now;
-`/objective obj-1 ask <question>` adds a question. `[objectives]` in the directives sets the budgets
+`/objective obj-1 ask <question>` adds a question; `/objective archive` and `/objective retry obj-4`. `[objectives]` in the directives sets the budgets
 and limits (`max_questions`, `max_rounds`, `checks_per_round`, `follow_ups`, `met_share`, `ask_people`,
 `person_wait_seconds`, `doubt_confidence`).
 
@@ -1652,8 +1666,9 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
   and why; the objectives it could set itself and the ones it did, with why; set itself one now.
   **Objectives** (with
   how many are active): set one, each one's progress, plan and answers (confirmed, disputed or one
-  source), how it thought it over, the write-up; think it over now, pause, remove; and its second
-  thoughts about recent answers. **Directors**: each
+  source), how it thought it over, the write-up; think it over now, pause, remove; the ones that
+  ended short, archived (Try again, Remove); and its second thoughts about recent answers.
+  **Directors**: each
   director node and what it is doing, the stance its mood gives them, add or retire a duplicate,
   the limit on retries, recent reviews and their second opinions, what was kept out of memory.
   **Initiative**: turn it on or off, pin a mode, take initiative now, recent decisions, what has
@@ -1757,8 +1772,8 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | GET | `/toolsmith` | the coder node, the tools it wrote (drafts awaiting approval, installed, proven), unmet requests it could write a tool for, recent work |
 | GET | `/anatomy` | `?node=<node id, memory node id or skill>&text=...`: how the node is built, and what fires in it for the text (`&latest=1`: what it fired on last); 410 for a node evolution has disposed of |
 | GET | `/traces` | `?n=15`: the paths recent orders took through the mesh, hop by hop, with each node, its decision and its input |
-| GET | `/objectives` | every objective with its plan, answers and thoughts, second thoughts, the step budget; `?id=obj-1` gives its write-up |
-| POST | `/objectives` | `{"text": "understand jazz"}` sets one; `{"id": "obj-1", "action": "pause" \| "resume" \| "remove" \| "think"}`; `{"id": "obj-1", "ask": "..."}` adds a question; `{"ruminate": true}` has second thoughts now |
+| GET | `/objectives` | every objective with its plan, answers and thoughts, the archived ones that ended short, second thoughts, the step budget; `?id=obj-1` gives its write-up |
+| POST | `/objectives` | `{"text": "understand jazz"}` sets one; `{"id": "obj-1", "action": "pause" \| "resume" \| "remove" \| "think" \| "retry"}` (`retry`: try an archived one again; `remove` on an archived one deletes it); `{"id": "obj-1", "ask": "..."}` adds a question; `{"ruminate": true}` has second thoughts now |
 | POST | `/toolsmith` | `{"build": "reverse a word"}` writes a tool and asks permission; `{"try": "reverser"}` experiments with one it made. Approve a draft with `POST /approve` |
 | GET | `/dreams` | asleep or awake, the dream nodes and their fitness, last night, recent dreams |
 | POST | `/dreams` | `{"action": "sleep" \| "wake" \| "flip"}` (flip: toss the idle coin now), or `{"allow_sleep": false}` to keep it awake (`true` lets it sleep) |
@@ -2188,7 +2203,7 @@ neuromesh/
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   286 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   287 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -2242,7 +2257,9 @@ tests/                   286 tests: nodes, guardian, LLM wire formats and a mock
                          web search (a mock SearXNG through the approved searxng plugin: the question
                          searched, read by a mock Ollama teacher, answered with its sources and kept by
                          memory; questions about you never sent; a person's answer replacing the web's;
-                         reading the results itself without a teacher; its budget)
+                         reading the results itself without a teacher; its budget), objectives that end short
+                         archived (off the list, write-up kept, tried again, removed, older ones archived
+                         at start) and it always having an objective to work on
 ```
 
 State lives in `state/` (SQLite database, node weights, log). Delete it to start fresh.

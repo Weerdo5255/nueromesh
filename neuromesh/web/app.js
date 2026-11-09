@@ -1482,6 +1482,19 @@ it decides whether to say something of its own after an answer, and what`))
         thoughts.length ? fold(`thoughts:${o.id}`, "How it thought it over", h("ul", { class: "rows small" }, thoughts)) : null,
         write);
     });
+    const archived = (ob.archived || []).map(o => h("li", { class: "ask" },
+      h("div", { class: "row", style: "justify-content:space-between;align-items:baseline" },
+        h("span", {}, h("b", {}, o.text.charAt(0).toUpperCase() + o.text.slice(1)), " ", h("span", { class: "no" }, "ended short"),
+          o.self_set ? h("span", { class: "dim small" }, " set by its own initiative") : null),
+        h("span", { class: "row" },
+          o.retried_as ? h("span", { class: "dim small" }, `tried again as ${o.retried_as}`)
+            : h("button", { type: "button", class: "small", onclick: e => act(e.target, () => api("/objectives", { id: o.id, action: "retry", by: "web" }), r => r.message) }, "Try again"),
+          h("button", { type: "button", class: "quiet small", onclick: e => act(e.target, () => api("/objectives", { id: o.id, action: "remove", by: "web" }), r => r.message) }, "Remove"))),
+      h("p", { class: "why" }, `${o.id}: ${o.progress[0]} of ${o.progress[1]} found in ${o.steps} steps; archived ${dateTime(o.archived_at)}.` +
+        (o.retried_as ? "" : ` It may try it again itself after ${dateTime(o.retry_at)}.`)),
+      o.note ? h("p", { class: "why" }, o.note) : null,
+      o.summary ? h("p", { class: "small" }, o.summary) : null,
+      h("p", { class: "small dim" }, `Its write-up: ${o.report}`)));
     const second = ob.second_thoughts.slice().reverse().map(t => h("li", { class: "ask" },
       h("p", {}, h("time", { class: "dim small", title: dateTime(t.ts) }, clock(t.ts)), " ", h("span", { class: t.verdict === "changed its mind" ? "no" : t.verdict === "now answers" ? "ok" : "dim" }, t.verdict)),
       h("p", { class: "why" }, t.line)));
@@ -1489,9 +1502,12 @@ it decides whether to say something of its own after an answer, and what`))
       h("p", { class: "lede" }, "Long-term aims it works on in its spare time. Its planner node picks a strategy, and each question in the plan is asked of the mesh itself: the router, its tools, memory nodes, what it has read, and teachers, with a director at both ends. " +
         "When the plan runs out it thinks things over: it checks each answer against a second source, tries what failed in other words or reads up on it, asks you what nothing it has can answer, and follows up what the answers raise. It writes up everything as it goes."),
       set,
-      h("p", { class: "small dim" }, `${ob.steps_left} of ${ob.limit} steps left this hour. Also as an order: “objective: understand photosynthesis”.`),
+      h("p", { class: "small dim" }, `${ob.steps_left} of ${ob.limit} steps left this hour. Also as an order: “objective: understand photosynthesis”.` +
+        (ob.always ? ` It always keeps ${ob.min_active === 1 ? "an objective" : `${ob.min_active} objectives`} going: when none is left (or all wait for you), it sets itself the next one when it is idle.` : "") +
+        (ob.archived_count ? ` Objectives that end short leave the list for the archive.` : "")),
       h("div", { class: "cols", style: "margin-top:14px" },
-        h("div", {}, h("h3", {}, "Its objectives"), items.length ? h("ul", { class: "rows" }, items) : h("p", { class: "dim" }, "None yet. Set one above, or let its initiative set one about something you said you are interested in.")),
+        h("div", {}, h("h3", {}, "Its objectives"), items.length ? h("ul", { class: "rows" }, items) : h("p", { class: "dim" }, ob.always ? "None right now: it sets itself the next one as soon as it is idle." : "None yet. Set one above, or let its initiative set one about something you said you are interested in."),
+          archived.length ? fold("objectives:archive", `Ended short, archived (${ob.archived_count})`, h("ul", { class: "rows" }, archived)) : null),
         h("div", {},
           h("h3", {}, "Second thoughts"),
           h("p", { class: "small dim" }, `It thinks again about recent answers it was unsure of or could not give. ${ob.doubts ? `${ob.doubts} worth another look now.` : "Nothing waiting for a second look."}`),

@@ -354,9 +354,10 @@ def objectives_line(system, g: dict) -> Line:
     live = [o for o in book.items.values() if o.status in ("active", "paused")]
     parts = [f"{o.id} {o.progress()[0]}/{o.progress()[1]} {o.text[:28]}" + (" (paused)" if o.status == "paused" else "")
              for o in live[:3]]
-    ended = [o for o in book.items.values() if o.status in ("met", "unmet")]
-    if ended:
-        parts.append(f"{sum(o.status == 'met' for o in ended)} met, {sum(o.status == 'unmet' for o in ended)} ended short")
+    met = sum(o.status == "met" for o in book.items.values())
+    short = sum(o.status == "unmet" for o in book.items.values()) + len(book.archive)
+    if met or short:
+        parts.append(f"{met} met, {short} ended short" + (" (archived)" if book.archive else ""))
     second = list(book.second)
     if second:
         parts.append(f"last second thought: {second[-1]['verdict']}")

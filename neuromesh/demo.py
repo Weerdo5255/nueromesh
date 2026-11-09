@@ -51,6 +51,7 @@ DEMO_OVERRIDES = {
     "tools": {"scan_seconds": 0.5},
     "temperament": {"enabled": False},  # scored on raw answers; the temperament has its own tests
     "memory": {"interval_seconds": 0.05, "sync_seconds": 0.25, "facts_per_node": 4, "merge_every_seconds": 0.5},
+    "objectives": {"always": False},  # the tour sets its own objectives (phase 11)
     "agency": {"enabled": False},  # switched on for the initiative phase, so the scored phases compare
     "dreams": {"enabled": False},  # switched on for the sleep phase
 }
