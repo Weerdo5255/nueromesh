@@ -1139,7 +1139,7 @@ class Explorer(Agent):
 
     def _check_approval(self, tool: Tool) -> None:
         s = self.sys
-        approval = s.guardian.approvals.get(tool.approval_id or "")
+        approval = s.guardian.approval_for(tool.approval_id, "tool", tool.name)
         if approval is None:  # e.g. after a restart: ask again
             approval = s.guardian.request_approval("tool", tool.name, {
                 "permissions": list(tool.manifest.permissions), "secrets": list(tool.manifest.secrets), "version": tool.manifest.version,

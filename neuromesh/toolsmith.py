@@ -510,8 +510,10 @@ class Toolsmith:
 
     def _on_event(self, ev) -> None:
         if ev.topic == "approval.decided":
-            d = next((x for x in self.drafts.values() if x.get("approval") == ev.data.get("id")), None)
-            if d is not None and d["status"] == "awaiting approval":
+            if ev.data.get("kind", "tool.made") != "tool.made" or ev.data.get("status") == "withdrawn":
+                return
+            d = self.drafts.get(str(ev.data.get("subject", "")))
+            if d is not None and d.get("approval") and d.get("approval") == ev.data.get("id") and d["status"] == "awaiting approval":
                 if ev.data.get("status") == "approved":
                     self.install(d, ev.data.get("by", "a person"))
                 else:
@@ -574,7 +576,7 @@ class Toolsmith:
         """After a restart, ask again for what was waiting (approvals are not kept across restarts)."""
         s = self.sys
         for d in self.drafts.values():
-            if d["status"] == "awaiting approval" and d.get("approval") not in s.guardian.approvals:
+            if d["status"] == "awaiting approval" and s.guardian.approval_for(d.get("approval"), "tool.made", d["name"]) is None:
                 a = s.guardian.request_approval("tool.made", d["name"], {
                     "version": d["version"], "recipe": d["recipe"], "purpose": d["title"], "why": d["why"],
                     "made_by": d["by"], "for": d["needs"][:5] or [d.get("asked", "")], "tests": len(d["tests"]),

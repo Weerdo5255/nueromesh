@@ -7,6 +7,7 @@ every decision that is not a plain "allow" is written to the audit log.
 from __future__ import annotations
 
 import itertools
+import json
 import time
 from collections import Counter, defaultdict, deque
 from dataclasses import asdict, dataclass, field
@@ -65,7 +66,10 @@ class Guardian:
         self.halt_reason = ""
         self.paused = False
         self.approvals: dict[str, Approval] = {}
-        self._approval_ids = itertools.count(1)
+        # Approvals are kept in memory, but what waits on one (code in the scratch pad, a project change, a tool it
+        # wrote) is kept across restarts with its approval's number; so numbers carry on from the last run and never
+        # name two things. (Numbering again from apv-1 once made approving new code run old code instead.)
+        self._approval_ids = itertools.count(self._next_approval_number())
         self._llm: defaultdict[str, deque[tuple[float, int]]] = defaultdict(deque)
         self._research: deque[tuple[float, bool]] = deque()
         self._research_unlimited: deque[float] = deque()   # lookups on exempt servers: counted, never limited
@@ -306,8 +310,22 @@ class Guardian:
         return ALLOW
 
     # -------------------------------------------------------------- approvals
+    def _next_approval_number(self) -> int:
+        n = 0
+        try:
+            n = int(self.store.get_kv("guardian.approval_seq") or 0)
+            row = self.store.db.execute("SELECT detail FROM audit WHERE kind = 'approval.requested' "
+                                        "ORDER BY id DESC LIMIT 1").fetchone()  # (a store from before the number was kept)
+            if row:
+                n = max(n, int(str(json.loads(row[0]).get("approval", "apv-0")).rsplit("-", 1)[-1]))
+        except Exception:
+            pass
+        return n + 1
+
     def request_approval(self, kind: str, subject: str, detail: dict) -> Approval:
-        approval = Approval(f"apv-{next(self._approval_ids)}", kind, subject, detail)
+        num = next(self._approval_ids)
+        self.store.set_kv("guardian.approval_seq", str(num))
+        approval = Approval(f"apv-{num}", kind, subject, detail)
         self.approvals[approval.id] = approval
         self.audit("guardian", "approval.requested", subject, approval=approval.id, approval_kind=kind,
                    **{k: v for k, v in detail.items() if k not in ("actor", "kind", "subject")})
@@ -322,7 +340,24 @@ class Guardian:
         approval.decided_by, approval.decided_at, approval.note = by, time.time(), note
         self.audit(by, f"approval.{approval.status}", approval.subject, approval=approval_id, note=note)
         self.bus.publish("approval.decided", id=approval_id, status=approval.status,
-                         subject=approval.subject, by=by)
+                         subject=approval.subject, kind=approval.kind, by=by)
+        return approval
+
+    def approval_for(self, approval_id: str | None, kind: str, subject: str) -> Approval | None:
+        """The approval with this id, only if it is the one asked for this kind of thing and this subject."""
+        a = self.approvals.get(approval_id or "")
+        return a if a is not None and a.kind == kind and a.subject == subject else None
+
+    def withdraw(self, approval_id: str, why: str, by: str = "neuromesh") -> Approval | None:
+        """What it asked about changed before a person decided (e.g. the code was edited): the question is withdrawn,
+        and it asks again about what is there now."""
+        approval = self.approvals.get(approval_id)
+        if approval is None or approval.status != "pending":
+            return None
+        approval.status, approval.decided_by, approval.decided_at, approval.note = "withdrawn", by, time.time(), why
+        self.audit(by, "approval.withdrawn", approval.subject, approval=approval_id, note=why)
+        self.bus.publish("approval.decided", id=approval_id, status="withdrawn", subject=approval.subject,
+                         kind=approval.kind, by=by)
         return approval
 
     def pending_approvals(self) -> list[Approval]:

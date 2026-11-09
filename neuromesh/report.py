@@ -41,6 +41,8 @@ def describe_event(ev: Event) -> str | None:
                     f"these exact files before it runs (/approve {d['id']})")
         return f"[approval] {d['id']}: {d['kind']} '{d['subject']}' needs a human decision (permissions: {perms})"
     if t == "approval.decided":
+        if d.get("status") == "withdrawn":
+            return f"[approval] {d['id']} for {d.get('subject', '')} withdrawn: what it asked about changed, so it asks again"
         return f"[approval] {d['id']} {d['status']} by {d['by']}"
     if t == "capability.labels_changed":
         return f"[label]    '{d['capability']}' learned label '{d['label']}' (from {d['by']})"

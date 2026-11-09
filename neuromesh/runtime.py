@@ -186,6 +186,8 @@ class System:
         self.guardian.check_kill_switch()
         await self.teachers.refresh(force=True)  # find local model servers before the first order
         self.toolsmith.resume()  # tools it wrote that were waiting for approval ask again
+        self.scratch.resume()    # and code, and changes to its project
+        self.projects.resume()
         explorer = next(a for a in self.agents if isinstance(a, Explorer))
         try:  # vet and activate installed tools before the first order is taken
             await explorer.step()

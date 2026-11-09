@@ -405,6 +405,10 @@ class ScratchPad:
         if item.get("approved_digest") and item["approved_digest"] != item["digest"]:
             item["approved_digest"] = None  # the code changed: the approval was for other code
             item["approval"] = None
+        pending = self.sys.guardian.approval_for(item.get("approval"), "code", item["id"])
+        if pending is not None and pending.status == "pending" and pending.detail.get("digest") != item["digest"]:
+            item["approval"] = None  # asked about other code: withdrawn (approve it again to run what is there now)
+            self.sys.guardian.withdraw(pending.id, "its code changed after it asked")
         if item["status"] not in ("running",):
             item["status"] = ("approved" if item.get("approved_digest") else "valid" if check["ok"] else
                               "invalid" if check["ok"] is False else "unchecked")
@@ -433,8 +437,12 @@ class ScratchPad:
             return False, f"{item['language']} code does not run here (it runs: {', '.join(l for l in self.pol.run_languages if self.runnable(l))})"
         if item["check"] and item["check"]["ok"] is False:
             return False, f"{item_id} does not check out, so it cannot run: " + "; ".join(item["check"]["problems"][:2])
-        if item.get("approval") and (a := s.guardian.approvals.get(item["approval"])) is not None and a.status == "pending":
-            return True, f"{item_id} is waiting for approval {item['approval']}"
+        a = s.guardian.approval_for(item.get("approval"), "code", item_id)
+        if a is not None and a.status == "pending":
+            if a.detail.get("digest") == item["digest"]:
+                return True, f"{item_id} is waiting for approval {item['approval']}"
+            item["approval"] = None  # it asked about other code
+            s.guardian.withdraw(a.id, "its code changed after it asked")
         a = s.guardian.request_approval("code", item_id, {
             "title": item["title"], "language": item["language"], "digest": item["digest"],
             "touches": (item["check"] or {}).get("touches", []), "lines": item["code"].count("\n") + 1,
@@ -459,8 +467,9 @@ class ScratchPad:
         item = self.items.get(item_id)
         if item is None:
             return False, f"no scratch pad item {item_id}"
-        if item.get("approval"):
-            self.sys.guardian.decide(item["approval"], False, by=by)
+        a = self.sys.guardian.approval_for(item.get("approval"), "code", item_id)
+        if a is not None and a.status == "pending":
+            self.sys.guardian.decide(a.id, False, by=by)
         item["status"], item["approval"], item["approved_digest"] = "declined", None, None
         self._save(item)
         return True, f"{item_id} declined: it will not run"
@@ -472,13 +481,39 @@ class ScratchPad:
         self.sys.guardian.audit(by, "code.removed", item_id)
         return True, f"{item_id} removed from the scratch pad"
 
+    def resume(self) -> None:
+        """After a restart, ask again for code that was waiting (approvals are not kept across restarts)."""
+        for item in list(self.items.values()):
+            if item["status"] != "awaiting approval":
+                continue
+            a = self.sys.guardian.approval_for(item.get("approval"), "code", item["id"])
+            if a is not None and a.status == "pending":
+                continue
+            item["approval"] = None
+            ok, _ = self.ask(item["id"], "neuromesh")
+            if not ok:  # it can no longer run here, or no longer checks out
+                item["status"] = "valid" if (item.get("check") or {}).get("ok") else "unchecked"
+                self._save(item)
+
     def on_event(self, ev) -> None:
-        if ev.topic != "approval.decided":
+        if ev.topic != "approval.decided" or ev.data.get("kind", "code") != "code":
             return
-        item = next((i for i in self.items.values() if i.get("approval") == ev.data.get("id")), None)
-        if item is None:
+        item = self.items.get(str(ev.data.get("subject", "")))
+        if item is None or not item.get("approval") or item.get("approval") != ev.data.get("id"):
+            return  # (an approval for something else, or one this item no longer waits on)
+        if ev.data.get("status") == "withdrawn":
+            item["approval"] = None
+            self._save(item)
             return
         if ev.data.get("status") == "approved":
+            a = self.sys.guardian.approvals.get(ev.data.get("id"))
+            if a is not None and a.detail.get("digest") not in (None, item["digest"]):
+                item["approval"] = None  # approved, but for code that has changed since: it does not run (P20)
+                item["status"] = "valid" if (item.get("check") or {}).get("ok") else "unchecked"
+                self._save(item)
+                self.sys.guardian.audit(ev.data.get("by", "a person"), "code.not_run", item["id"],
+                                        why="its code changed after it asked", approval=a.id)
+                return
             item["approved_digest"], item["status"] = item["digest"], "approved"
             item["approved_by"] = ev.data.get("by", "a person")
             self._save(item)

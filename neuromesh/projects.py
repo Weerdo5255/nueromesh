@@ -295,11 +295,7 @@ class Projects:
             self.changes[ch["id"]] = ch
             obj["changes"].append(ch["id"])
             if ok:
-                a = s.guardian.request_approval("project-change", ch["id"], {
-                    "repo": repo, "base": base, "objective": obj["text"], "files": [f["path"] for f in files],
-                    "plus": ch["plus"], "minus": ch["minus"], "digest": ch["digest"], "how": ch["how"],
-                    "description": f"push a branch and open a pull request on {repo}: {obj['text'][:80]}"})
-                ch["approval"], ch["status"] = a.id, "awaiting approval"
+                self._ask(ch)
                 obj["status"] = "proposed"
             else:
                 obj["status"] = "open"
@@ -333,12 +329,33 @@ class Projects:
         return None, "", f"{path} needs a teacher to change it for '{obj['text'][:60]}' (none is available; it tries again later)"
 
     # ------------------------------------------------------------------ approval, pushing, watching
+    def _ask(self, ch: dict) -> None:
+        """Ask a person to approve pushing this change (its files, its size, the digest of exactly what they see)."""
+        a = self.sys.guardian.request_approval("project-change", ch["id"], {
+            "repo": ch["repo"], "base": ch["base"], "objective": ch["objective"], "files": [f["path"] for f in ch["files"]],
+            "plus": ch["plus"], "minus": ch["minus"], "digest": ch["digest"], "how": ch["how"],
+            "description": f"push a branch and open a pull request on {ch['repo']}: {ch['objective'][:80]}"})
+        ch["approval"], ch["status"] = a.id, "awaiting approval"
+        self._save_change(ch)
+
+    def _pending(self, ch: dict):
+        a = self.sys.guardian.approval_for(ch.get("approval"), "project-change", ch["id"])
+        return a if a is not None and a.status == "pending" else None
+
+    def resume(self) -> None:
+        """After a restart, ask again for changes that were waiting (approvals are not kept across restarts)."""
+        for ch in list(self.changes.values()):
+            if ch["status"] == "awaiting approval" and self._pending(ch) is None:
+                self._ask(ch)
+
     def approve(self, cid: str, by: str) -> tuple[bool, str]:
         ch = self.changes.get(cid)
         if ch is None:
             return False, f"no change {cid}"
-        if ch["status"] != "awaiting approval" or not ch.get("approval"):
+        if ch["status"] != "awaiting approval":
             return False, f"{cid} is {ch['status']}"
+        if self._pending(ch) is None:  # (its question went with a restart: ask it again, then decide it)
+            self._ask(ch)
         a = self.sys.guardian.decide(ch["approval"], True, by=by, note=f"change {ch['digest']}")
         return (True, f"{cid} approved: it pushes a branch and opens a pull request") if a else (False, "that approval was already decided")
 
@@ -346,7 +363,7 @@ class Projects:
         ch = self.changes.get(cid)
         if ch is None:
             return False, f"no change {cid}"
-        if ch.get("approval") and ch["status"] == "awaiting approval":
+        if ch["status"] == "awaiting approval" and self._pending(ch) is not None:
             self.sys.guardian.decide(ch["approval"], False, by=by)
             return True, f"{cid} declined"
         ch["status"] = "declined"
@@ -356,10 +373,16 @@ class Projects:
     def on_event(self, ev) -> None:
         if ev.topic != "approval.decided":
             return
-        ch = next((c for c in self.changes.values() if c.get("approval") == ev.data.get("id")), None)
-        if ch is None:
+        if ev.data.get("kind", "project-change") != "project-change":
             return
+        ch = self.changes.get(str(ev.data.get("subject", "")))
+        if ch is None or not ch.get("approval") or ch.get("approval") != ev.data.get("id") or ch["status"] != "awaiting approval":
+            return  # (an approval for something else, or one this change no longer waits on)
         by = ev.data.get("by", "a person")
+        if ev.data.get("status") == "withdrawn":
+            ch["approval"] = None
+            self._save_change(ch)
+            return
         obj = self.objective(ch["objective_id"])
         if ev.data.get("status") != "approved":
             ch["status"] = "declined"

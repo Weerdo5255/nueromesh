@@ -535,8 +535,13 @@ studies nothing. Asked an order ("tool gitea: textkit", "what repositories are o
 the repositories that match. Studying only reads, and code from Gitea never runs. The one thing it
 writes is a change to its project that you approved (next section), with a separate write token. A tool is given only the secrets its manifest lists, never a teacher's API key, and a tool that
 lists a secret always needs your approval. Changing code in the scratch pad (Edit in the Code view, `POST /code
-{"id", "code"}`) withdraws its approval. Python and JavaScript (with Node.js) run once approved; other
-languages are checked only.
+{"id", "code"}`) withdraws its approval, also one still waiting: approving runs what is there now. Python
+and JavaScript (with Node.js) run once approved; other languages are checked only.
+
+**Approvals and restarts.** Approvals are kept in memory, so a restart clears them; code, project changes
+and tools it wrote that were waiting ask again when it starts, with new numbers. Approval numbers carry
+on from the last run (`apv-57`, not `apv-1` again), and each approval acts only on the thing it was asked
+for (its kind and subject), so approving one thing never runs, pushes or installs another.
 
 **Practice.** When it is idle it takes the purpose of a function people wrote, writes code for it
 without looking at theirs, checks it, and compares the two: does it check out, is it the same kind of
@@ -2091,7 +2096,7 @@ neuromesh/
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   278 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   279 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -2128,7 +2133,8 @@ tests/                   278 tests: nodes, guardian, LLM wire formats and a mock
                          approved gitea plugin: functions taken apart in four languages, kinds of code,
                          $GITEA_TOKEN given to it and no teacher's key to any tool, only changed files read
                          again, switched off, Gitea down), the scratch pad (the validator for six languages, nothing runs
-                         unapproved, changed code withdraws the approval, a teacher's code fixed once,
+                         unapproved, changed code withdraws the approval, approving after a restart runs
+                         exactly that code and what was waiting asks again, a teacher's code fixed once,
                          practice), images (PNG decoding by hand, a mock Ollama vision model, a person's
                          label standing, a glyph node that learns to read a note), lessons (a mock Ollama
                          teacher sets orders and marks them; a teacher's fact is a teacher's, not a person's),

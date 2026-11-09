@@ -64,6 +64,60 @@ class ReadingCodeTests(unittest.TestCase):
         self.assertGreater(shared("def mean(xs): return sum(xs) / len(xs)", "def average(numbers): return sum(numbers) / len(numbers)"), 0.2)
 
 
+class ApprovalTests(unittest.IsolatedAsyncioTestCase):
+    """Approving code runs exactly that code, also after a restart (approvals live in memory; what waits on one is
+    kept, so approval numbers carry on and never name two things)."""
+
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = make_root(Path(self.tmp.name))
+        self.system = System(self.root, overrides=FAST, seed=5)
+        await self.system.start()
+
+    async def asyncTearDown(self):
+        if not self.system.stopping:
+            await self.system.stop()
+        self.tmp.cleanup()
+
+    async def test_approving_runs_that_code_after_a_restart(self):
+        s = self.system
+        old = s.scratch.add('print("old")\n', "python", "old", "tester")
+        self.assertTrue(s.scratch.ask(old["id"], "tester")[0])                # waits for approval when it stops
+        ran = s.scratch.add('print("ran")\n', "python", "ran", "tester")
+        self.assertTrue(s.scratch.approve(ran["id"], "tester")[0])
+        self.assertTrue(await wait_for(lambda: ran["status"] == "ran", 30))
+        edited = s.scratch.add('print("first")\n', "python", "edited", "tester")
+        s.scratch.ask(edited["id"], "tester")
+        first = edited["approval"]
+        s.scratch.edit(edited["id"], 'print("second")\n', "tester")             # changed while it waited:
+        self.assertEqual(s.guardian.approvals[first].status, "withdrawn")       # the question is withdrawn
+        self.assertNotIn(first, [a.id for a in s.guardian.pending_approvals()])
+        self.assertTrue(s.scratch.approve(edited["id"], "tester")[0])            # approving runs what is there now
+        self.assertTrue(await wait_for(lambda: edited["status"] == "ran", 30))
+        self.assertEqual(edited["runs"][-1]["stdout"].strip(), "second")
+        last = max(int(a.split("-")[1]) for a in s.guardian.approvals)
+        await s.stop()
+
+        self.system = s = System(self.root, overrides=FAST, seed=5)
+        await s.start()
+        self.assertTrue(all(int(a.split("-")[1]) > last for a in s.guardian.approvals))  # numbers carry on
+        waiting = s.scratch.get(old["id"])
+        self.assertEqual(waiting["status"], "awaiting approval")                # it asks again for what was waiting
+        self.assertIsNotNone(s.guardian.approval_for(waiting["approval"], "code", old["id"]))
+        new = s.scratch.add('print("new")\n', "python", "new", "tester")
+        ok, msg = s.scratch.approve(new["id"], "tester")
+        self.assertTrue(ok, msg)
+        self.assertTrue(await wait_for(lambda: new["status"] == "ran", 30))
+        self.assertEqual(new["runs"][-1]["stdout"].strip(), "new")              # the code that was approved ran
+        self.assertEqual((waiting["status"], waiting.get("runs", [])), ("awaiting approval", []))  # and nothing else
+        # an approval for one thing never acts on another that holds the same number
+        s.projects.changes["ch-99"] = {"id": "ch-99", "status": "awaiting approval", "approval": waiting["approval"]}
+        s.guardian.decide(waiting["approval"], True, by="tester")
+        self.assertTrue(await wait_for(lambda: waiting["status"] == "ran", 30))
+        self.assertEqual(s.projects.changes["ch-99"]["status"], "awaiting approval")
+        self.assertIsNone(s.guardian.approval_for(waiting["approval"], "project-change", "ch-99"))
+
+
 class CodeSystemTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.gitea = MockGitea()
