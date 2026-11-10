@@ -1,7 +1,8 @@
 """Images for its optical nodes: decoding, what its sight node sees in them, and the glyphs its reader reads.
 
-Decoding needs nothing but numpy: PNG (all colour types, 8 and 16 bit, not interlaced), PPM/PGM and BMP. With
-Pillow installed it also reads JPEG, GIF, WebP and interlaced PNG (it is optional, as everything beyond numpy).
+Decoding needs nothing but numpy: PNG (all colour types, 8 and 16 bit, not interlaced), PPM/PGM, BMP and baseline
+JPEG (what the Hugging Face dataset viewer serves). With Pillow installed it also reads progressive JPEG, GIF, WebP
+and interlaced PNG, and JPEG goes to Pillow (it is faster); it is optional, as everything beyond numpy.
 
     features(rgb)  -> what the sight node takes in: a small grey thumbnail, a colour histogram, a histogram of edge
                       directions in a grid (the shapes in it), and a few overall measures
@@ -58,7 +59,10 @@ def decode(data: bytes) -> np.ndarray:
     try:
         from PIL import Image  # optional
     except ImportError:
-        raise ImageError(f"{kind or 'this'} images need Pillow (pip install pillow); PNG, BMP and PPM work without it")
+        if kind == "jpeg":
+            return _jpeg(data)
+        raise ImageError(f"{kind or 'this'} images need Pillow (pip install pillow); PNG, BMP, PPM and baseline JPEG work "
+                         "without it")
     try:
         im = Image.open(io.BytesIO(data))
         im.load()
@@ -206,6 +210,221 @@ def _bmp(data: bytes) -> np.ndarray:
     rows = np.frombuffer(data, dtype=np.uint8, count=stride * abs(h), offset=offset).reshape(abs(h), stride)
     px = rows[:, :w * bpp].reshape(abs(h), w, bpp)[:, :, 2::-1]
     return (px[::-1] if h > 0 else px).copy()
+
+
+# ---------------------------------------------------------------------------- baseline JPEG
+_ZIGZAG = np.array([0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6,
+                    7, 14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31,
+                    39, 46, 53, 60, 61, 54, 47, 55, 62, 63])  # the k-th coefficient in a scan -> its place in the block
+_IDCT = np.array([[(np.sqrt(0.5) if u == 0 else 1.0) / 2 * np.cos((2 * x + 1) * u * np.pi / 16) for u in range(8)]
+                  for x in range(8)])
+
+
+def _huffman(counts: bytes, symbols: bytes) -> tuple[list, list]:
+    """A Huffman table as two lookups by the next 16 bits: the symbol, and how many bits its code took."""
+    sym = np.zeros(65536, dtype=np.int32)
+    length = np.zeros(65536, dtype=np.int32)
+    code, k = 0, 0
+    for n in range(1, 17):
+        for _ in range(counts[n - 1]):
+            lo, hi = code << (16 - n), (code + 1) << (16 - n)
+            sym[lo:hi], length[lo:hi] = symbols[k], n
+            code += 1
+            k += 1
+        code <<= 1
+    return sym.tolist(), length.tolist()
+
+
+def _windows(seg: bytes) -> list:
+    """For every bit of an entropy-coded segment (stuffing removed), the 16 bits from there on (padded with ones)."""
+    bits = np.unpackbits(np.frombuffer(seg.replace(b"\xff\x00", b"\xff"), dtype=np.uint8))
+    bits = np.concatenate([bits, np.ones(32, dtype=np.uint8)])
+    w = np.lib.stride_tricks.sliding_window_view(bits, 16).astype(np.int64) @ (1 << np.arange(15, -1, -1, dtype=np.int64))
+    return w.tolist()
+
+
+def _extend(v: int, s: int) -> int:
+    return v - (1 << s) + 1 if s and v < (1 << (s - 1)) else v
+
+
+def _jpeg(data: bytes) -> np.ndarray:
+    """A baseline (sequential, Huffman) JPEG: 8-bit, grey or YCbCr, any sampling, restart markers. Progressive and
+    arithmetic-coded JPEG need Pillow."""
+    qt: dict[int, np.ndarray] = {}
+    dc_t: dict[int, tuple] = {}
+    ac_t: dict[int, tuple] = {}
+    frame: dict | None = None
+    restart, pos, n = 0, 2, len(data)
+    if data[:2] != b"\xff\xd8":
+        raise ImageError("not a JPEG")
+    while pos < n - 1:
+        if data[pos] != 0xFF:
+            raise ImageError("a broken JPEG (no marker where one belongs)")
+        marker = data[pos + 1]
+        pos += 2
+        if marker == 0xFF:
+            pos -= 1
+            continue
+        if marker == 0xD9:
+            break
+        if 0xD0 <= marker <= 0xD7 or marker in (0x01, 0xD8):
+            continue
+        if pos + 2 > n:
+            break
+        size = struct.unpack(">H", data[pos:pos + 2])[0]
+        seg = data[pos + 2:pos + size]
+        pos += size
+        if marker == 0xDB:
+            i = 0
+            while i < len(seg):
+                pq, tq = seg[i] >> 4, seg[i] & 15
+                i += 1
+                vals = struct.unpack(">64H", seg[i:i + 128]) if pq else tuple(seg[i:i + 64])
+                i += 128 if pq else 64
+                q = np.zeros(64)
+                q[_ZIGZAG] = vals
+                qt[tq] = q
+        elif marker == 0xC4:
+            i = 0
+            while i + 17 <= len(seg):
+                tc, th = seg[i] >> 4, seg[i] & 15
+                counts = seg[i + 1:i + 17]
+                total = sum(counts)
+                (ac_t if tc else dc_t)[th] = _huffman(counts, seg[i + 17:i + 17 + total])
+                i += 17 + total
+        elif marker in (0xC0, 0xC1):
+            if seg[0] != 8:
+                raise ImageError(f"{seg[0]}-bit JPEG needs Pillow")
+            h, w = struct.unpack(">HH", seg[1:5])
+            comps = [{"id": seg[6 + 3 * k], "h": seg[7 + 3 * k] >> 4, "v": seg[7 + 3 * k] & 15, "q": seg[8 + 3 * k]}
+                     for k in range(seg[5])]
+            if not h or not w or not comps or any(not c["h"] or not c["v"] for c in comps):
+                raise ImageError("a JPEG with no size")
+            if len(comps) not in (1, 3):
+                raise ImageError("CMYK JPEG needs Pillow")
+            hmax, vmax = max(c["h"] for c in comps), max(c["v"] for c in comps)
+            mx, my = -(-w // (8 * hmax)), -(-h // (8 * vmax))
+            for c in comps:
+                c["bw"], c["bh"] = mx * c["h"], my * c["v"]
+                c["coef"] = np.zeros((c["bh"], c["bw"], 64), dtype=np.float64)
+            frame = {"h": h, "w": w, "comps": comps, "hmax": hmax, "vmax": vmax, "mx": mx, "my": my}
+        elif 0xC2 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            raise ImageError("progressive or arithmetic-coded JPEG needs Pillow (pip install pillow)")
+        elif marker == 0xDD:
+            restart = struct.unpack(">H", seg[:2])[0]
+        elif marker == 0xDA:
+            if frame is None:
+                raise ImageError("a JPEG scan before its frame")
+            ids = {c["id"]: c for c in frame["comps"]}
+            scomps = []
+            for k in range(seg[0]):
+                c = ids.get(seg[1 + 2 * k])
+                if c is None:
+                    raise ImageError("a JPEG scan of a component it does not have")
+                scomps.append((c, seg[2 + 2 * k] >> 4, seg[2 + 2 * k] & 15))
+            end = pos  # the entropy-coded data runs to the next marker that is not stuffing or a restart
+            while True:
+                end = data.find(b"\xff", end)
+                if end < 0 or end + 1 >= n:
+                    end = n
+                    break
+                if data[end + 1] == 0 or 0xD0 <= data[end + 1] <= 0xD7:
+                    end += 2
+                    continue
+                break
+            _scan(data[pos:end], frame, scomps, dc_t, ac_t, restart)
+            pos = end
+    if frame is None:
+        raise ImageError("a JPEG with no frame")
+    planes = []
+    for c in frame["comps"]:
+        if c["q"] not in qt:
+            raise ImageError("a JPEG without its quantisation table")
+        blocks = (c["coef"] * qt[c["q"]]).reshape(c["bh"], c["bw"], 8, 8)
+        px = np.einsum("xu,abuv,yv->abxy", _IDCT, blocks, _IDCT) + 128.0
+        plane = px.transpose(0, 2, 1, 3).reshape(c["bh"] * 8, c["bw"] * 8)
+        plane = _upsample(_upsample(plane, frame["vmax"] // c["v"], 0), frame["hmax"] // c["h"], 1)
+        planes.append(plane[:frame["h"], :frame["w"]])
+    if len(planes) == 1:
+        return np.repeat(np.clip(planes[0], 0, 255).round().astype(np.uint8)[:, :, None], 3, axis=2)
+    y, cb, cr = planes[0], planes[1] - 128.0, planes[2] - 128.0
+    rgb = np.stack([y + 1.402 * cr, y - 0.344136 * cb - 0.714136 * cr, y + 1.772 * cb], axis=2)
+    return np.clip(rgb, 0, 255).round().astype(np.uint8)
+
+
+def _upsample(plane: np.ndarray, f: int, axis: int) -> np.ndarray:
+    """Chroma at full size: twice as many samples, each 3/4 its own and 1/4 its neighbour (as libjpeg does), or repeated."""
+    if f <= 1:
+        return plane
+    if f != 2:
+        return np.repeat(plane, f, axis=axis)
+    a = np.moveaxis(plane, axis, 0)
+    before = np.concatenate([a[:1], a[:-1]])
+    after = np.concatenate([a[1:], a[-1:]])
+    out = np.empty((a.shape[0] * 2,) + a.shape[1:])
+    out[0::2] = 0.75 * a + 0.25 * before
+    out[1::2] = 0.75 * a + 0.25 * after
+    return np.moveaxis(out, 0, axis)
+
+
+def _scan(raw: bytes, frame: dict, scomps: list, dc_t: dict, ac_t: dict, restart: int) -> None:
+    """Decode one baseline scan's coefficients into its components (zig-zag order undone)."""
+    zz = _ZIGZAG.tolist()
+    if len(scomps) == 1:  # one component alone: its blocks in rows, one block an MCU
+        c = scomps[0][0]
+        cols = -(-(-(-frame["w"] * c["h"] // frame["hmax"])) // 8)
+        rows = -(-(-(-frame["h"] * c["v"] // frame["vmax"])) // 8)
+        units = [[(scomps[0], by, bx)] for by in range(rows) for bx in range(cols)]
+    else:
+        units = [[(sc, my * sc[0]["v"] + y, mx * sc[0]["h"] + x) for sc in scomps for y in range(sc[0]["v"]) for x in range(sc[0]["h"])]
+                 for my in range(frame["my"]) for mx in range(frame["mx"])]
+    parts, i = [], 0
+    while True:  # the segments between restart markers
+        j = raw.find(b"\xff", i)
+        while j >= 0 and j + 1 < len(raw) and raw[j + 1] == 0:
+            j = raw.find(b"\xff", j + 2)
+        if j < 0 or j + 1 >= len(raw):
+            parts.append(raw[i:])
+            break
+        parts.append(raw[i:j])
+        i = j + 2
+    per = restart or len(units)
+    for k, seg in enumerate(parts):
+        todo = units[k * per:(k + 1) * per]
+        if not todo:
+            break
+        win = _windows(seg)
+        p = 0
+        pred = {id(sc[0]): 0 for sc in scomps}
+        for unit in todo:
+            for (c, td, ta), by, bx in unit:
+                dsym, dlen = dc_t[td]
+                asym, alen = ac_t[ta]
+                coef = c["coef"][by, bx] if by < c["bh"] and bx < c["bw"] else np.zeros(64)
+                v = win[p]
+                t = dsym[v]
+                p += dlen[v]
+                diff = _extend(win[p] >> (16 - t), t) if t else 0
+                p += t
+                pred[id(c)] += diff
+                coef[0] = pred[id(c)]
+                kk = 1
+                while kk < 64:
+                    v = win[p]
+                    rs = asym[v]
+                    p += alen[v]
+                    r, s = rs >> 4, rs & 15
+                    if not s:
+                        if r != 15:
+                            break
+                        kk += 16
+                        continue
+                    kk += r
+                    if kk > 63:
+                        break
+                    coef[zz[kk]] = _extend(win[p] >> (16 - s), s)
+                    p += s
+                    kk += 1
 
 
 def encode_png(rgb: np.ndarray) -> bytes:

@@ -220,7 +220,7 @@ labels = ["text", "blank"]
 open_labels = true
 internal = true
 kind = "vision"
-teachers = ["human", "vision", "sight"]   # people, an LLM teacher that can see, and its own measures
+teachers = ["human", "vision", "sight", "imagesets"]   # people, an LLM teacher that can see, its own measures, and picture books
 
 [sight.label_descriptions]
 text = "mostly text: a page, a sign, a screenshot"

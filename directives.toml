@@ -87,11 +87,11 @@ text = "Several instances of each kind of node may run at once ([nodes] max_runn
 
 [[prime]]
 id = "P20-approved-code-only"
-text = "The mesh may write code in its scratch pad, and study code in a Gitea it is given, but no code runs unless a person approved exactly that code: a validator checks it first and says what it reaches for (files, the network, other programs, eval), and changing it withdraws the approval. The one exception is a person's choice: with [code] auto_run set to 'harmless' (by a person, never the mesh), code the mesh wrote itself runs without asking when it checks out and reaches for nothing; with 'always', whenever it checks out. Code people put in always waits for approval, and auto-run changes nothing else below. Approved code runs once, in a fresh folder, within time, CPU and memory limits and with no keys in its environment, and its output is kept with it and audited. Code from Gitea is only read, never run; its token goes to that Gitea and nowhere else. The mesh writes to Gitea only to push a change to the project a person set it, after a person approved exactly that change (the files and the diff they saw; changing it withdraws the approval): always to a new branch named with [projects] branch_prefix, with a pull request, never to an existing branch, and only with the separate write token ($GITEA_WRITE_TOKEN), which reading never uses. Merging is a person's decision, in Gitea. Practice code is checked, never run. (Enforced in code by neuromesh/scratchpad.py, neuromesh/gitea.py, neuromesh/projects.py and plugins/gitea.)"
+text = "The mesh may write code in its scratch pad, and study code in a Gitea it is given, but no code runs unless a person approved exactly that code: a validator checks it first and says what it reaches for (files, the network, other programs, eval), and changing it withdraws the approval. The one exception is a person's choice: with [code] auto_run set to 'harmless' (by a person, never the mesh), code the mesh wrote itself runs without asking when it checks out and reaches for nothing; with 'always', whenever it checks out. Code people put in always waits for approval, and auto-run changes nothing else below. Approved code runs once, in a fresh folder, within time, CPU and memory limits and with no keys in its environment, and its output is kept with it and audited. Code from Gitea is only read, never run as it is; a program its workbench builds from it is the mesh's own code, checked and run only as above. Its token goes to that Gitea and nowhere else. The mesh writes to Gitea only to push a change to the project a person set it, after a person approved exactly that change (the files and the diff they saw; changing it withdraws the approval): always to a new branch named with [projects] branch_prefix, with a pull request, never to an existing branch, and only with the separate write token ($GITEA_WRITE_TOKEN), which reading never uses. Merging is a person's decision, in Gitea. Practice code is checked, never run. (Enforced in code by neuromesh/scratchpad.py, neuromesh/gitea.py, neuromesh/projects.py and plugins/gitea.)"
 
 [[prime]]
 id = "P21-honest-sight"
-text = "What the mesh says it sees in an image, and the text it says an image holds, always names who said so: its sight or glyph node, a teacher that can see, tesseract, or a person. A person's word about an image stands (P1). Text it reads is kept as knowledge with the image as its source, and its own reading is compared with tesseract's, a teacher's or a person's, so how well it reads is measured, not assumed. An image goes only to the teachers a person configured. (Enforced in code by neuromesh/vision.py.)"
+text = "What the mesh says it sees in an image, and the text it says an image holds, always names who said so: its sight or glyph node, a memory node that remembers the picture, a teacher that can see, tesseract, a picture book (an image dataset, named with its source), or a person. A person's word about an image stands (P1). Text it reads is kept as knowledge with the image as its source, and its own reading is compared with tesseract's, a teacher's or a person's, so how well it reads is measured, not assumed. A picture book's exam images are never learned from, so its exam scores are honest. An image goes only to the teachers a person configured. (Enforced in code by neuromesh/vision.py and neuromesh/imagesets.py.)"
 
 [[prime]]
 id = "P22-lessons-are-lessons"
@@ -259,7 +259,7 @@ archive_size = 40                       # genomes remembered per capability
 # delete a test or the node's row and it forgets. Its own statements - opinions, what its ego said,
 # how its ego settled disagreements - are kept in memory too, without tests (own-memory nodes).
 enabled = true
-learn_from = ["knowledge", "teachers", "people", "challenges"]
+learn_from = ["knowledge", "teachers", "people", "challenges"]  # (picture memories: [imagesets] memory)
 serve = true                            # answer questions from memory nodes before anything else
 answer_threshold = 0.6                  # confidence a node needs to answer
 test_margin = 0.1                       # a test passes only with a margin: answers at >= 0.7, unknowns below 0.5
@@ -629,17 +629,41 @@ llm_code = true                         # an LLM teacher may write a tool no rec
 # what it is for (name and doc comment) and what kind of code it is (from what the code does). Its code-kind
 # node learns from that, its coder node learns new wordings of its recipes, and the functions are kept as
 # examples for the scratch pad. Studying only reads, and its code never runs (P20); the one thing written to Gitea
-# is a change to its project ([projects] below) that you approved.
+# is a change to its project ([projects] below) that you approved. A repository that changed since it last read it
+# (Gitea says when) is visited first, and only the files that changed are read again. A Python file's imports and
+# constants are kept too, so its workbench ([workbench] below) can build whole programs from what it studied.
 #   python -m neuromesh run --gitea http://localhost:3000      /gitea   /gitea study [owner/repo]
 enabled = true
 extensions = [".py", ".js", ".mjs", ".ts", ".go", ".rs", ".sh", ".rb", ".java", ".c", ".cpp"]
 max_file_kb = 256
-files_per_visit = 40
-study_every_seconds = 300
-restudy_days = 7
+files_per_visit = 60
+study_every_seconds = 120
+restudy_days = 1
 max_examples = 20000
 practice = true                         # write code for a function's purpose without looking at it, and compare
-practice_every_seconds = 600
+practice_every_seconds = 300
+practice_teacher = false                # practise on its own (recipes, its workbench's programs, the closest example),
+                                        # not with an LLM teacher writing
+
+[workbench]
+# Its workbench (workbench.py): with no teacher, it builds whole programs from the functions it studied in Gitea.
+# For a function it finds what it calls, imports and uses from the same repository (helpers, imports, constants),
+# turns its doc examples and the tests people wrote for it into checks, makes up inputs from its arguments' names,
+# and checks the program. Once two functions have run, it feeds one into the other. Its programs go into the
+# scratch pad as experiments and run only as P20 allows: with [code] auto_run = "harmless" (your switch, in the
+# Code view) the ones that reach for nothing run by themselves; otherwise they wait for you. When it is asked for
+# code no recipe fits and no teacher writes, a program it built and checked comes first.
+#   /workbench   /workbench try [example id]   /workbench chain   /workbench show <program id>
+enabled = true
+every_seconds = 120                     # an experiment this often, when idle
+idle_seconds = 60
+chain_share = 0.3                       # share of experiments that feed one function that ran into another
+max_helpers = 8
+max_checks = 6
+max_tests = 3
+max_lines = 80                          # longest function it builds a program from
+max_waiting = 6                         # programs waiting in the scratch pad to be run (the oldest make room)
+keep = 3000
 
 [code]
 # The scratch pad (scratchpad.py, P20): code it writes ("write a python function that ...", /code write, the
@@ -706,6 +730,32 @@ glyphs_per_label = 40                   # it practises until it has at least thi
 practice_after_idle_seconds = 60
 min_glyph_confidence = 0.35             # a character it is less sure of reads as "?"
 keep_images = 2000
+
+[imagesets]
+# Picture books (imagesets.py): image datasets from the Hugging Face Hub teach its optical nodes - what things look
+# like (its sight node: CIFAR-10, CIFAR-100, Fashion-MNIST), handwriting (its glyph node: MNIST) and printed text
+# (its reader). It gets the books in start_with by itself when idle (through [challenges] api_url, the Hub's dataset
+# viewer; $HF_TOKEN if set), learns from each book's practice images, and is graded on its exam images, which it
+# never learns from. What they teach is merged into its memory nodes as picture memories (memory = true): the first
+# pictures of every label and the ones its sight node got wrong; when it looks at an image, memory is asked first.
+# More books: the Images view (any image dataset on the Hub: it guesses the columns, you can change them).
+#   /pictures   /pictures get cifar10|<owner/dataset> [n]   /pictures lesson [name]   /pictures exam <name>
+enabled = true
+start_with = ["cifar10", "mnist", "words"]   # ready-made: cifar10, cifar100, fashion_mnist, mnist, words, wiki_lines
+fetch_limit = 600                       # images it gets of a book (Get more images adds more)
+exam_percent = 20                       # share of each book held out as its exam
+idle_seconds = 60                       # lessons wait until no one has given it an order for this long
+lesson_size = 40
+lesson_every_seconds = 30
+exam_every_lessons = 10
+exam_size = 200
+memory = true                           # picture memories in its memory nodes
+memory_per_label = 2                    # the first pictures of every label it remembers
+memory_misses = 4                       # practice pictures its sight node got wrong, remembered each lesson
+memory_max = 400                        # picture memories a book adds in all
+max_image_kb = 512
+download_workers = 6
+retry_get_hours = 6                     # a start_with book it could not get is tried again after this long
 
 [tutor]
 # Lessons (tutor.py, P22): when no one has given it an order for idle_seconds, an Ollama teacher sets it an

@@ -23,6 +23,8 @@ from .realm import Realm, RealmTeacher
 from .toolgate import ToolGateTeacher, ToolSwitch
 from .gitea import Apprentice, CodeStudy, CodeTeacher
 from .scratchpad import ScratchPad
+from .workbench import Tinkerer, Workbench
+from .imagesets import TEACHER as TEACHER_BOOKS, ImageSets, ImageSetTeacher, Picturebook
 from .vision import GlyphTeacher, Looker, SightTeacher, VisionBank, VisionTeacher
 from .imaging import glyph_vector
 from .tutor import Schoolroom, Tutor
@@ -102,6 +104,7 @@ class System:
                                worker_cpu_seconds=tools_pol.worker_cpu_seconds, worker_requests=tools_pol.worker_requests)
         self.code_study = CodeStudy(self)  # what its coder nodes learn from a local Gitea (gitea.py)
         self.vision = VisionBank(self)     # its optical nodes: what it sees in images, and the text it reads (vision.py)
+        self.imagesets = ImageSets(self)   # picture books: image datasets from the Hugging Face Hub (imagesets.py)
         teachers: dict = {"human": HumanTeacher()}
         for name, cfg in tp.models.items():  # one teacher per [teachers.<name>] table
             teachers[name] = LLMTeacher(name, cfg, self.guardian, self.bus)
@@ -119,6 +122,7 @@ class System:
         teachers["vision"] = VisionTeacher(self.vision)  # specialist: an LLM teacher that can see, for the sight node
         teachers["sight"] = SightTeacher(self.vision)    # specialist: its own measures (text, blank), for the sight node
         teachers["glyphs"] = GlyphTeacher(self.vision)   # specialist: glyphs it draws or tesseract labels, for its reader
+        teachers[TEACHER_BOOKS] = ImageSetTeacher(self.imagesets)  # specialist: a picture book's labels, for the sight node
         self.teachers = TeacherPool(teachers, tp.order, tp.weights)
         self.teachers.activity, self.teachers.bus = self.activity, self.bus
 
@@ -155,6 +159,7 @@ class System:
         self.sandbox.withheld = {m.api_key_env for m in self.directives.teachers.models.values()
                                  if getattr(m, "api_key_env", "")} | {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "NEUROMESH_TOKEN"}
         self.scratch = ScratchPad(self)       # code it writes; checked; it runs only once a person approves it (P20)
+        self.workbench = Workbench(self)      # programs it builds by itself from the code it studied (workbench.py)
         self.tutor = Tutor(self)              # when idle, its Ollama teachers set it orders and mark them (P22)
         self.rewards = Rewards(self)          # people reward and punish what it does, and steer it (P23)
         self.projects = Projects(self)        # a coding project in Gitea, with objectives people set (P20)
@@ -167,6 +172,7 @@ class System:
         self.conversations = Conversations(self)  # the conversation it is having, and short-term memory (P25)
         self.bus.listen(self.tooldoctor.on_event)
         self.bus.listen(self.scratch.on_event)
+        self.bus.listen(self.workbench.on_event)
         self.bus.listen(self.journal.on_event)
         for cap in self.capabilities:  # what people taught, exactly as they put it, stands (P1)
             for ex in self.store.examples(cap):
@@ -192,7 +198,7 @@ class System:
         self.dreamer = Dreamer(self)    # idle: the coin flip (an objective, or sleep), and dreaming
         self.agents = [self.directors, self.orchestrator, Architect(self), Trainer(self), Evaluator(self), Curator(self),
                        Explorer(self), self.researcher, self.investigator, TaskRunner(self), Compressor(self),
-                       self.director, self.dreamer, Ruminator(self), Thinker(self), Reader(self), Apprentice(self), Looker(self), Schoolroom(self), Foreman(self), Searcher(self), Sentinel(self),
+                       self.director, self.dreamer, Ruminator(self), Thinker(self), Reader(self), Apprentice(self), Looker(self), Picturebook(self), Tinkerer(self), Schoolroom(self), Foreman(self), Searcher(self), Sentinel(self),
                        Keeper(self)]
 
     # ------------------------------------------------------------- lifecycle

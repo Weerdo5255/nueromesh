@@ -15,6 +15,13 @@ the API, or any SQLite tool - triggers note every change): change an answer and 
 retrained to match; delete a test and it forgets that fact; delete the node's row and it forgets
 the node; add tests for a new node and it learns them.
 
+Picture memories: a fact can be a picture - its question is the image itself ("image:<sha>", taken in by what its
+sight node sees in it: imaging.py's features) and its answer what the image shows ("cat") or says ("says: STOP").
+They come from the picture books it learns from (imagesets.py: the first pictures of every label, and the ones its
+sight node got wrong) and from what people say about an image. They are held in their own memory nodes (a picture
+node never holds a question in words, and the two are never merged), tested like any fact - other pictures, and
+questions in words, are what a picture node must not answer - and recalled first when it looks at an image.
+
 Its own statements - its opinions, what its ego said, how its ego settled a disagreement - are kept
 in memory too, WITHOUT tests: in own-memory nodes (own-0001, ...) that learn them from the database's
 own table but are never checked, compressed, merged, or served as an answer about the world (P18).
@@ -73,13 +80,21 @@ _TOML_SAFE = str.maketrans({"\x7f": "\\u007f"})
 
 
 # ============================================================================ encoding
+def is_picture(ask: str) -> bool:
+    """A picture memory's question: the image itself."""
+    return str(ask).startswith("image:")
+
+
 def features(text: str) -> list[str]:
     """The shared hashed features, plus the numbers themselves (the shared encoder folds every
     number into <num>, which would make "who won in 1990" and "in 1994" the same question)."""
     return HashingEncoder.features(text) + [f"d:{n}" for n in _NUM.findall(text)]
 
 
-def encode(text: str, dim: int) -> np.ndarray:
+def encode(text: str, dim: int, pictures: dict | None = None) -> np.ndarray:
+    if is_picture(text):  # what its sight node sees in the image (MemoryBank.pictures), or nothing it knows
+        v = (pictures or {}).get(text)
+        return v if v is not None and len(v) == dim else np.zeros(dim, dtype=np.float32)
     vec = np.zeros(dim, dtype=np.float32)
     for feat in features(text):
         h = zlib.crc32(feat.encode("utf-8"))
@@ -89,10 +104,10 @@ def encode(text: str, dim: int) -> np.ndarray:
     return vec / norm if norm > 0 else vec
 
 
-def encode_many(texts: list[str], dim: int) -> np.ndarray:
+def encode_many(texts: list[str], dim: int, pictures: dict | None = None) -> np.ndarray:
     if not texts:
         return np.zeros((0, dim), dtype=np.float32)
-    return np.stack([encode(t, dim) for t in texts])
+    return np.stack([encode(t, dim, pictures) for t in texts])
 
 
 def fold(X: np.ndarray, d: int) -> np.ndarray:
@@ -135,6 +150,8 @@ def key(ask: str) -> str:
 def variants(ask: str) -> list[str]:
     """The ways of asking that go into the test file: as asked, and the bare subject of an identity question."""
     out = [" ".join(str(ask).split())]
+    if is_picture(out[0]):  # a picture is asked one way: itself
+        return out
     sub = subject(out[0])
     if sub and _norm(sub) != _norm(out[0]):
         out.append(sub)
@@ -144,6 +161,8 @@ def variants(ask: str) -> list[str]:
 def augment(ask: str) -> list[str]:
     """More ways of asking, for training only."""
     a = " ".join(str(ask).split())
+    if is_picture(a):
+        return [a]
     bare = a.rstrip("?.! ")
     cands = [a, a.lower(), bare, f"{bare} please", f"do you know {bare}?", f"can you tell me {bare}?"]
     sub = subject(a)
@@ -160,6 +179,8 @@ def augment(ask: str) -> list[str]:
 def near_misses(ask: str, n: int = 2) -> list[str]:
     """The question with one of its telling words swapped for an unrelated one: a node that answers
     this as if it were the original is keying off the shape of the question, not its subject."""
+    if is_picture(ask):  # other pictures are its near misses (MemoryBank._dataset)
+        return []
     words = sorted({w for w in re.findall(r"[A-Za-z]{4,}", core(ask)) if w.lower() not in _PLAIN},
                    key=lambda w: (not w[0].isupper(), -len(w), w))
     out: list[str] = []
@@ -499,6 +520,11 @@ class MemoryNode:
     def facts(self) -> list:
         return [t for t in self.tests if not t.variant_of]
 
+    @property
+    def pictures(self) -> bool:
+        """A picture node: its facts are pictures (see is_picture)."""
+        return bool(self.tests) and all(is_picture(t.ask) for t in self.tests)
+
     def expected_answers(self) -> set:
         return {t.answer for t in self.tests}
 
@@ -559,6 +585,7 @@ class Job:
     margin: float = 0.0
     parts: tuple = ()             # merge: ((params, inputs, answers), (params, inputs, answers))
     merge: dict = field(default_factory=dict)
+    pictures: dict = field(default_factory=dict)  # picture asks -> what its sight node sees in them
 
     def describe(self) -> str:
         if self.kind == "learn":
@@ -568,8 +595,8 @@ class Job:
         return f"{self.node_id}: trying a smaller node ({self.step[1]})"
 
     def run(self) -> dict:
-        X = encode_many(self.texts, self.dim)
-        T = encode_many(self.test_texts, self.dim)
+        X = encode_many(self.texts, self.dim, self.pictures)
+        T = encode_many(self.test_texts, self.dim, self.pictures)
         rng = np.random.default_rng(self.seed)
         if self.kind == "learn":
             return self._learn(X, T, rng)
@@ -706,7 +733,16 @@ class MemoryBank:
         return bool(self.pol.enabled)
 
     def allows(self, kind: str) -> bool:
+        if kind == "pictures":  # picture memories: the picture books' own switch ([imagesets] memory)
+            return self.enabled and bool(self.sys.directives.imagesets.memory)
         return self.enabled and kind in self.pol.learn_from
+
+    def pictures(self, texts) -> dict:
+        """What its sight node sees in each picture among these asks (vision.py), for encoding them."""
+        vision = getattr(self.sys, "vision", None)
+        if vision is None:
+            return {}
+        return {t: vision.vector(t) for t in dict.fromkeys(texts) if is_picture(t)}
 
     def fact_nodes(self) -> list[MemoryNode]:
         """The nodes holding facts (each checked by its tests): not its own statements."""
@@ -1035,7 +1071,7 @@ class MemoryBank:
             return None
         if any(key(p) == k for p in PROBES):
             return None
-        if realm not in ("fact", "fiction"):
+        if realm not in ("fact", "fiction") and not is_picture(ask):
             sense = getattr(self.sys, "realm", None)
             j = sense.judge(f"{ask} {answer}"[:600]) if sense is not None else None
             realm, work = (j.realm, j.work or work) if j is not None and j.confidence > 0 else ("", work)
@@ -1059,7 +1095,7 @@ class MemoryBank:
                 self.sys.bus.publish("memory.fact", node=node.id, ask=ask[:200], answer=answer[:200], source=source[:200],
                                      kind="updated", by=by)
                 return node.id, "updated"
-        node = self._open_node()
+        node = self._open_node(is_picture(ask))
         vs = variants(ask)
         node.tests.append(Test(vs[0], answer, source, now, "", by, "", realm, work))
         for v in vs[1:]:
@@ -1114,8 +1150,9 @@ class MemoryBank:
             return node.id
         return None
 
-    def _open_node(self) -> MemoryNode:
-        open_ = [n for n in self.nodes.values() if len(n.facts()) < self.pol.facts_per_node and n.id.startswith("mem-")]
+    def _open_node(self, picture: bool = False) -> MemoryNode:
+        open_ = [n for n in self.nodes.values() if len(n.facts()) < self.pol.facts_per_node and n.id.startswith("mem-")
+                 and (n.pictures == picture or not n.tests)]
         if open_:
             return max(open_, key=lambda n: n.created)
         node = MemoryNode(f"mem-{self._next_id:04d}", self.dim)
@@ -1228,10 +1265,11 @@ class MemoryBank:
         may look at less certain answers (threshold) and is not counted as serving)."""
         if not self.enabled or not self.pol.serve:
             return None
-        ready = [n for n in self.fact_nodes() if n.params is not None]
+        picture = is_picture(text)  # a picture is recalled by picture nodes, a question in words by the others
+        ready = [n for n in self.fact_nodes() if n.params is not None and n.pictures == picture]
         if not ready:
             return None
-        x = encode_many([text], self.dim)
+        x = encode_many([text], self.dim, self.pictures([text]))
         pool = getattr(self.sys, "pool", None)  # every memory node at once (ensemble.py)
         preds = pool.map("memory", lambda n: n.predict(x), ready) if pool is not None else [n.predict(x) for n in ready]
         found: list[Recall] = []
@@ -1304,6 +1342,11 @@ class MemoryBank:
             for m in near_misses(t.ask, 6):
                 if key(m) not in keys:
                     negative(m, 0.7)
+        books = getattr(self.sys, "imagesets", None)
+        if node.pictures and books is not None:  # other pictures: what a picture node must not take for its own
+            held = {t.ask for n in self.nodes.values() for t in n.tests}
+            for other in books.negatives(max(40, 2 * len(node.tests)), held):
+                negative(other, 0.7)
         try:  # orders the router sends to tools and skills
             ex = [e.text for e in self.sys.store.examples("dispatch") if e.label.startswith(("skill:", "tool:"))
                   and not self._knowledge_route(e.label)]
@@ -1358,8 +1401,8 @@ class MemoryBank:
         """Pairs of compressed memory nodes that pass all their tests and have not been tried as they are."""
         nodes = sorted((n for n in self.fact_nodes() if n.params is not None and not n.dirty and n.status == "compressed"
                         and n.total and n.passed == n.total), key=lambda n: n.id)
-        return [(a, b) for i, a in enumerate(nodes) for b in nodes[i + 1:]
-                if len(a.facts()) + len(b.facts()) <= self.pol.merge_max_facts and self._pair(a, b) not in self.tried_merges]
+        return [(a, b) for i, a in enumerate(nodes) for b in nodes[i + 1:] if a.pictures == b.pictures
+                and len(a.facts()) + len(b.facts()) <= self.pol.merge_max_facts and self._pair(a, b) not in self.tried_merges]
 
     def merge_job(self, a: MemoryNode, b: MemoryNode) -> Job:
         merged = MemoryNode(f"{a.id}+{b.id}", self.dim)
@@ -1375,6 +1418,7 @@ class MemoryBank:
                   zlib.crc32(f"{self._pair(a, b)}:merge".encode()), margin=p.test_margin,
                   note=f"{len(a.facts()) + len(b.facts())} facts, {len(test_texts)} tests")
         job.answer_texts = answers
+        job.pictures = self.pictures(texts + test_texts)
         job.parts = ((a.params, a.inputs, a.answers), (b.params, b.inputs, b.answers))
         job.merge = {"a": a.id, "b": b.id, "pair": self._pair(a, b), "tests": merged.tests, "unknowns": merged.unknowns}
         return job
@@ -1447,7 +1491,8 @@ class MemoryBank:
                    p.answer_threshold, params, node.inputs or self.dim, node.bits, len(answers),
                    p.learn_epochs if kind == "learn" else p.compress_epochs, p.learning_rate,
                    zlib.crc32(f"{node.id}:{node.version}:{kind}:{len(node.tried)}".encode()),
-                   tuple(p.start_hidden), p.max_hidden, p.max_growth, note="", margin=p.test_margin)
+                   tuple(p.start_hidden), p.max_hidden, p.max_growth, note="", margin=p.test_margin,
+                   pictures=self.pictures(texts + test_texts))
 
     def _learn_job(self, node: MemoryNode) -> Job:
         job = self._base_job(node, "learn")
@@ -1559,7 +1604,7 @@ class MemoryBank:
         rows = [(t.ask, idx.get(t.answer, -1), t.answer) for t in node.tests] + [(u.ask, 0, "") for u in node.unknowns]
         if node.params is None or not rows:
             return {"node": node.id, "passed": 0, "total": len(rows), "failing": [r[0] for r in rows], "results": []}
-        T = encode_many([r[0] for r in rows], self.dim)
+        T = encode_many([r[0] for r in rows], self.dim, self.pictures([r[0] for r in rows]))
         expected = np.array([max(r[1], 0) for r in rows], dtype=np.int64)
         ok, top, conf = evaluate(node.params, node.inputs, node.bits, T, expected, self.pol.answer_threshold,
                                  self.pol.test_margin)

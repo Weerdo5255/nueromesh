@@ -22,8 +22,11 @@ says it ran by itself and who switched that on. Code people put in the scratch p
 Its own code as tools: Python code that ran can become a tool it uses (codetools.py, [code] make_tools).
 
 Practice: when idle (gitea.py's Apprentice) it takes the purpose of a function people wrote, writes code for it
-without looking at theirs, checks it, and compares the two (does it check out, is it the same kind of code, how
-much do they share). Practice drafts never run.
+without looking at theirs - on its own, with no LLM teacher unless [gitea] practice_teacher - checks it, and compares
+the two (does it check out, is it the same kind of code, how much do they share). Practice drafts never run.
+
+With no recipe and no teacher, a request is met from what its workbench built (workbench.py): a whole program it
+made from the closest code people wrote, checked (and, where P20 let it run, run), before an example copied as it is.
 """
 from __future__ import annotations
 
@@ -429,6 +432,14 @@ class ScratchPad:
                     if fixed is not None:
                         code, origin["fixed"] = fixed[0]["code"], check["problems"][:3]
                 return code, {**origin, "how": "teacher", "teacher": who, "explanation": made[0].get("explanation", "")}
+        bench = getattr(s, "workbench", None)
+        built = bench.program_for([ex["id"] for ex in examples]) if bench is not None and lang == "python" and examples else None
+        if built is not None:  # a program its workbench built from code people wrote (and checked; maybe ran)
+            what = {"passed": "it ran and passed its checks", "ran": "it ran", "checks out": "it checks out"}[built["status"]]
+            head = (f"# Built by its workbench (program {built['id']}) from {built['repo']}/{built['path']} ({built['name']}) on\n"
+                    f"# Gitea, the closest code people wrote to \"{' '.join(request.split())[:90]}\": {what}. With no teacher\n"
+                    f"# to write it, it starts from a whole program it built itself.\n")
+            return head + built["code"], {**origin, "how": "workbench", "program": built["id"], "program_status": built["status"]}
         if examples:
             ex = examples[0]
             mark = COMMENT.get(lang, "//")
@@ -690,7 +701,8 @@ class ScratchPad:
         ex = s.code_study.example(row[0])
         s.store.db.execute("UPDATE code_examples SET practised = practised + 1 WHERE id = ?", (ex["id"],))
         with s.activity.track("practice", "coder", f"practising: {ex['purpose'][:70]}"):
-            code, origin = await self.draft(ex["purpose"], ex["lang"], exclude=ex["id"])
+            code, origin = await self.draft(ex["purpose"], ex["lang"], exclude=ex["id"],
+                                            teacher=s.directives.gitea.practice_teacher)
         if code is None:
             rec = {"ts": round(time.time(), 1), "example": ex["id"], "purpose": ex["purpose"][:160], "repo": ex["repo"],
                    "name": ex["name"], "how": "nothing", "ok": None, "same_kind": None, "shared": 0.0}

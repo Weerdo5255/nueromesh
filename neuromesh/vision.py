@@ -2,9 +2,12 @@
 
     an image (the web page, POST /images, /image <path>)
       --> kept in state/images/ by its contents (the same picture twice is one image)
-      --> its sight node (capability "sight", open labels) says what it shows. Until the node is validated, its
-          teachers do, and teach it: a person ("it shows a cat"), an LLM teacher that can see (an Ollama vision
-          model such as llava), and its own measures ("text" when it reads words, "blank" when there is nothing)
+      --> its memory nodes are asked first: a picture it remembers (a picture memory, memory.py) is named by the
+          memory node that holds it
+      --> otherwise its sight node (capability "sight", open labels) says what it shows. Until the node is validated,
+          its teachers do, and teach it: a person ("it shows a cat"), an LLM teacher that can see (an Ollama vision
+          model such as llava), its own measures ("text" when it reads words, "blank" when there is nothing), and the
+          picture books it learns from (imagesets.py: image datasets from the Hugging Face Hub)
       --> its reader reads the text: lines and characters are found in the ink, and its glyph node (capability
           "glyphs") reads each character. The glyph node learns from glyphs it draws itself from the fonts it has
           (it knows what each one is: GlyphTeacher), from tesseract when it is installed (its character boxes
@@ -32,7 +35,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections import Counter, deque
+from collections import Counter, OrderedDict, deque
 from pathlib import Path
 
 import numpy as np
@@ -240,7 +243,7 @@ class VisionBank:
         self.stats: Counter = Counter(st.get("stats", {}))
         self.reading: deque = deque(st.get("reading", []), maxlen=200)  # (own vs reference) similarity per reading
         self.log: deque = deque(st.get("log", []), maxlen=60)
-        self._vec: dict[str, np.ndarray] = {}
+        self._vec: "OrderedDict[str, np.ndarray]" = OrderedDict()
         self.known: dict[str, str] = {}  # glyph text -> the character (drawn, or labelled)
         self.rng = np.random.default_rng()
         self.prng = random.Random()
@@ -307,10 +310,14 @@ class VisionBank:
         v = self._vec.get(sha)
         if v is None:
             p = self.dir / f"{sha}.npy"
-            if not p.exists():
-                return np.zeros(dim, dtype=np.float32)
+            if not p.exists():  # an image from a picture book (imagesets.py)
+                p = self.sys.state_dir / "imagesets" / "features" / f"{sha}.npy"
+                if not p.exists():
+                    return np.zeros(dim, dtype=np.float32)
             v = imaging.fold(np.load(p), dim)
             self._vec[sha] = v
+            while len(self._vec) > 20000:
+                self._vec.popitem(last=False)
         return v
 
     # ------------------------------------------------------------------ taking an image in
@@ -343,6 +350,12 @@ class VisionBank:
         with s.activity.track("look", "eye", f"{rec['name']}: {w}x{h}"):
             await self.read(rec, work)
             await self.look(rec)
+            r = self.remembers(rec["sha"])
+            now = rec.get("text") or {}
+            if r is not None and r.answer.startswith("says: ") and (not (now.get("text") or "").strip() or "unsure" in now.get("by", "")):
+                rec["text"] = {"text": r.answer[6:], "confidence": round(float(r.confidence), 3), "node": r.node.id,
+                               "glyphs": rec["measures"].get("glyphs", 0), "own_text": now.get("text", ""),
+                               "by": f"memory node {r.node.id} remembers what this picture says" + (f" ({r.source})" if r.source else "")}
             seen = rec.get("teacher") or {}
             now = rec.get("text") or {}
             if seen.get("text") and (not (now.get("text") or "").strip() or "unsure" in now.get("by", "")):
@@ -373,9 +386,22 @@ class VisionBank:
             return data, MIME[rec["ext"]]
         return imaging.encode_png(imaging.decode(data)), "image/png"
 
+    def remembers(self, sha: str):
+        """A picture memory of this image (memory.py), or None."""
+        mem = getattr(self.sys, "memory", None)
+        if mem is None or not mem.enabled:
+            return None
+        return mem.recall(f"image:{sha}")
+
     async def look(self, rec: dict) -> dict:
-        """Its sight node (or, until it is validated, its teachers) says what the image shows."""
+        """Its memory nodes (a picture it remembers), else its sight node (or, until it is validated, its teachers),
+        say what the image shows."""
         s = self.sys
+        r = self.remembers(rec["sha"])
+        if r is not None and not r.answer.startswith("says: "):
+            rec["sees"] = {"label": r.answer, "confidence": round(float(r.confidence), 3), "node": r.node.id, "memory": True,
+                           "by": f"memory node {r.node.id} remembers this picture" + (f" ({r.source})" if r.source else "")}
+            return rec["sees"]
         inf = await s.infer(SIGHT, f"image:{rec['sha']}")
         if inf.label is None:
             s.teachers.human.ask(SIGHT, f"image:{rec['sha']}", f"what does {rec['id']} ({rec['name']}) show?")
@@ -425,8 +451,10 @@ class VisionBank:
                 g["text"] = imaging.glyph_text(ink, g, line)
         return found, ink
 
-    def own_reading(self, found: list[dict]) -> dict | None:
-        node = self.glyph_node()
+    def own_reading(self, found: list[dict], node=None, guess: bool = False) -> dict | None:
+        """Its glyph node's reading of the glyphs found (the validated champion, or the node given: an exam). A
+        character it is unsure of reads as "?", unless it is asked for its best guess (guess)."""
+        node = node or self.glyph_node()
         if node is None or not found:
             return None
         texts = [g["text"] for line in found for g in line["glyphs"]]
@@ -441,7 +469,7 @@ class VisionBank:
                 k += 1
                 j = int(np.argmax(p))
                 confs.append(float(p[j]))
-                ch = char_of(labels[j]) if p[j] >= self.pol.min_glyph_confidence else "?"
+                ch = char_of(labels[j]) if guess or p[j] >= self.pol.min_glyph_confidence else "?"
                 chars.append((" " if g["space_before"] else "") + ch)
             out_lines.append("".join(chars))
         return {"text": "\n".join(out_lines), "confidence": round(float(np.mean(confs)), 3) if confs else 0.0,
@@ -568,6 +596,8 @@ class VisionBank:
             rec["person"]["label"] = lab
             rec["sees"] = {"label": lab, "confidence": 1.0, "by": f"{by} said so", "node": None}
             out.append(f"its sight node learns that {img_id} shows {lab}")
+            if lab != "text" and self._remember(rec, lab, f"{by} said {img_id} shows {lab}", by):
+                out.append("its memory keeps the picture")
         if text is not None and text.strip():
             rec["person"]["text"] = text.strip()
             rgb = self._workable(imaging.decode(self.path_of(rec).read_bytes()))
@@ -590,10 +620,20 @@ class VisionBank:
                 self.reading.append({"ts": round(time.time(), 1), "img": img_id, "agrees": round(agrees, 3),
                                      "node": rec["text"]["node"], "by": "a person"})
             self.learn_text(rec)
+            if self._remember(rec, "says: " + " ".join(text.split())[:500], f"{by} said what {img_id} says", by):
+                out.append("its memory keeps what the picture says")
         self._save(rec)
         self.save()
         s.bus.publish("vision.corrected", id=img_id, by=by, label=label or "", text=(text or "")[:120])
         return True, "; ".join(out) or "nothing to learn"
+
+    def _remember(self, rec: dict, answer: str, source: str, by: str) -> bool:
+        """What a person said about a picture, kept as a picture memory (memory.py; a person's word, P1)."""
+        mem = getattr(self.sys, "memory", None)
+        if mem is None or not mem.allows("people"):
+            return False
+        res = mem.learn(f"image:{rec['sha']}", answer, source=source, by=by, kind="people", realm="fact")
+        return bool(res)
 
     # ------------------------------------------------------------------ practice
     def draw_glyphs(self, ch: str, n: int) -> list[str]:

@@ -157,7 +157,7 @@ class TeacherPolicy:
         "human": 3.0, "challenge": 2.5, "tool-manifest": 2.0, "outcome": 2.0, "llm": 1.5, "ollama": 1.2,
         "heuristic": 1.0, "temperament": 1.0, "agency": 1.0, "director": 1.8,
         "coder": 1.0, "experiment": 2.0, "approved": 2.5, "planner": 1.0, "ego": 1.0, "toolgate": 1.0,
-        "gitea": 1.0, "vision": 1.3, "sight": 1.0, "glyphs": 1.0, "tesseract": 1.5, "tutor": 1.2})
+        "gitea": 1.0, "vision": 1.3, "sight": 1.0, "glyphs": 1.0, "tesseract": 1.5, "tutor": 1.2, "imagesets": 2.0})
     models: dict = field(default_factory=dict)  # teacher name -> LLMConfig, from [teachers.<name>]
 
     @property
@@ -334,7 +334,7 @@ class MemoryPolicy:
     """Memory nodes: what the mesh learns, compressed into small neural networks, each checked by its
     tests in the memory's own database (state/memory.db, see memory.py and memdb.py)."""
     enabled: bool = True
-    learn_from: tuple = ("knowledge", "teachers", "people", "challenges")
+    learn_from: tuple = ("knowledge", "teachers", "people", "challenges")  # (picture memories: [imagesets] memory)
     serve: bool = True                # answer questions from memory nodes before anything else
     answer_threshold: float = 0.6     # confidence a memory node needs to answer
     test_margin: float = 0.1          # a test passes only with this margin: >= 0.7 for an answer, < 0.5 to not answer
@@ -579,12 +579,31 @@ class GiteaPolicy:
     url: str = ""                       # (earlier versions: now [tools.config.gitea] url; still read if set)
     extensions: tuple = (".py", ".js", ".mjs", ".ts", ".go", ".rs", ".sh", ".rb", ".java", ".c", ".cpp")
     max_file_kb: int = 256              # larger files are skipped
-    files_per_visit: int = 40           # files it reads per visit to a repository
-    study_every_seconds: float = 300.0  # how often it visits a repository (when idle)
-    restudy_days: float = 7.0           # a repository it studied is visited again after this long
+    files_per_visit: int = 60           # files it reads per visit to a repository
+    study_every_seconds: float = 120.0  # how often it visits a repository (when idle); one that changed since it last
+                                        # read it (Gitea says when) comes first, then one it never read
+    restudy_days: float = 1.0           # a repository it studied is visited again after this long, changed or not
     max_examples: int = 20000           # functions it keeps as examples (the oldest go first)
     practice: bool = True               # when idle, it practises: writes code for an example's purpose without
-    practice_every_seconds: float = 600.0  # looking at it, checks it, and compares it with what a person wrote
+    practice_every_seconds: float = 300.0  # looking at it, checks it, and compares it with what a person wrote
+    practice_teacher: bool = False      # practice with an LLM teacher writing (False: on its own - recipes, the
+                                        # programs its workbench built, the closest example)
+
+
+@dataclass
+class WorkbenchPolicy:
+    """The workbench (workbench.py): whole programs it builds by itself, with no teacher, from the functions it studied
+    in Gitea; checked, and run only as [code] auto_run allows (P20)."""
+    enabled: bool = True
+    every_seconds: float = 120.0        # an experiment this often, when idle
+    idle_seconds: float = 60.0          # experiments wait until no one has given it an order for this long
+    chain_share: float = 0.3            # share of experiments that feed one function that ran into another
+    max_helpers: int = 8                # functions it may pull in to make one program whole
+    max_checks: int = 6                 # doc examples it checks a function with
+    max_tests: int = 3                  # tests people wrote that it runs with a function
+    max_lines: int = 80                 # longest function it builds a program from
+    max_waiting: int = 6                # programs waiting in the scratch pad to be run (the oldest make room)
+    keep: int = 3000                    # programs it remembers building
 
 
 @dataclass
@@ -626,6 +645,30 @@ class VisionPolicy:
     glyphs_per_label: int = 40          # it practises until it has drawn at least this many glyphs of each character
     practice_after_idle_seconds: float = 60.0  # practice waits until no one has given it an order for this long
     keep_images: int = 2000
+
+
+@dataclass
+class ImageSetPolicy:
+    """Picture books (imagesets.py): image datasets from the Hugging Face Hub teach its optical nodes. Practice images
+    teach, exam images measure, and what they teach is merged into its memory nodes as picture memories. The Hub and
+    its dataset viewer are [challenges] hub_url and api_url (and token_env)."""
+    enabled: bool = True
+    start_with: tuple = ("cifar10", "mnist", "words")  # ready-made books it gets by itself when idle (empty: none)
+    fetch_limit: int = 600              # images it gets of a book (a person can ask for more)
+    max_items: int = 20000              # most images it gets at once
+    exam_percent: int = 20              # share of each book held out as the exam (never learned from)
+    idle_seconds: float = 60.0          # lessons wait until no one has given it an order for this long
+    lesson_size: int = 40               # practice images a lesson
+    lesson_every_seconds: float = 30.0
+    exam_every_lessons: int = 10        # an exam after this many lessons of a book
+    exam_size: int = 200                # exam images graded in an exam
+    memory: bool = True                 # merge what the books teach into its memory nodes (picture memories)
+    memory_per_label: int = 2           # the first pictures of every label kept as picture memories
+    memory_misses: int = 4              # practice pictures its sight node got wrong, kept each lesson
+    memory_max: int = 400               # picture memories a book adds in all
+    max_image_kb: int = 512             # larger images are skipped
+    download_workers: int = 6           # images fetched at once while it gets a book
+    retry_get_hours: float = 6.0        # a start_with book it could not get is tried again after this long
 
 
 @dataclass
@@ -733,7 +776,9 @@ class Directives:
     ego: EgoPolicy = field(default_factory=EgoPolicy)
     gitea: GiteaPolicy = field(default_factory=GiteaPolicy)
     code: CodePolicy = field(default_factory=CodePolicy)
+    workbench: WorkbenchPolicy = field(default_factory=WorkbenchPolicy)
     vision: VisionPolicy = field(default_factory=VisionPolicy)
+    imagesets: ImageSetPolicy = field(default_factory=ImageSetPolicy)
     tutor: TutorPolicy = field(default_factory=TutorPolicy)
     rewards: RewardPolicy = field(default_factory=RewardPolicy)
     projects: ProjectPolicy = field(default_factory=ProjectPolicy)
@@ -774,7 +819,9 @@ class Directives:
             ego=build(EgoPolicy, d.get("ego")),
             gitea=build(GiteaPolicy, d.get("gitea")),
             code=build(CodePolicy, d.get("code")),
+            workbench=build(WorkbenchPolicy, d.get("workbench")),
             vision=build(VisionPolicy, d.get("vision")),
+            imagesets=build(ImageSetPolicy, d.get("imagesets")),
             tutor=build(TutorPolicy, d.get("tutor")),
             rewards=build(RewardPolicy, d.get("rewards")),
             projects=build(ProjectPolicy, d.get("projects")),

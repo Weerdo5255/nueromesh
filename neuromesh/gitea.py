@@ -1,7 +1,8 @@
 """Gitea: its coder nodes learn to program from a local Gitea.
 
-    a visit (when idle, [gitea] study_every_seconds)
-      --> pick a repository it has never studied, or not for [gitea] restudy_days
+    a visit (when idle, every [gitea] study_every_seconds)
+      --> pick a repository that changed since it last read it (Gitea says when each was updated), else one it has
+          never studied, else one it has not studied for [gitea] restudy_days
       --> read its file tree (Gitea's API) and the source files that changed since it last read them
       --> take every function apart: its name, arguments, doc comment, the code, what it calls, and what kind
           of code it is (text, maths, parse, data, files, network, dates, test, cli, other - from what the
@@ -10,7 +11,9 @@
           the purpose people wrote down (the name and doc comment); its coder node (which recipe from its
           code library a request needs) learns new wordings where a function's purpose matches a recipe
       --> keep the function as an example: the scratch pad (scratchpad.py) gives the closest examples to a
-          teacher writing code, or adapts the closest one, and practice compares its own code with them
+          teacher writing code, or adapts the closest one, and practice compares its own code with them; and what
+          a Python file imports and defines at the top (its header) is kept, so its workbench (workbench.py) can build
+          whole programs from the functions it studied, with no teacher
 
 It only reads: it never writes to Gitea, and code from Gitea is never run (only code a person approves in
 the scratch pad runs, P20).
@@ -52,6 +55,7 @@ CREATE TABLE IF NOT EXISTS code_examples(id INTEGER PRIMARY KEY, repo TEXT, path
                                          kind TEXT, purpose TEXT, signature TEXT, doc TEXT, source TEXT, lines INTEGER,
                                          calls TEXT, ts REAL, practised INTEGER DEFAULT 0);
 CREATE INDEX IF NOT EXISTS code_examples_kind ON code_examples(kind);
+CREATE INDEX IF NOT EXISTS code_examples_name ON code_examples(repo, name);
 CREATE INDEX IF NOT EXISTS code_examples_file ON code_examples(repo, path);
 """
 
@@ -251,6 +255,37 @@ def brace_functions(source: str, lang: str) -> list[dict]:
     return out
 
 
+def python_header(source: str) -> dict:
+    """What a Python file sets up at the top: its imports (each with the names it binds) and its constants (simple
+    assignments a function may use), so a function taken from it can be put back into a whole program."""
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return {}
+    imports, constants = [], {}
+    for node in tree.body:
+        seg = ast.get_source_segment(source, node) or ""
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                imports.append({"code": f"import {a.name}" + (f" as {a.asname}" if a.asname else ""),
+                                "binds": a.asname or a.name.split(".")[0], "module": a.name})
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for a in node.names:
+                if a.name != "*":
+                    imports.append({"code": f"from {node.module} import {a.name}" + (f" as {a.asname}" if a.asname else ""),
+                                    "binds": a.asname or a.name, "module": node.module})
+        elif isinstance(node, ast.ImportFrom) and node.level:  # from .utils import helper: the helper is in the repo
+            for a in node.names:
+                imports.append({"code": "", "binds": a.asname or a.name, "module": "." + (node.module or ""), "local": True})
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)) and len(seg) <= 600:
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            names = [t.id for t in targets if isinstance(t, ast.Name)]
+            if names and node.value is not None and not any(isinstance(n, (ast.Lambda, ast.Await, ast.Yield)) for n in ast.walk(node.value)):
+                for nm in names:
+                    constants[nm] = seg
+    return {"imports": imports[:80], "constants": dict(list(constants.items())[:80])}
+
+
 def functions_in(source: str, lang: str) -> list[dict]:
     return python_functions(source) if lang == "python" else brace_functions(source, lang)
 
@@ -291,6 +326,9 @@ class CodeStudy:
         self.pol = system.directives.gitea
         self.db = system.store.db
         self.db.executescript(SCHEMA)
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(code_files)").fetchall()}
+        if "header" not in cols:  # (earlier versions did not keep a file's imports and constants)
+            self.db.execute("ALTER TABLE code_files ADD COLUMN header TEXT DEFAULT ''")
         raw = system.store.get_kv("gitea.state")
         st = json.loads(raw) if raw else {}
         self.stats: Counter = Counter(st.get("stats", {}))
@@ -455,9 +493,23 @@ class CodeStudy:
         return out[:k]
 
     # ------------------------------------------------------------------ a visit
+    @staticmethod
+    def _updated(repo: dict) -> float:
+        """When Gitea says a repository last changed (0 if it doesn't say)."""
+        raw = str(repo.get("updated_at") or "")
+        try:
+            from datetime import datetime
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp() if raw else 0.0
+        except ValueError:
+            return 0.0
+
     def _pick(self, repos: list[dict]) -> dict | None:
         studied = {r[0]: r[1] or 0.0 for r in self.db.execute("SELECT name, studied FROM code_repos").fetchall()}
         stale = time.time() - self.pol.restudy_days * 86400
+        changed = sorted((r for r in repos if r["full_name"] in studied and self._updated(r) > studied[r["full_name"]]),
+                         key=lambda r: studied[r["full_name"]])
+        if changed:  # something was pushed since it last read it: only the files that changed are read again
+            return changed[0]
         fresh = [r for r in repos if r["full_name"] not in studied]
         if fresh:
             return fresh[0]
@@ -523,8 +575,10 @@ class CodeStudy:
                     kinds[kind] += 1
                     learned += self.learn_from(purpose, kind)
                 functions += len(fns)
-                self.db.execute("INSERT OR REPLACE INTO code_files(repo, path, sha, lang, size, studied, functions) VALUES (?,?,?,?,?,?,?)",
-                                (name, e["path"], e.get("sha", ""), lang, int(e.get("size") or 0), time.time(), len(fns)))
+                header = json.dumps(await asyncio.to_thread(python_header, text)) if lang == "python" else ""
+                self.db.execute("INSERT OR REPLACE INTO code_files(repo, path, sha, lang, size, studied, functions, header) "
+                                "VALUES (?,?,?,?,?,?,?,?)", (name, e["path"], e.get("sha", ""), lang, int(e.get("size") or 0),
+                                                             time.time(), len(fns), header))
             total = self.db.execute("SELECT COUNT(*) FROM code_examples WHERE repo = ?", (name,)).fetchone()[0]
             nfiles = self.db.execute("SELECT COUNT(*) FROM code_files WHERE repo = ?", (name,)).fetchone()[0]
             self.db.execute("INSERT OR REPLACE INTO code_repos(name, branch, commit_sha, studied, files, functions, description) "
@@ -561,6 +615,27 @@ class CodeStudy:
         except Exception:
             pass
         return n
+
+    def header(self, repo: str, path: str) -> dict | None:
+        """A Python file's imports and constants, as it kept them (None: it has not kept them yet)."""
+        row = self.db.execute("SELECT header FROM code_files WHERE repo = ? AND path = ?", (repo, path)).fetchone()
+        if not row or not row[0]:
+            return None
+        try:
+            return json.loads(row[0])
+        except ValueError:
+            return None
+
+    async def fetch_header(self, repo: str, path: str) -> dict | None:
+        """Read a file again for its header (files studied before headers were kept)."""
+        row = self.db.execute("SELECT branch FROM code_repos WHERE name = ?", (repo,)).fetchone()
+        got, _ = await self.call({"op": "files", "repo": repo, "ref": (row[0] if row else "") or "main", "paths": [path]})
+        text = ((got or {}).get("files") or {}).get(path)
+        if not isinstance(text, str):
+            return None
+        head = await asyncio.to_thread(python_header, text)
+        self.db.execute("UPDATE code_files SET header = ? WHERE repo = ? AND path = ?", (json.dumps(head), repo, path))
+        return head
 
     def _trim(self) -> None:
         n = self.count()

@@ -66,7 +66,13 @@ out whether the fault is in the tool's code or outside it (the network, its serv
 for its code, writes a fix you approve; you can remove any tool. It keeps fact and fiction apart, in
 its memory and when it talks ("is Gandalf real?"). And it holds a conversation: follow-ups are read
 against what you asked before, and what you tell it goes into short-term memory nodes, kept word for
-word, until - after six quiet hours - its ego decides what to keep for good.
+word, until - after six quiet hours - its ego decides what to keep for good. Picture books - image
+datasets from the Hugging Face Hub (CIFAR, MNIST, printed words) - teach it to see and read on its own:
+it learns from their practice images, is graded on exam images it never learns from, and what they
+teach is merged into its memory nodes as picture memories, which it recalls first when it looks at an
+image. And it builds whole programs by itself, with no teacher, from the functions it studies in your
+Gitea (read every couple of minutes, what changed first): their helpers, imports and constants found in
+the repository, their doc examples and your tests as checks, run only as you allow.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
@@ -81,7 +87,8 @@ python -m neuromesh memory test   # run every memory node against its tests (sta
 Requirements: Python 3.11+ and numpy. Optional: [Ollama](https://ollama.com) for a local
 teacher model (see [LLM teachers](#llm-teachers-local-models-ollama-and-claude)), and PyTorch
 or CuPy to run the nodes on a GPU (see [Running on a GPU](#running-on-a-gpu)). For images: Pillow
-(JPEG, GIF and WebP, and glyphs to practise reading with), tesseract (a teacher for its reader), and
+(progressive JPEG, GIF and WebP, and glyphs to practise reading with; baseline JPEG works without it),
+access to huggingface.co for its picture books, tesseract (a teacher for its reader), and
 a vision model on Ollama (`ollama pull llava`). For code: a Gitea (`--gitea URL`), and Node.js to
 check and run JavaScript; for it to open pull requests on its project, a Gitea token with write access in
 `$GITEA_WRITE_TOKEN`. For the web: your own SearXNG (`--searxng URL`) with JSON allowed in its
@@ -180,6 +187,7 @@ the answer. Facts come from:
 | teachers | an LLM teacher's direct answer to a question (the source says it was a language model) |
 | people | `/memorize <question> :: <answer>`, `POST /memorize`, replying `answer: ...` when it asks what you meant, or tests you add (`/memory set`, the API, SQLite) |
 | challenges | the practice answers of numeric, short-answer, yes/no and multiple-choice suites (never the exam's) |
+| pictures | picture memories: pictures from its picture books (the first of every label, and the ones its sight node got wrong) and what people said an image shows or says; the question is the picture itself (see Seeing and reading) |
 
 Skills and routes already live in skill nodes and the router; memory nodes hold the facts.
 
@@ -533,8 +541,11 @@ validator checks it and nothing runs until you approve exactly that code (P20).
 --gitea http://localhost:3000        (a read-only token in $GITEA_TOKEN for private repositories)
    the gitea plugin (plugins/gitea), like Kiwix: you approve it once (it reads the network, and is
    given $GITEA_TOKEN and nothing else); it stays running, with kept-alive connections
-   when idle, a repository it hasn't studied (or not for [gitea] restudy_days):
+   when idle, every [gitea] study_every_seconds (2 minutes): a repository that changed since it last
+   read it (Gitea says when it was updated), else one it hasn't studied, else one it hasn't read for
+   [gitea] restudy_days (1):
      -> its file tree, and the source files that changed since it last read them
+     -> a Python file's header too: its imports and constants, for its workbench (below)
      -> every function taken apart: name, arguments, doc comment, code, what it calls, and what kind
         of code it is (text, maths, parse, data, files, network, dates, test, cli, other), from what
         the code actually does
@@ -543,7 +554,8 @@ validator checks it and nothing runs until you approve exactly that code (P20).
 "write a python function that averages a list of numbers"     (an order, /code write, the Code view)
      -> a recipe from its code library, if its coder node is sure; otherwise
      -> its code-kind node says what kind of code it needs, and the closest examples are found: an
-        LLM teacher writes it following them, or, with no teacher, it adapts the closest one
+        LLM teacher writes it following them; with no teacher, a whole program its workbench built
+        from the closest one (and checked, and maybe ran), else it adapts the closest one
      -> the validator: Python compiled, JavaScript by node --check, shell by bash -n, JSON and TOML
         parsed; and what the code reaches for (files, network, other programs, eval)
      -> code that does not check out goes back to the teacher once, with the problems
@@ -600,12 +612,43 @@ takes nothing or never showed what it does stays in the scratch pad, and it says
 
 **Practice.** When it is idle it takes the purpose of a function people wrote, writes code for it
 without looking at theirs, checks it, and compares the two: does it check out, is it the same kind of
-code, how many names they share. Practice code never runs. The Code view shows how it is doing.
+code, how many names they share. It practises on its own - its recipes, its workbench's programs, the
+closest example - not with an LLM teacher writing (`[gitea] practice_teacher`). Practice code never runs.
+The Code view shows how it is doing.
+
+**The workbench: programs it builds by itself.** With no teacher, it builds whole programs from the
+functions it studied (`workbench.py`), one every `[workbench] every_seconds` (2 minutes) when idle, or
+**Experiment now** in the Code view (`/workbench try`):
+
+```
+count_vowels  (ann/numkit, numkit/core.py)
+  helpers     what it uses that its own file sets up: VOWELS = "aeiou" (the file's header), and the functions
+              it calls from the same repository (vowel_share -> count_vowels), and theirs in turn
+  imports     as its file imported them (from collections import Counter), or a standard module it names
+  checks      its doc examples (>>> count_vowels("banana")  ->  3) and the tests people wrote that call it
+              (test_count_vowels in tests/test_core.py): each prints PASS or FAIL
+  inputs      a demonstration with inputs from its arguments' names and types (text -> a sentence,
+              n and radius -> 3, numbers -> a list, settings -> a dict; a path, a URL or a function: none)
+  -> checked by the scratch pad's validator; a name nothing in the repository defines leaves it
+     incomplete, and it says which ("it found nothing in ann/numkit that defines missing_helper")
+  -> into the scratch pad as an experiment, and it runs only as P20 allows: with Running its code set to
+     "When harmless", the ones that reach for nothing run by themselves; otherwise they wait for you
+     (only the newest [workbench] max_waiting wait there)
+  -> what it printed: passed (its checks passed), ran, or failed; what each function returned (text,
+     a number, a list ...); the code-kind node learns the kind of each one that ran
+chains: once two functions from one repository have run and one returns what the other takes, it feeds
+        one into the other (count_vowels -> circle_area) and sees what comes out
+```
+
+Asked for code no recipe fits with no teacher to write it, a program it built from the closest function
+(passed, ran, or checked, in that order) comes before an example copied as it is. Code from Gitea never
+runs as it is: only a program it built, checked, and P20 let run. The Code view's **Workbench** lists what
+it built, with the program, what it found, its checks and what its run printed.
 
 `[tools.config.gitea]` sets where Gitea is (`url`, or `--gitea URL`), which repositories it may read,
 and how many files it reads at once; `[gitea]` sets what it studies (file types, files per visit), how
-often it studies and practises; `[code]` sets what may run, the limits, and how many examples a
-teacher is given.
+often it studies and practises; `[workbench]` how often it builds programs and how big; `[code]` sets
+what may run, the limits, and how many examples a teacher is given.
 
 ### Its project: a repository in your Gitea, and objectives you set it
 Focus it on one repository and tell it what it should do to it. It works on that in its spare time,
@@ -949,9 +992,53 @@ text in them, and learns from both:
   img-3 say?"); what it sees is kept with the image. Its own reading is compared with tesseract's, a
   teacher's or yours, so how well it reads is measured.
 - **When idle** it practises reading glyphs it draws, and reads images again once its reader improves.
+- **Its memory is asked first**: a picture it remembers (a picture memory, below) is named by the memory
+  node that holds it ("memory node mem-0004 remembers this picture (picture book cifar10 ...)").
 
-Pure numpy reads PNG, BMP and PPM; with Pillow it also reads JPEG, GIF and WebP. An image goes only to
-a teacher you configured. `[vision]` in the directives turns parts on and off.
+Pure numpy reads PNG, BMP, PPM and baseline JPEG (its own decoder: what the Hugging Face dataset viewer
+serves); with Pillow it also reads progressive JPEG, GIF and WebP. An image goes only to a teacher you
+configured. `[vision]` in the directives turns parts on and off.
+
+**Picture books: image datasets from the Hugging Face Hub** (`imagesets.py`, the Images view's **Picture
+books**, `/pictures`). They teach it to see, without a teacher that can see:
+
+| book | from the Hub | teaches |
+|---|---|---|
+| `cifar10` | uoft-cs/cifar10 | what ten things look like (airplanes, cars, birds, cats ...): its sight node |
+| `cifar100` | uoft-cs/cifar100 | a hundred kinds of thing |
+| `fashion_mnist` | zalando-datasets/fashion_mnist | clothes and shoes |
+| `mnist` | ylecun/mnist | handwritten digits: its glyph node, as its reader finds them |
+| `words`, `wiki_lines` | priyank-m/trdg_... | printed words and lines: its reader |
+
+It gets the books in `[imagesets] start_with` (cifar10, mnist, words) by itself, `fetch_limit` (600)
+images each, once it has been idle a minute; **Get** any other ready-made one, **Get more images**, or
+search the Hub for any image dataset: it looks at the first rows, guesses which column is the image and
+which says what it shows (a class label: objects, or characters when every class is one character) or
+what it says (text), and you can change both. Images come from the dataset viewer's `/rows` (several at
+once; a slow or missing image is skipped), kept by their contents in `state/imagesets/<book>/`.
+
+- **Practice and exam.** Each book is split once, stably, into practice images (`exam_percent` 20 held out)
+  and exam images. It never learns from an exam image, so an exam score is honest and comparable.
+- **Lessons**, when idle (every `lesson_every_seconds`, `lesson_size` images; or **Lesson now**): objects
+  teach its sight node the labels (as the `imagesets` teacher, which also answers for practice images when
+  the Trainer wants more of a label); characters teach its glyph node, where its reader finds exactly one
+  character; text teaches its glyph node each character where its reader finds as many as the text has,
+  and grades its reading against the text.
+- **Exams**, every `exam_every_lessons` lessons (or **Exam now**): the sight node's score on exam images
+  with chance beside it ("named 131 of 200 right (66%; chance 10%)"), the glyph node's on handwritten
+  characters, its reader's best guess against printed text. The Images view draws each book's exams.
+- **Picture memories.** What the books teach is merged into its memory nodes (`memory.py`): the first
+  `memory_per_label` (2) pictures of every label, and up to `memory_misses` (4) practice pictures each
+  lesson that its sight node got wrong (what it could not read, for text). A picture memory's question is
+  the picture itself (`image:<sha>`, taken in as its sight node sees it) and its answer what it shows
+  ("cat") or says ("says: STOP"). Picture memories live in their own memory nodes, tested like any fact
+  (other pictures, and questions in words, are what a picture node must not answer), compressed, and
+  merged only with other picture nodes. What you say an image shows or says is kept the same way. The
+  Memory page shows each picture. `[imagesets] memory = false` turns them off.
+
+A book can be removed (its images, and what its sight node learned from them, go; picture memories stay
+until you remove them from memory). The Hub and its dataset viewer are `[challenges] hub_url` and
+`api_url`, with `$HF_TOKEN` if set.
 
 ### Many instances of each node, at once and in concert
 Several instances of each kind of node run at the same time, and answer together:
@@ -1542,6 +1629,10 @@ All run concurrently (asyncio) and coordinate through a message bus, the registr
 | Director | independent agency (director-0): when idle, picks a mode (research, practise, examine, improve, consolidate, rest) with the agency node in front of it, sets itself tasks or sits exams, scores what each choice achieved and teaches the agency node from it |
 | Dreamer | when idle, may fall asleep and give all background capacity to dreaming: makes up questions and answers from what it holds, checks them on waking, evolves the dream nodes; an order wakes it |
 | Searcher | questions nobody answered in time ([websearch] answer_after_minutes) are searched on the web through your SearXNG and answered from what it finds |
+| Apprentice | when idle, visits your Gitea every 2 minutes (a repository that changed first) and learns from its code; now and then practises writing code on its own |
+| Tinkerer | when idle, builds a whole program on its workbench from a function it studied (or feeds one function that ran into another), checks it, and runs it as P20 allows |
+| Looker | when idle, practises reading glyphs it draws, and reads images again once its reader improves |
+| Picturebook | when idle, gets the picture books it starts with, then takes lessons from them in turn (an exam every few lessons), merging what they teach into memory |
 | Foreman | when idle, works on its project's next objective (drafts and checks a change, asks you to approve it), and watches its pull requests for a merge or a close |
 | Sentinel | watches the kill switch, re-checks local teacher servers (Ollama), lets the mood settle and saves it, publishes heartbeats with the directive scorecard |
 
@@ -1683,6 +1774,8 @@ make a tool that reverses text    /toolsmith    /toolsmith build count the vowel
 /tools decide    /tools off    /tools on    /tool kiwix on    /tool calculator default
 write a python function that counts vowels    /code    /code show code-1    /code approve code-1    /code practice    /gitea    /gitea study ann/textkit
 /image ~/Pictures/sign.png    /images    /image show img-1    /image is img-1 street sign    /image says img-1 Harbour 2 km    what does img-1 say?
+/pictures    /pictures get cifar10    /pictures get zalando-datasets/fashion_mnist 1000    /pictures lesson    /pictures exam cifar10    /pictures more mnist 2000
+/workbench    /workbench try    /workbench try 42    /workbench chain    /workbench show 7
 /lessons    /lesson question    /lesson code
 /code autorun harmless    /code autorun always    /code autorun ask    /code tool code-3    /code tools auto    /web    /web inq-3
 /reward last 2 a clear answer    /punish calculator    /reward reading about astronomy 3    /rewards
@@ -1884,6 +1977,12 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | GET | `/challenges/catalog`, `/challenges/search?q=`, `/challenges/inspect?dataset=&config=&split=&mapping=<json>`, `/challenges/export?suite=` | the ready-made benchmarks; datasets on the Hub; a dataset's columns, first rows and how it would be read; a suite's manifest and items |
 | POST | `/challenges/import`, `/challenges/remove` | `{"name", "kind", "items": "<JSONL, JSON or CSV>", "labels"}` (or an exported suite as `items`); `{"suite": "..."}` |
 | POST | `/tools/diagnose`, `/tools/remove`, `/tools/restore` | `{"tool": "kiwix"}`: why it fails (and a fix to approve); take it out of the mesh (`"why"`); bring it back, re-vetted. `GET /tools/doctor`: every diagnosis and fix |
+| GET | `/pictures` | picture books: each book's images, lessons, exams and picture memories, the ready-made ones it can get, what it is getting now |
+| GET | `/pictures/search?q=`, `/pictures/inspect?dataset=&config=&split=` | image datasets on the Hub; one's columns, first images and a guess at how to read it |
+| GET | `/pictures/file?book=&sha=` | an image from a picture book (`/images/file?sha=` finds one too: a picture memory's question) |
+| POST | `/pictures` | `{"get": "cifar10"}`, `{"dataset": "owner/name", "image", "answer", "kind", "limit", "name"}`, `{"get": name, "more": true}`, `{"lesson": name?}`, `{"exam": name}`, `{"remove": name}` |
+| GET | `/workbench`, `/workbench/program?id=` | programs it built by itself from the code it studied; one program's code and what its run printed |
+| POST | `/workbench` | `{"experiment": true, "example": id?, "chain": bool?}`: build one now |
 | GET | `/network` | the whole network: every family (where it works, its nodes with their status, sizes, weights and what the background is doing to them), tools, directors, teachers and the work running now; `?detail=1` adds every node's layers: the strongest neurons of each and the strongest synapses between them |
 | GET | `/conversations`, `/realm?text=` | conversations and short-term memory nodes (secrets hidden); fact or fiction for a text |
 | POST | `/memory/short`, `/conversations/end` | `{"id": "stm-3", "action": "keep" \| "forget"}`; `{"id": "conv-2"}`: its ego decides now. `POST /order` takes `"conversation": "<id>"` |
@@ -2350,10 +2449,12 @@ neuromesh/
   ensemble.py            many instances of each node at once ([nodes] max_running); the champion and its instances
   journal.py             the Mind's archive: everything in its mind by date and time
   toolgate.py            the tool switch (on, off, it decides) and the tool-gate node's policy
-  gitea.py               what its coder nodes learn from a local Gitea: functions taken apart, kinds of code, the Apprentice
+  gitea.py               what its coder nodes learn from a local Gitea: functions taken apart, kinds of code, file headers, the Apprentice
   scratchpad.py          the scratch pad: writing code, the validator, approval, running it once approved (P20), practice
-  imaging.py             images without dependencies: PNG/BMP/PPM decoding, what the sight node sees, lines and glyphs
+  imaging.py             images without dependencies: PNG/BMP/PPM and baseline JPEG decoding, what the sight node sees, lines and glyphs
   vision.py              its optical nodes: the sight node, the reader and its glyph node, their teachers, the Looker (P21)
+  imagesets.py           picture books: image datasets from the Hugging Face Hub, lessons and exams, picture memories, the Picture-book agent
+  workbench.py           whole programs it builds by itself from the code it studied in Gitea, checked and run as P20 allows, the Tinkerer
   tutor.py               lessons: its Ollama teachers set it orders when idle and mark them (P22)
   rewards.py             rewards and punishments: the ledger of directions, the reward node, their effects and pull (P23)
   projects.py            its project in Gitea: objectives, drafting and checking changes, approval, pull requests, the Foreman (P20)
@@ -2380,7 +2481,7 @@ neuromesh/
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   322 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   339 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -2451,7 +2552,17 @@ tests/                   322 tests: nodes, guardian, LLM wire formats and a mock
                          fact and fiction (cues, works, framing, older memory databases migrated, memory
                          and answers marked, "is Gandalf real?", its dreams), and conversations (follow-ups,
                          what you tell it recalled verbatim, corrections, secrets never kept or repeated,
-                         its ego keeping and letting go after the quiet, keep and forget by hand)
+                         its ego keeping and letting go after the quiet, keep and forget by hand),
+                         picture books (a mock Hub and dataset viewer serving images: columns guessed,
+                         broken images skipped, a stable practice/exam split, the teacher naming only
+                         practice images, lessons for its sight node, glyph node and reader, exams
+                         against chance, books it gets by itself, more images, remove), picture memories
+                         (their own tested nodes, recalled first when it looks at an image, a person's word
+                         kept, never merged with words), JPEG read without Pillow as Pillow reads it, and
+                         the workbench (whole programs from studied functions with their helpers, imports,
+                         constants, doc examples and people's tests; incomplete ones say what is missing;
+                         run only as P20 allows; chains; its programs used when there is no teacher;
+                         practice without the teacher; a Gitea repository that changed read first)
 ```
 
 State lives in `state/` (SQLite database, node weights, log). Delete it to start fresh.

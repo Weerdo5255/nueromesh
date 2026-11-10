@@ -789,3 +789,42 @@ svg.circuit { display: block; width: 100%; height: auto; margin-top: 6px; }
 .net-actor.past { fill: none; stroke-dasharray: 2 2; opacity: .7; }
 .net-work.past { animation: none; opacity: .3; }
 .net .m-dim, .net .m-sub { font-size: 12px; }
+
+/* picture books: image datasets from the Hub (imagesets.py) */
+.books { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin: 10px 0 16px; }
+.book { border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); padding: 12px 14px; min-width: 0; }
+.book-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+.book-head h3 { margin: 0; font-size: 16px; }
+.book-head a { margin-left: auto; overflow-wrap: anywhere; }
+.book-thumbs { display: flex; gap: 6px; margin: 10px 0 6px; overflow-x: auto; padding-bottom: 2px; }
+.book-thumbs figure { margin: 0; flex: 0 0 auto; width: 52px; text-align: center; }
+.book-thumbs figcaption { font-size: 10.5px; color: var(--ink-3); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+img.book-thumb { width: 52px; height: 52px; object-fit: contain; image-rendering: pixelated; border-radius: 4px;
+  background: repeating-conic-gradient(var(--rule) 0 25%, transparent 0 50%) 0 0 / 10px 10px; display: block; }
+.book p { margin: 4px 0; }
+.book-score { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px 0; }
+.book-score .big { font-size: 26px; line-height: 1.1; font-weight: 650; color: var(--hema); font-variant-numeric: tabular-nums; }
+svg.exam-trail { width: 120px; height: 30px; flex: 0 0 auto; }
+.exam-line { fill: none; stroke: var(--hema); stroke-width: 1.5; }
+.exam-dot { fill: var(--hema); }
+.exam-chance { stroke: var(--ink-3); stroke-dasharray: 3 3; stroke-width: 1; }
+.kind-chip.book-objects { background: color-mix(in srgb, var(--hema) 13%, transparent); color: var(--hema); }
+.kind-chip.book-characters { background: color-mix(in srgb, var(--eosin) 13%, transparent); color: var(--eosin); }
+.kind-chip.book-text { background: color-mix(in srgb, var(--tool) 13%, transparent); color: var(--tool); }
+.book-find { margin: 6px 0 12px; }
+.book-find summary { cursor: pointer; color: var(--hema); }
+.book-find form { margin: 8px 0; flex-wrap: wrap; }
+.book-find input[type="search"] { min-width: min(360px, 100%); flex: 1; }
+.book-look { border: 1px solid var(--rule); border-radius: 8px; padding: 8px 12px; margin: 6px 0; }
+.book-look label select, .book-look label input { margin-left: 4px; max-width: 220px; }
+progress { vertical-align: middle; margin-left: 8px; width: 160px; accent-color: var(--hema); }
+
+/* the workbench: programs it builds by itself (workbench.py) */
+.kind-chip.bench-ok { background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good); margin: 2px 4px 2px 0; }
+.kind-chip.bench-hit { background: color-mix(in srgb, var(--hema) 13%, transparent); color: var(--hema); margin: 2px 4px 2px 0; }
+.kind-chip.bench-no { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); margin: 2px 4px 2px 0; }
+.kind-chip.bench-dim { background: color-mix(in srgb, var(--ink-3) 14%, transparent); color: var(--ink-2); margin: 2px 4px 2px 0; }
+#workbench pre.code-view { font-family: var(--mono); font-size: 12.5px; line-height: 1.45; background: var(--slide); border-radius: 8px;
+  padding: 8px 10px; max-height: 26em; overflow: auto; margin: 6px 0; }
+@media (max-width: 640px) { .books { grid-template-columns: minmax(0, 1fr); } .book-head a { margin-left: 0; } }
+.pic-ask { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }

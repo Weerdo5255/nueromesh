@@ -835,6 +835,8 @@ class DirectorPool(Agent):
             why = "a person's word (P1)"
         elif kind == "challenges" or src.startswith("challenge"):
             why = "a benchmark's own answer"
+        elif kind == "pictures":
+            why = "a picture book's own label (a dataset's gold answer)"
         elif disputed:
             ok, why = False, "a second director found a different answer"
         elif st.wary and teacher and not corroborated:

@@ -132,6 +132,60 @@ def test_slugify():
 ''',
     "README.md": "# textkit\n",
 }
+NUMKIT = {  # (for the workbench: helpers, constants, doc examples and a test people wrote)
+    "numkit/core.py": '''"""Numbers and words."""
+import math
+from collections import Counter
+
+VOWELS = "aeiou"
+
+
+def count_vowels(text):
+    """Count the vowels in a text.
+
+    >>> count_vowels("banana")
+    3
+    """
+    return sum(1 for ch in text.lower() if ch in VOWELS)
+
+
+def most_common_letter(text):
+    """The letter that appears most often.
+
+    >>> most_common_letter("banana")
+    'a'
+    """
+    return Counter(c for c in text.lower() if c.isalpha()).most_common(1)[0][0]
+
+
+def circle_area(radius):
+    """The area of a circle with this radius."""
+    return round(math.pi * radius * radius, 2)
+
+
+def vowel_share(text):
+    """What share of the letters are vowels."""
+    letters = [c for c in text if c.isalpha()]
+    return round(count_vowels(text) / len(letters), 3) if letters else 0.0
+
+
+def shout_vowels(text):
+    """Vowels in upper case."""
+    return "".join(c.upper() if c in VOWELS else c for c in text)
+
+
+def broken(text):
+    """Uses a helper nobody wrote."""
+    return missing_helper(text) + 1
+''',
+    "tests/test_core.py": '''from numkit.core import count_vowels
+
+
+def test_count_vowels():
+    assert count_vowels("aeiou") == 5
+    assert count_vowels("xyz") == 0
+''',
+}
 WEBTOOLS = {
     "web/client.js": '''// Fetch a user record from the API as JSON.
 async function fetchUser(id) {
@@ -209,7 +263,7 @@ class _Gitea(BaseHTTPRequestHandler):
             return self._send({"version": "1.22.3"})
         if p == "/api/v1/repos/search":
             data = [{"full_name": n, "default_branch": "main", "description": f"{n} things", "empty": False,
-                     "archived": False} for n in owner.repos]
+                     "archived": False, "updated_at": owner.updated.get(n, "2020-01-01T00:00:00Z")} for n in owner.repos]
             return self._send({"ok": True, "data": data if q.get("page", "1") == "1" else []})
         parts = p.split("/")
         if len(parts) >= 6 and parts[1:4] == ["api", "v1", "repos"]:
@@ -233,7 +287,8 @@ class _Gitea(BaseHTTPRequestHandler):
                 pr = owner.pulls.get((name, int(rest[1])))
                 return self._send(pr) if pr else self._send({"message": "not found"}, 404)
             if not rest:
-                return self._send({"full_name": name, "default_branch": "main", "description": ""})
+                return self._send({"full_name": name, "default_branch": "main", "description": "",
+                                   "updated_at": owner.updated.get(name, "2020-01-01T00:00:00Z")})
         self._send({"message": "not found"}, 404)
 
 
@@ -245,6 +300,7 @@ class MockGitea(_Server):
         self.branches: dict = {}       # (repo, branch) -> files after a change
         self.writes: list = []         # (method, path, body, authorization)
         self.pulls: dict = {}          # (repo, number) -> pull request
+        self.updated: dict = {}        # repo -> when it last changed (ISO), as Gitea says
         super().__init__(_Gitea)
 
     def commit(self, name: str) -> str:
@@ -367,11 +423,93 @@ DATASETS = {
                   "choices": {"text": ["shark", "whale", "trout", "squid"], "label": ["A", "B", "C", "D"]}, "answerKey": "B"}
                  for i in range(20)]}} for cfg in ("ARC-Challenge", "ARC-Easy")},
 }
+# ---------------------------------------------------------------------------- image datasets (picture books)
+SHAPES = ["square", "circle", "cross"]
+SEGMENTS = {"0": "abcdef", "1": "bc", "2": "abged", "3": "abgcd", "4": "fgbc", "5": "afgcd", "6": "afgedc", "7": "abc",
+            "8": "abcdefg", "9": "abcdfg"}
+WORDS = ["cat", "sun", "map", "dog", "pen", "box", "hat", "cup", "red", "toy"]
+
+
+def shape_image(kind: str, i: int):
+    """A 32 x 32 picture: a square (red), a circle (blue) or a cross (green), a little different each time."""
+    import numpy as np
+    rng = np.random.default_rng(i)
+    a = np.full((32, 32, 3), 235, dtype=np.uint8) - rng.integers(0, 20, (32, 32, 3)).astype(np.uint8)
+    y, x = np.mgrid[0:32, 0:32]
+    cy, cx, r = 16 + rng.integers(-3, 4), 16 + rng.integers(-3, 4), 8 + rng.integers(0, 4)
+    if kind == "square":
+        m = (abs(y - cy) <= r) & (abs(x - cx) <= r)
+        colour = (210, 40, 40)
+    elif kind == "circle":
+        m = (y - cy) ** 2 + (x - cx) ** 2 <= r * r
+        colour = (40, 60, 210)
+    else:
+        m = ((abs(y - cy) <= 2) & (abs(x - cx) <= r + 2)) | ((abs(x - cx) <= 2) & (abs(y - cy) <= r + 2))
+        colour = (30, 170, 60)
+    a[m] = colour
+    return a
+
+
+def digit_image(d: str, i: int):
+    """A 28 x 28 handwritten-looking digit: white strokes on black, like MNIST."""
+    import numpy as np
+    rng = np.random.default_rng(100 + i)
+    a = np.zeros((28, 28, 3), dtype=np.uint8)
+    x0, y0, w, h, t = 9 + rng.integers(-1, 2), 5 + rng.integers(-1, 2), 9, 8, 2
+    seg = {"a": (y0, x0, y0 + t, x0 + w), "g": (y0 + h, x0, y0 + h + t, x0 + w), "d": (y0 + 2 * h, x0, y0 + 2 * h + t, x0 + w),
+           "f": (y0, x0, y0 + h + t, x0 + t), "b": (y0, x0 + w - t, y0 + h + t, x0 + w),
+           "e": (y0 + h, x0, y0 + 2 * h + t, x0 + t), "c": (y0 + h, x0 + w - t, y0 + 2 * h + t, x0 + w)}
+    for k in SEGMENTS[d]:
+        y1, x1, y2, x2 = seg[k]
+        a[y1:y2, x1:x2] = 255
+    return a
+
+
+def word_image(word: str, i: int):
+    """A printed word, black on white (Pillow's own font), or None without Pillow."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        return None
+    import numpy as np
+    try:
+        font = ImageFont.load_default(size=28)
+    except TypeError:
+        font = ImageFont.load_default()
+    im = Image.new("RGB", (40 + 22 * len(word), 48), "white")
+    ImageDraw.Draw(im).text((8 + i % 7, 4 + i % 4), word, fill="black", font=font)
+    return np.asarray(im)
+
+
+def image_bytes(a, fmt: str = "jpeg") -> bytes:
+    import io
+    try:
+        from PIL import Image
+    except ImportError:
+        from neuromesh.imaging import encode_png
+        return encode_png(a)
+    buf = io.BytesIO()
+    Image.fromarray(a).save(buf, "JPEG" if fmt == "jpeg" else "PNG", quality=92)
+    return buf.getvalue()
+
+
+IMAGE_DATASETS = {
+    "pics/shapes": {"features": {"img": {"_type": "Image"}, "label": _class(SHAPES)},
+                    "rows": [("img", SHAPES[i % 3], i) for i in range(90)], "make": lambda ans, i: shape_image(ans, i)},
+    "pics/digits": {"features": {"image": {"_type": "Image"}, "label": _class(list("0123456789"))},
+                    "rows": [("image", str(i % 10), i) for i in range(60)], "make": lambda ans, i: digit_image(ans, i)},
+    "pics/printed-words": {"features": {"image": {"_type": "Image"}, "label": _value()},
+                           "rows": [("image", WORDS[i % len(WORDS)], i) for i in range(40)], "make": lambda ans, i: word_image(ans, i)},
+}
+
 HUB = [{"id": "acme/emotion-tiny", "downloads": 52000, "likes": 40,
         "tags": ["task_categories:text-classification", "license:mit", "language:en"]},
        {"id": "acme/trivia-qa", "downloads": 9100, "likes": 12, "tags": ["task_categories:question-answering", "license:cc-by-4.0"]},
        {"id": "acme/odd-columns", "downloads": 31, "likes": 0, "tags": []},
-       {"id": "allenai/ai2_arc", "downloads": 880000, "likes": 200, "tags": ["task_categories:question-answering", "license:cc-by-sa-4.0"]}]
+       {"id": "allenai/ai2_arc", "downloads": 880000, "likes": 200, "tags": ["task_categories:question-answering", "license:cc-by-sa-4.0"]},
+       {"id": "pics/shapes", "downloads": 4000, "likes": 3, "tags": ["task_categories:image-classification", "license:mit"]},
+       {"id": "pics/digits", "downloads": 3000, "likes": 2, "tags": ["task_categories:image-classification", "license:mit"]},
+       {"id": "pics/printed-words", "downloads": 900, "likes": 1, "tags": ["task_categories:image-to-text", "license:mit"]}]
 
 
 class _Datasets(BaseHTTPRequestHandler):
@@ -397,7 +535,29 @@ class _Datasets(BaseHTTPRequestHandler):
             words = q.get("search", "").lower()
             found = [d for d in HUB if words in d["id"].lower()]
             return self._send(sorted(found, key=lambda d: -d["downloads"])[: int(q.get("limit", 20))])
-        ds = DATASETS.get(q.get("dataset", ""))
+        if u.path.startswith("/assets/"):  # an image, as the dataset viewer serves it
+            parts = u.path.split("/")
+            name, idx = "/".join(parts[2:4]), int(parts[4].split(".")[0])
+            spec = IMAGE_DATASETS.get(name)
+            if spec is None or not 0 <= idx < len(spec["rows"]) or idx in owner.broken:
+                return self._send({"error": "not found"}, 404)
+            a = spec["make"](spec["rows"][idx][1], idx)
+            data = image_bytes(a)
+            self.send_response(200)
+            self.send_header("content-type", "image/jpeg")
+            self.send_header("content-length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        img = IMAGE_DATASETS.get(q.get("dataset", ""))
+        if img is not None:
+            ds = {"default": {"train": {"features": img["features"], "rows": [
+                {col: {"src": f"{owner.url}/assets/{q['dataset']}/{i}.jpg?Expires=1&Signature=x", "height": 32, "width": 32},
+                 "label": (SHAPES.index(ans) if q["dataset"] == "pics/shapes" else
+                           int(ans) if q["dataset"] == "pics/digits" else ans)}
+                for col, ans, i in img["rows"]]}}}
+        else:
+            ds = DATASETS.get(q.get("dataset", ""))
         if ds is None:
             return self._send({"error": "The dataset does not exist, or is not accessible without authentication."}, 404)
         if u.path == "/splits":
@@ -426,4 +586,5 @@ class MockDatasets(_Server):
     def __init__(self):
         self.requests: list[dict] = []
         self.down = False
+        self.broken: set[int] = set()  # images that answer 404
         super().__init__(_Datasets)

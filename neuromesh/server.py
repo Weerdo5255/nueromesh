@@ -144,7 +144,31 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                 return 404, {"error": "no such change"}
             return 200, {k: v for k, v in ch.items() if k != "files"} | {"files": [{k: v for k, v in f.items() if k != "after"} for f in ch["files"]]}
         if path == "/images":  # what its optical nodes took in: what each image shows, the text it read
-            return 200, system.vision.status()
+            return 200, {**system.vision.status(), "books": system.imagesets.status()}
+        if path == "/pictures":  # picture books: image datasets from the Hugging Face Hub, its lessons and exams
+            return 200, system.imagesets.status()
+        if path in ("/pictures/search", "/pictures/inspect"):  # ?q=  |  ?dataset=&config=&split=
+            try:
+                if path == "/pictures/search":
+                    return 200, {"query": query.get("q", ""),
+                                 "datasets": await asyncio.to_thread(system.imagesets.search, query.get("q", ""))}
+                return 200, await asyncio.to_thread(system.imagesets.inspect, query.get("dataset", ""),
+                                                    query.get("config", ""), query.get("split", ""))
+            except (ValueError, RuntimeError) as exc:
+                return 400, {"ok": False, "message": str(exc)}
+        if path == "/pictures/file":  # ?book=&sha=: an image from a picture book
+            b = system.imagesets
+            item = next((it for it in b.items.get(str(query.get("book", "")), []) if it["sha"] == query.get("sha")), None)
+            if item is None:
+                return 404, {"error": "no such image"}
+            data = b.image_path(query["book"], item).read_bytes()
+            return 200, Raw(data, {"png": "image/png", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp",
+                                   "bmp": "image/bmp"}.get(item["ext"], "application/octet-stream"))
+        if path == "/workbench":  # programs it builds by itself from the code it studied
+            return 200, system.workbench.status()
+        if path == "/workbench/program":  # ?id=: one program: its code and what its run printed
+            got = system.workbench.get(int(query.get("id", 0) or 0))
+            return (200, got) if got else (404, {"error": "no such program"})
         if path == "/images/file":  # ?id=img-3 or ?sha=...: the image itself
             v = system.vision
             img_id = str(query.get("id", ""))
@@ -152,12 +176,20 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                 rec = v.by_sha(str(query["sha"]))
                 img_id = rec["id"] if rec else ""
             got = v.file(img_id)
+            if got is None and query.get("sha"):  # a picture book's image (a picture memory's question)
+                sha = str(query["sha"])
+                for name, items in system.imagesets.items.items():
+                    it = next((x for x in items if x["sha"] == sha), None)
+                    if it is not None:
+                        p = system.imagesets.image_path(name, it)
+                        got = (p.read_bytes(), {"png": "image/png", "jpeg": "image/jpeg"}.get(it["ext"], "application/octet-stream"))
+                        break
             if got is None:
                 return 404, {"error": "no such image"}
             return 200, Raw(*got)
         if path == "/code":  # Gitea study, the scratch pad and its practice
             return 200, {"gitea": system.code_study.status(), "scratch": system.scratch.status(),
-                         "tools": system.codetools.status()}
+                         "tools": system.codetools.status(), "workbench": system.workbench.status()}
         if path == "/websearch":  # questions nobody answered in time, searched with your SearXNG
             return 200, system.websearch.status()
         if path == "/code/item":  # ?id=code-3
@@ -425,6 +457,38 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
         if path == "/images/forget":
             ok = system.vision.forget(str(body.get("id", "")))
             return (200 if ok else 404), {"ok": ok}
+        if path == "/pictures":  # {"get": name | "dataset": id, "image", "answer", "kind", "config", "split", "limit", "more"}
+            #                      {"lesson": name?, "n"} | {"exam": name, "n"} | {"remove": name}
+            b, by = system.imagesets, str(body.get("by") or "web")
+            try:
+                if body.get("get") or body.get("dataset"):
+                    res = await b.get(name=str(body.get("get") or body.get("name") or ""), dataset=str(body.get("dataset") or ""),
+                                      image=str(body.get("image") or ""), answer=str(body.get("answer") or ""),
+                                      kind=str(body.get("kind") or ""), config=str(body.get("config") or ""),
+                                      split=str(body.get("split") or ""), limit=int(body.get("limit") or 0),
+                                      more=bool(body.get("more")), by=by)
+                    return 200, {"ok": True, "message": res["line"], **res}
+                if "lesson" in body:
+                    res = await b.lesson(str(body.get("lesson") or "") or None, int(body.get("n") or 0) or None, by=by)
+                    return (200 if res else 400), ({"ok": True, "message": res["line"], **res} if res else
+                                                   {"ok": False, "message": "no picture book to learn from yet"})
+                if body.get("exam"):
+                    res = await b.exam(str(body["exam"]), int(body.get("n") or 0) or None, by=by)
+                    return (200 if res else 400), ({"ok": True, "message": res["line"], **res} if res else
+                                                   {"ok": False, "message": "no such book, or no exam images in it"})
+                if body.get("remove"):
+                    ok, msg = b.remove(str(body["remove"]), by)
+                    return (200 if ok else 404), {"ok": ok, "message": msg}
+            except (ValueError, RuntimeError) as exc:
+                return 400, {"ok": False, "message": str(exc)}
+            return 400, {"error": "say what to do: get, dataset, lesson, exam or remove"}
+        if path == "/workbench":  # {"experiment": true, "example": id?, "chain": bool?}
+            res = await system.workbench.experiment(int(body["example"]) if body.get("example") else None,
+                                                    bool(body["chain"]) if "chain" in body else None,
+                                                    by=str(body.get("by") or "web"))
+            return (200 if res else 400), ({"ok": True, "message": res["line"], **{k: v for k, v in res.items() if k != "code"}}
+                                           if res else {"ok": False, "message": "nothing to build from yet (it studies Gitea "
+                                                        "first), or an experiment is under way"})
         if path == "/images/practice":  # draw and learn glyphs now
             made = await system.vision.practice(int(body.get("n") or 0) or None)
             return 200, {"glyphs": made, "message": f"it drew and learned {made} glyph(s)" if made else

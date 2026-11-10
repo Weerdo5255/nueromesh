@@ -26,6 +26,7 @@ FAST = {
     "dreams": {"enabled": False},       # it does not fall asleep unless a test asks (see test_dreams)
     "directors": {"consult": False},    # no second opinions unless a test asks (see test_directors)
     "objectives": {"always": False},    # it sets itself no objectives unless a test asks (see test_objectives)
+    "imagesets": {"start_with": []},    # it gets no picture books by itself (see test_imagesets)
 }
 
 

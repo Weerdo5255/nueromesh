@@ -44,9 +44,13 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /lessons                        orders its teachers set it when idle, its answers, and their marks
   /lesson [kind]                  have a teacher set it a lesson now (question, skill, maths, tool, code)
   /images                         images it took in: what each shows, the text it read, how well it reads
-  /image <path> [name]            take an image in (PNG, BMP, PPM; JPEG/GIF/WebP with Pillow)
+  /image <path> [name]            take an image in (PNG, BMP, PPM, JPEG; GIF/WebP with Pillow)
   /image show <img-id>            what it saw and read      /image is <img-id> <what it shows>   teach its sight node
   /image says <img-id> <text>     what the image's text says (teaches its reader)   /image practise   draw and learn glyphs
+  /pictures                       picture books (Hugging Face image datasets): its lessons, exams and picture memories
+  /pictures get <name>|<owner/dataset> [n]   get a ready-made book (cifar10, mnist, words ...) or any image dataset
+  /pictures lesson [name]   /pictures exam <name>   /pictures more <name> [n]   /pictures remove <name>
+  /workbench                      programs it built by itself from the code it studied     /workbench try [example id]
   /gitea                          what its coder nodes learned from Gitea     /gitea study [owner/repo]   study now
   /gitea examples [words]         functions it studied                        /gitea url <url>   point the gitea tool at a Gitea
   /teachers                       teacher status (Ollama, Claude, ...)
@@ -819,6 +823,35 @@ async def project_lines(system, rest: str) -> list[str]:
     return [f"  {msg}"]
 
 
+async def picture_lines(system, rest: str) -> list[str]:
+    b = system.imagesets
+    verb, _, arg = rest.strip().partition(" ")
+    verb, arg = verb.lower(), arg.strip()
+    by = os.environ.get("USER", "console")
+    try:
+        if verb in ("get", "more") and arg:
+            name, _, n = arg.partition(" ")
+            limit = int(n) if n.strip().isdigit() else 0
+            if verb == "more":
+                res = await b.get(name=name, more=True, limit=limit, by=by)
+            elif "/" in name:
+                res = await b.get(dataset=name, limit=limit, by=by)
+            else:
+                res = await b.get(name=name, limit=limit, by=by)
+            return [f"  {res['line']}"]
+        if verb == "lesson":
+            res = await b.lesson(arg or None, by=by)
+            return [f"  {res['line']}"] if res else ["  no picture book to learn from yet: /pictures get cifar10"]
+        if verb == "exam" and arg:
+            res = await b.exam(arg, by=by)
+            return [f"  {res['line']}"] if res else [f"  no exam images in {arg}"]
+        if verb == "remove" and arg:
+            return [f"  {b.remove(arg, by)[1]}"]
+    except (ValueError, RuntimeError) as exc:
+        return [f"  {exc}"]
+    return b.lines()
+
+
 async def image_lines(system, rest: str) -> list[str]:
     v = system.vision
     sub, _, arg = rest.partition(" ")
@@ -941,6 +974,21 @@ async def execute(system, line: str) -> Output:
             out = await image_lines(system, rest if cmd == "image" else "")
         elif cmd == "gitea":
             out = await gitea_lines(system, rest)
+        elif cmd in ("pictures", "picture", "books"):
+            out = await picture_lines(system, rest)
+        elif cmd == "workbench":
+            verb, _, arg = rest.strip().partition(" ")
+            if verb in ("try", "experiment", "build", "chain"):
+                res = await system.workbench.experiment(int(arg) if arg.strip().isdigit() else None,
+                                                        True if verb == "chain" else None, by=os.environ.get("USER", "console"))
+                out = [f"  {res['line']}"] if res else ["  nothing to build from yet (it studies Gitea first: /gitea study)"]
+            elif verb == "show" and arg.strip().isdigit():
+                got = system.workbench.get(int(arg))
+                out = ([f"  program {got['id']}: {got.get('status', '')}"] + ["  " + ln for ln in got["code"].splitlines()]
+                       + (["  it printed:"] + ["  " + ln for ln in (got.get("output") or "").splitlines()[:30]] if got.get("output") else [])
+                       ) if got else [f"  no program {arg}"]
+            else:
+                out = system.workbench.lines()
         elif cmd == "tool":
             name, _, mode = rest.partition(" ")
             verb, _, why = mode.strip().partition(" ")

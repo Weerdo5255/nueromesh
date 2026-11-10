@@ -118,6 +118,11 @@
   }
 
   // run an action from a button: disable it while it works, report the outcome
+  async function fetching(button, path) {
+    // a GET that a button started: the data, or null (and a toast saying why)
+    if (button) button.disabled = true;
+    try { return await api(path); } catch (e) { toast(e.message); return null; } finally { if (button) button.disabled = false; }
+  }
   async function act(button, fn, done) {
     if (button) button.disabled = true;
     try {
@@ -1570,14 +1575,21 @@ it decides whether to say something of its own after an answer, and what`))
           (d.merged_from.length ? ` Merged from ${d.merged_from.join(" and ")}; made of ${d.parts.join(", ")}.` : "") + " File: ", h("code", {}, d.file)),
         h("div", { class: "cols" },
           h("div", {}, h("h3", {}, "What it knows"), h("ul", { class: "facts" }, d.facts.map(f => h("li", {},
-            h("div", {}, h("div", { class: "q" }, f.ask, realmChip(f)), h("div", { class: "a" }, f.answer),
+            h("div", {}, h("div", { class: "q" }, askView(f.ask), realmChip(f)), h("div", { class: "a" }, f.answer),
               h("div", { class: "s" }, [f.source && `learned from ${f.source}`, f.learned, f.variants.length && `also asked as “${f.variants.join("”, “")}”`].filter(Boolean).join("; "))),
             h("button", { type: "button", class: "quiet small", title: "Forget this fact (its tests go too)", onclick: e => act(e.target, () => api("/command", { line: `/memory forget ${f.ask}` }), "Forgotten") }, "Forget"))))),
           h("div", {}, h("h3", {}, "How it was compressed"), h("ol", { class: "rows small" }, d.history.map(x => h("li", { style: "padding:3px 0" }, x))),
             h("details", {}, h("summary", {}, `${d.unknowns.length} questions it must not answer`),
-              h("ul", { class: "rows small" }, d.unknowns.map(u => h("li", { style: "padding:3px 0" }, h("b", {}, u.ask), h("span", { class: "dim" }, ` ${u.reason.replace(/^auto: /, "")}`)))))))));
+              h("ul", { class: "rows small" }, d.unknowns.map(u => h("li", { style: "padding:3px 0" }, h("b", {}, askView(u.ask)), h("span", { class: "dim" }, ` ${u.reason.replace(/^auto: /, "")}`)))))))));
     }
     fill(host, kids);
+  }
+
+  // a picture memory's question is the picture itself (memory.py): shown as the picture
+  function askView(ask) {
+    const m = /^image:([0-9a-f]{8,40})$/.exec(String(ask || "").trim());
+    if (!m) return ask;
+    return h("span", { class: "pic-ask" }, authImg(`/images/file?sha=${m[1]}`, "a picture it remembers", "book-thumb"), h("span", { class: "dim small" }, ` picture ${m[1].slice(0, 8)}`));
   }
 
   // fact or fiction (realm.py): a small mark beside what it holds or says
@@ -2756,6 +2768,7 @@ it decides whether to say something of its own after an answer, and what`))
         h("p", { class: "lede" }, `It writes code here: from a recipe in its code library, with a teacher following the closest code it studied in your Gitea, or by adapting that code. A validator checks every piece (${Object.entries(sp.checkers || {}).map(([l, c]) => `${l}: ${c}`).join("; ")}). Runs here: ${sp.runnable.join(", ") || "nothing"}.`),
         write,
         h("div", { class: "code-cols" }, h("div", {}, list), sel ? codeItem(sel, sp) : h("div", {}))),
+      workbenchPanel(d.workbench),
       h("div", { class: "cols" },
         h("div", { class: "section" }, h("h2", {}, "What it studies in Gitea"),
           h("p", { class: "lede" }, `It reads your Gitea through the gitea tool (a plugin, like Kiwix: you approve it once, and the tool switch applies to it). ${g.detail}. ` +
@@ -2774,6 +2787,46 @@ it decides whether to say something of its own after an answer, and what`))
           (sp.practice || []).length ? h("ul", { class: "rows" }, sp.practice.slice(0, 8).map(r => h("li", { class: "ask" },
             h("p", {}, h("span", { class: r.ok ? "ok" : r.ok === false ? "no" : "dim" }, r.ok ? "Checks out" : r.ok === false ? "Does not check out" : "Nothing written"), `: ${r.name} from ${r.repo}`),
             h("p", { class: "why" }, `“${cut(r.purpose, 110)}”` + (r.same_kind === null || r.same_kind === undefined ? "" : `; ${r.same_kind ? "same" : "different"} kind (${r.my_kind || "?"} vs ${r.kind}); shares ${pct(r.shared)} of the names`))))) : null)));
+  }
+
+  // ------------------------------------------------------------------ the workbench (workbench.py)
+  const BENCH_STATE = { passed: "ok", ran: "ok", "checks out": "hit", failed: "no", "does not check out": "no", incomplete: "dim", skipped: "dim" };
+  const BENCH_OPEN = new Map();  // programs shown open: id -> what /workbench/program said
+  function workbenchPanel(W) {
+    if (!W) return null;
+    const counts = Object.entries(W.counts || {}).sort((a, b) => b[1] - a[1]);
+    const shown = got => [h("pre", { class: "code-view small" }, got.code || ""),
+      got.output ? h("div", {}, h("p", { class: "small" }, "It printed:"), h("pre", { class: "img-text" }, got.output)) : null];
+    const showCode = async (btn, p, box) => {
+      if (BENCH_OPEN.has(p.id)) { BENCH_OPEN.delete(p.id); fill(box); btn.textContent = "Show the program"; return; }
+      const got = await fetching(btn, `/workbench/program?id=${p.id}`);
+      if (!got) return;
+      BENCH_OPEN.set(p.id, got);
+      btn.textContent = "Hide the program";
+      fill(box, shown(got));
+    };
+    return h("div", { class: "section", id: "workbench" }, h("h2", {}, "Workbench"),
+      h("p", { class: "lede" }, "With no teacher, it builds whole programs from the functions it studied in your Gitea: it finds what each one calls and imports in the same repository, " +
+        "turns its doc examples and the tests people wrote into checks, makes up inputs from its arguments' names, and checks the program. Once two functions have run, it feeds one into the other. " +
+        (W.auto_run === "ask" ? "Its programs wait in the scratch pad for you to run them; set Running its code to “harmless” and the ones that reach for nothing run by themselves." :
+          `Auto-run is “${W.auto_run}”: programs that ${W.auto_run === "harmless" ? "reach for nothing" : "check out"} run by themselves.`) +
+        " When it is asked for code no recipe fits and no teacher writes, a program it built and checked comes first."),
+      h("div", { class: "row" },
+        h("button", { type: "button", class: "small", disabled: !W.enabled || W.busy, onclick: e => act(e.target, () => api("/workbench", { experiment: true, by: "web" }), r => r.message) }, W.busy ? "Building…" : "Experiment now"),
+        h("span", { class: "small dim" }, `${num(W.left)} studied function(s) it has not built from yet; every ${Math.round(W.every / 60)} min when idle.`)),
+      counts.length ? h("p", { class: "small" }, counts.map(([k, n]) => h("span", { class: `kind-chip bench-${BENCH_STATE[k] || "dim"}` }, `${k} ${n}`))) : null,
+      (W.programs || []).length ? h("ul", { class: "rows" }, W.programs.slice(0, 12).map(p => {
+        const open = BENCH_OPEN.get(p.id);
+        const box = h("div", {}, open ? shown(open) : null);
+        return h("li", { class: "ask" },
+          h("p", {}, h("span", { class: `kind-chip bench-${BENCH_STATE[p.status] || "dim"}` }, p.status), " ", h("b", {}, p.name), h("span", { class: "dim small" }, ` ${p.kind === "chain" ? "fed one into the other" : "a whole program"}, ${p.repo}`),
+            p.item ? h("a", { href: "#code", class: "chip", onclick: e => { e.preventDefault(); S.codeSel = p.item; renderCode(true); document.querySelector(".code-cols")?.scrollIntoView({ block: "start" }); } }, p.item) : null),
+          h("p", { class: "why" }, [p.helpers?.length ? `helpers it found: ${p.helpers.join(", ")}` : "", p.inputs, p.checks ? `${p.checks} check(s)` : "",
+            p.passed || p.failed ? `${p.passed} passed, ${p.failed} failed` : "", p.returns ? `returns ${p.returns}` : "",
+            p.unresolved?.length ? `missing: ${p.unresolved.join(", ")}` : "", p.why || ""].filter(Boolean).join("; ")),
+          p.status !== "skipped" ? h("button", { type: "button", class: "small quiet", "aria-expanded": open ? "true" : "false", onclick: e => showCode(e.target, p, box) }, open ? "Hide the program" : "Show the program") : null, box);
+      })) : h("p", { class: "dim" }, "Nothing built yet: it studies your Gitea first."),
+      (W.log || []).length ? h("ul", { class: "rows small" }, W.log.slice(0, 6).map(x => h("li", { style: "padding:4px 0" }, h("time", { class: "dim" }, clock(x.ts)), " ", x.line))) : null);
   }
 
   // ================================================================== images: what it sees, and the text it reads
@@ -2844,8 +2897,109 @@ it decides whether to say something of its own after an answer, and what`))
             h("p", { class: "small" }, te.tesseract ? `tesseract (${te.tesseract}) reads beside it and labels its glyphs` : "tesseract is not installed (optional)"),
             h("p", { class: "small" }, te.vision ? `${te.vision} looks at images` : "no teacher that can see (ollama pull llava)"),
             h("p", { class: "small dim" }, `${te.fonts} fonts to practise with${te.can_draw ? "" : " (install Pillow to draw them)"}`)))),
+      picturesPanel(v.books),
       h("div", { class: "section" }, h("h2", {}, `Taken in (${num(v.count)})`),
         v.images.length ? h("div", { class: "img-grid" }, v.images.slice(0, 24).map(imageCard)) : h("p", { class: "dim" }, "No images yet.")));
+  }
+
+  // ------------------------------------------------------------------ picture books (imagesets.py)
+  const BOOK_KIND = { objects: "what images show: its sight node", characters: "one character an image: its glyph node",
+    text: "printed text: its reader" };
+  function examTrail(exams) {
+    // each exam a dot, oldest on the left; chance as a dashed line
+    const pts = (exams || []).filter(x => x.score !== null && x.score !== undefined);
+    if (!pts.length) return null;
+    const W = 120, H = 30, n = pts.length;
+    const X = i => n === 1 ? W / 2 : 4 + i * (W - 8) / (n - 1), Y = v => H - 3 - v * (H - 6);
+    const chance = pts[pts.length - 1].chance;
+    return sv("svg", { viewBox: `0 0 ${W} ${H}`, class: "exam-trail", role: "img", "aria-label": `exam scores: ${pts.map(x => pct(x.score)).join(", ")}` },
+      chance ? sv("line", { x1: 0, x2: W, y1: Y(chance), y2: Y(chance), class: "exam-chance" }) : null,
+      n > 1 ? sv("polyline", { points: pts.map((x, i) => `${X(i)},${Y(x.score)}`).join(" "), class: "exam-line" }) : null,
+      pts.map((x, i) => sv("circle", { cx: X(i), cy: Y(x.score), r: i === n - 1 ? 3 : 2, class: "exam-dot" })));
+  }
+  function bookCard(b) {
+    const last = b.last;
+    const go = (e, body, say) => act(e.target, () => api("/pictures", { ...body, by: "web" }), r => say ? say(r) : r.message);
+    return h("article", { class: "book" },
+      h("div", { class: "book-head" },
+        h("h3", {}, b.name), h("span", { class: `kind-chip book-${b.kind}` }, b.kind),
+        h("a", { href: `https://huggingface.co/datasets/${b.dataset}`, target: "_blank", rel: "noopener", class: "small" }, b.dataset)),
+      h("div", { class: "book-thumbs", "aria-hidden": "true" }, (b.sample || []).slice(0, 8).map(x =>
+        h("figure", {}, authImg(`/pictures/file?book=${encodeURIComponent(b.name)}&sha=${x.sha}`, x.answer, "book-thumb"),
+          h("figcaption", {}, cut(String(x.answer).replace(/_/g, " "), 14))))),
+      h("p", { class: "small" }, `${num(b.items)} images: ${num(b.practice)} to learn from, ${num(b.exam)} for its exams; ` +
+        `${num(b.labels)} ${b.kind === "text" ? "texts" : "labels"}. ${BOOK_KIND[b.kind] || ""} learns from it.`),
+      h("div", { class: "book-score" },
+        h("div", {}, h("div", { class: "big" }, last && last.score !== null ? pct(last.score) : "–"),
+          h("div", { class: "small dim" }, last ? (last.score === null ? "no node to grade yet" : `last exam, ${last.n} images${last.chance ? `; chance ${pct(last.chance)}` : ""}`) : "no exam yet")),
+        examTrail(b.exams)),
+      h("p", { class: "small dim" }, `${num(b.lessons)} lessons, ${num(b.learned)} ${b.kind === "objects" ? "images" : "characters"} learned` + (b.rounds ? ` (${b.rounds} times through)` : "") +
+        `; ${num(b.memories)} kept as picture memories.`),
+      h("div", { class: "row" },
+        h("button", { type: "button", class: "small", onclick: e => go(e, { lesson: b.name }) }, "Lesson now"),
+        h("button", { type: "button", class: "small", onclick: e => go(e, { exam: b.name }) }, "Exam now"),
+        h("button", { type: "button", class: "small quiet", onclick: e => go(e, { get: b.name, more: true }) }, "Get more images"),
+        h("button", { type: "button", class: "small quiet", onclick: e => { if (confirm(`Remove ${b.name}? Its images and what its sight node learned from them go; picture memories stay in memory.`)) go(e, { remove: b.name }); } }, "Remove")));
+  }
+  function bookFinder() {
+    const q = h("input", { type: "search", placeholder: "search the Hub: flowers, food, handwriting, receipts…", "aria-label": "Search Hugging Face for image datasets" });
+    const out = h("div", { class: "book-found" });
+    const look = async (btn, id) => {
+      const info = await fetching(btn, `/pictures/inspect?dataset=${encodeURIComponent(id)}`);
+      if (!info) return;
+      const cols = info.features || [];
+      const pick = (label, value, filter) => h("label", { class: "small" }, label, " ",
+        h("select", { "data-k": label }, cols.filter(filter).map(f => h("option", { value: f.name, selected: f.name === value ? "" : null }, `${f.name} (${f.kind})`))));
+      const image = pick("image", info.guess.image, f => f.kind === "image");
+      const answer = pick("answer", info.guess.answer, f => f.kind !== "image");
+      const kind = h("select", { "aria-label": "What kind of book" }, ["objects", "characters", "text"].map(k => h("option", { value: k, selected: k === info.guess.kind ? "" : null }, k)));
+      const name = h("input", { type: "text", value: (info.book || id.split("/").pop()).toLowerCase().replace(/[^a-z0-9_-]+/g, "_").slice(0, 40), "aria-label": "Name" });
+      const limit = h("input", { type: "number", min: 10, max: 20000, step: 10, value: 600, "aria-label": "How many images" });
+      fill(out, h("div", { class: "book-look" },
+        h("p", {}, h("b", {}, id), ` ${info.config}/${info.split}: `, info.guess.why || ""),
+        h("div", { class: "book-thumbs" }, (info.sample || []).filter(x => x.src).slice(0, 10).map(x =>
+          h("figure", {}, h("img", { src: x.src, alt: x.answer, class: "book-thumb", loading: "lazy", referrerpolicy: "no-referrer" }), h("figcaption", {}, cut(x.answer, 14))))),
+        cols.some(f => f.kind === "image") ? h("form", { class: "row", onsubmit: e => {
+          e.preventDefault();
+          act(e.target.querySelector("button"), () => api("/pictures", { dataset: id, config: info.config, split: info.split, name: name.value.trim(),
+            image: image.querySelector("select").value, answer: answer.querySelector("select").value, kind: kind.value, limit: Number(limit.value), by: "web" }),
+            r => r.message).then(r => { if (r) { fill(out); S.extraAt.images = 0; } });
+        } }, image, answer, h("label", { class: "small" }, "kind ", kind), h("label", { class: "small" }, "name ", name),
+          h("label", { class: "small" }, "images ", limit), h("button", { type: "submit", class: "primary" }, "Get it"))
+          : h("p", { class: "no small" }, "This dataset has no image column the dataset viewer can show.")));
+    };
+    const search = h("form", { class: "row", onsubmit: async e => {
+      e.preventDefault();
+      if (!q.value.trim()) return;
+      const r = await fetching(e.target.querySelector("button"), `/pictures/search?q=${encodeURIComponent(q.value.trim())}`);
+      if (!r) return;
+      fill(out, r.datasets.length ? h("ul", { class: "rows" }, r.datasets.map(d => h("li", { class: "ask" },
+        h("p", {}, h("b", {}, d.id), h("span", { class: "dim small" }, ` ${num(d.downloads)} downloads${d.license ? `, ${d.license}` : ""}${d.tasks?.length ? `; ${d.tasks.join(", ")}` : ""}`),
+          d.images ? h("span", { class: "kind-chip book-objects" }, "images") : null),
+        d.description ? h("p", { class: "why" }, cut(d.description, 160)) : null,
+        h("button", { type: "button", class: "small", onclick: ev => look(ev.target, d.id) }, "Look at it")))) : h("p", { class: "dim" }, "Nothing on the Hub matches that."));
+    } }, q, h("button", { type: "submit", class: "small" }, "Search"));
+    return h("details", { class: "book-find" }, h("summary", {}, "Another image dataset from the Hub"), search, out);
+  }
+  function picturesPanel(B) {
+    if (!B) return null;
+    if (!B.enabled) return h("div", { class: "section" }, h("h2", {}, "Picture books"), h("p", { class: "dim" }, "Picture books are off ([imagesets] enabled)."));
+    const getting = Object.entries(B.getting || {});
+    const missing = (B.catalog || []).filter(c => !c.installed);
+    return h("div", { class: "section", id: "picture-books" }, h("h2", {}, "Picture books"),
+      h("p", { class: "lede" }, "Image datasets from the Hugging Face Hub teach it to see: what things look like (its sight node) and how characters look (its glyph node, for its reader). " +
+        `It learns from each book's practice images when it is idle, and is graded on its exam images, which it never learns from. ${B.memory ? "The first pictures of every label, and the ones its sight node got wrong, are merged into its memory nodes as picture memories: when it looks at an image, its memory is asked first." : "Picture memories are off ([imagesets] memory)."}`),
+      getting.length ? h("ul", { class: "rows" }, getting.map(([k, g]) => h("li", {}, h("b", {}, k), ` getting images: ${num(g.done)} of ${num(g.of)}` + (g.skipped ? `, ${g.skipped} skipped` : ""),
+        h("progress", { max: g.of, value: g.done, "aria-label": `getting ${k}` })))) : null,
+      (B.books || []).length ? h("div", { class: "books" }, B.books.map(bookCard))
+        : h("p", { class: "dim" }, (B.start_with || []).length ? `It gets ${B.start_with.join(", ")} by itself once it has been idle for a minute, or get one now.` : "No picture books yet."),
+      missing.length ? h("div", {}, h("h3", {}, "Ready to get"),
+        h("ul", { class: "rows" }, missing.map(c => h("li", { class: "ask" },
+          h("p", {}, h("b", {}, c.name), " ", h("span", { class: `kind-chip book-${c.kind}` }, c.kind), h("span", { class: "dim small" }, ` ${c.dataset}${c.license ? `, ${c.license}` : ""}`)),
+          h("p", { class: "why" }, c.description),
+          h("button", { type: "button", class: "small", disabled: c.getting, onclick: e => act(e.target, () => api("/pictures", { get: c.name, by: "web" }), r => r.message) }, c.getting ? "Getting…" : `Get ${num(B.fetch_limit)} images`))))) : null,
+      bookFinder(),
+      (B.log || []).length ? h("ul", { class: "rows small" }, B.log.slice(0, 8).map(x => h("li", { style: "padding:4px 0" }, h("time", { class: "dim" }, clock(x.ts)), " ", x.line))) : null);
   }
 
 
