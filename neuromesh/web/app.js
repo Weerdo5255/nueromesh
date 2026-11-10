@@ -1449,10 +1449,40 @@ it decides whether to say something of its own after an answer, and what`))
           h("div", { class: "scroll-x" }, h("table", { class: "tbl" },
             h("thead", {}, h("tr", {}, ["Capability", "Examples", "Champion", "Shape", "Held-out", "Served", "Gen", "Instances", "Challengers", "Evolution", ""].map((t, i) => h("th", { class: [1, 4, 5, 6].includes(i) ? "n" : null }, t)))),
             h("tbody", {}, rows)))),
+        budgetsPanel(S.extra.budgets),
         h("div", { class: "section" }, h("h2", {}, "Agents"),
           h("div", { class: "scroll-x" }, h("table", { class: "tbl" }, h("tbody", {}, Object.entries(st.agents).map(([a, stats]) =>
             h("tr", {}, h("td", {}, h("b", {}, a)), h("td", {}, Object.entries(stats).map(([k, v]) => `${k} ${num(v)}`).join(", ") || h("span", { class: "dim" }, "idle")))))))));
     }
+  }
+
+  // ------------------------------------------------------------------ node budgets (budgets.py)
+  function budgetsPanel(B) {
+    if (!B) return null;
+    const groups = new Map();
+    for (const b of B.budgets) { if (!groups.has(b.group)) groups.set(b.group, []); groups.get(b.group).push(b); }
+    const row = b => {
+      const input = h("input", { type: "number", min: b.min, max: b.max, step: b.step, value: b.value, id: `budget-${b.path}`, "aria-describedby": `budget-${b.path}-note` });
+      const over = b.used !== null && b.used > b.value;
+      const share = b.used === null ? null : Math.min(100, (b.used / Math.max(1, b.value)) * 100);
+      return h("form", { class: "budget" + (b.set_by ? " changed" : ""), onsubmit: e => {
+        e.preventDefault();
+        act(e.target.querySelector("button"), () => api("/budgets", { path: b.path, value: Number(input.value), by: "web" }), r => { S.extra.budgets = r; return r.message; })
+          .then(() => { input.blur(); renderNodes(); });
+      } },
+        h("label", { for: `budget-${b.path}` }, b.label),
+        h("div", { class: "budget-set" }, input, h("button", { type: "submit", class: "small" }, "Set")),
+        h("div", { class: "budget-use" }, share === null ? null : h("div", { class: "track" + (over ? " over" : ""), role: "img", "aria-label": `${num(b.used)} of ${num(b.value)} in use` }, h("b", { style: `width:${share.toFixed(0)}%` })),
+          h("span", { class: "small " + (over ? "no" : "dim") }, b.used === null ? "" : `${num(b.used)} ${b.used_word}`)),
+        h("p", { class: "small dim", id: `budget-${b.path}-note` }, b.what, b.what ? " " : "",
+          b.set_by ? h("span", {}, `Set by ${b.set_by}; the directives say ${num(b.default)}. `,
+            h("button", { type: "button", class: "quiet small", onclick: e => act(e.target, () => api("/budgets", { reset: b.path, by: "web" }), r => { S.extra.budgets = r; return r.message; }).then(() => renderNodes()) }, "Set it back")) : null));
+    };
+    return h("div", { class: "section", id: "node-budgets" }, h("h2", {}, "Node budgets"),
+      h("p", { class: "lede" }, "How many nodes it may keep and how large they may grow. A change takes effect at once, is audited, and holds across restarts until you set it back; the mesh never raises its own budgets. " +
+        (B.changed ? `${B.changed} differ from the directives.` : "All are as the directives say.")),
+      [...groups].map(([g, list]) => h("div", { class: "budget-group" }, h("h3", {}, g), list.map(row))),
+      B.changed ? h("button", { type: "button", class: "small quiet", onclick: e => act(e.target, () => api("/budgets", { reset: "all", by: "web" }), r => { S.extra.budgets = r; return r.message; }).then(() => renderNodes()) }, "Set every budget back to the directives") : null);
   }
 
   // ------------------------------------------------------------------ memory view
@@ -1658,9 +1688,14 @@ it decides whether to say something of its own after an answer, and what`))
       h("p", { class: "why" }, [d2.how, d2.summary].filter(Boolean).join(" - "))));
     return h("div", { class: "section" },
       h("h2", {}, "Initiative"),
-      h("p", { class: "lede" }, `${who} When no one has asked it for anything for a while, it decides what to learn or test next: research, practise, examine, improve, consolidate, build a tool, try one out, or rest. ` +
+      h("p", { class: "lede" }, `${who} When no one has asked it for anything for a while, it decides what to do next: research, practise, examine, improve, consolidate, build a tool or try one out, pursue an objective, think again, have its optical, coder or thinking nodes work, go back to earlier work, or rest. ` +
         `${ag.decisions_last_hour} of ${ag.limit} decisions this hour${ag.enabled && ag.next_in !== null ? `; next look in ${span(ag.next_in)}` : ""}.`),
       controls,
+      (ag.wiring || []).length ? h("div", { class: "wiring" }, h("h3", {}, "What its director can call on"),
+        h("ul", { class: "rows" }, ag.wiring.map(w => h("li", { class: "ask" },
+          h("p", {}, h("span", { class: `kind-chip bench-${w.available ? "ok" : w.wired ? "dim" : "no"}` }, w.available ? "available" : w.wired ? "wired in, nothing to do now" : "off"), " ",
+            h("b", {}, w.title), h("span", { class: "dim small" }, ` ${w.nodes.length ? w.nodes.map(n => n.node ? `${n.node}${n.holdout !== null && n.holdout !== undefined ? ` (${pct(n.holdout)})` : ""}` : `${n.capability}: no node yet`).join(", ") : "no node yet"}`)),
+          h("p", { class: "why" }, `${w.does}. Modes: ${w.modes.join(", ")}${w.blocked.length ? ` (not allowed by [agency] modes: ${w.blocked.join(", ")})` : ""}. Now: ${w.now}.`))))) : null,
       h("div", { class: "cols", style: "margin-top:14px" },
         h("div", {}, h("h3", {}, "Recent decisions"), decisions.length ? h("ul", { class: "rows" }, decisions) : h("p", { class: "dim" }, "None yet.")),
         h("div", {},
@@ -2769,6 +2804,7 @@ it decides whether to say something of its own after an answer, and what`))
         write,
         h("div", { class: "code-cols" }, h("div", {}, list), sel ? codeItem(sel, sp) : h("div", {}))),
       workbenchPanel(d.workbench),
+      worksPanel(d.works, d.gitea),
       h("div", { class: "cols" },
         h("div", { class: "section" }, h("h2", {}, "What it studies in Gitea"),
           h("p", { class: "lede" }, `It reads your Gitea through the gitea tool (a plugin, like Kiwix: you approve it once, and the tool switch applies to it). ${g.detail}. ` +
@@ -2827,6 +2863,48 @@ it decides whether to say something of its own after an answer, and what`))
           p.status !== "skipped" ? h("button", { type: "button", class: "small quiet", "aria-expanded": open ? "true" : "false", onclick: e => showCode(e.target, p, box) }, open ? "Hide the program" : "Show the program") : null, box);
       })) : h("p", { class: "dim" }, "Nothing built yet: it studies your Gitea first."),
       (W.log || []).length ? h("ul", { class: "rows small" }, W.log.slice(0, 6).map(x => h("li", { style: "padding:4px 0" }, h("time", { class: "dim" }, clock(x.ts)), " ", x.line))) : null);
+  }
+
+  // ------------------------------------------------------------------ its works (works.py)
+  function worksPanel(W, gitea) {
+    if (!W) return null;
+    const go = (e, body, done) => act(e.target, () => api("/works", { ...body, by: "web" }), r => r.message).then(done || (() => {}));
+    const repos = [...new Set((gitea?.repos || []).map(r => r.name || r))].filter(r => !W.projects.some(p => p.repo === r));
+    const pick = repos.length ? h("select", { "aria-label": "Repository" }, repos.map(r => h("option", { value: r }, r))) : null;
+    return h("div", { class: "section", id: "works" }, h("h2", {}, "Long-term work"),
+      h("p", { class: "lede" }, "It goes back to what it made before and improves it on its own initiative (its director's revisit mode): programs that were incomplete or failed, code that did not check out, tools that fall short, objectives that ended short. " +
+        "And it keeps long-term projects of its own: from a repository it studied, a library of every function it can build into a whole program, one step a session, a new version when its parts change. " +
+        `${num(W.stats.revisits || 0)} visits so far, ${num(W.stats.improved || 0)} made something better; ${num(W.stats.versions || 0)} versions put together.`),
+      h("div", { class: "row" },
+        h("button", { type: "button", class: "small", disabled: !W.enabled || W.busy, onclick: e => go(e, { session: true }) }, W.busy ? "Working…" : "Go back to something now"),
+        pick ? h("span", { class: "row small" }, "Start a project from", pick,
+          h("button", { type: "button", class: "small", onclick: e => go(e, { start: pick.value }) }, "Start")) : null),
+      h("h3", {}, `Projects of its own (${W.projects.length} of ${W.max_projects})`),
+      W.projects.length ? h("div", { class: "books" }, W.projects.map(p => h("article", { class: "book" },
+        h("div", { class: "book-head" }, h("h3", {}, p.title), h("span", { class: `kind-chip bench-${p.status === "active" ? "ok" : "dim"}` }, p.status),
+          h("span", { class: "small dim" }, `${p.id}, started by ${p.by}`)),
+        h("p", { class: "small" }, p.goal),
+        h("div", { class: "book-score" }, h("div", {}, h("div", { class: "big" }, `v${p.version}`),
+          h("div", { class: "small dim" }, `${p.parts.length} parts${p.checks ? `, ${p.checks} checks` : ""}; ${p.sessions} sessions` +
+            (p.result ? `; version ${p.result.version} ran: ${p.result.passed} passed, ${p.result.failed} failed` : p.item ? "; not run yet" : ""))),
+          p.item ? h("a", { href: "#code", class: "chip", onclick: e => { e.preventDefault(); S.codeSel = p.item; renderCode(true); document.querySelector(".code-cols")?.scrollIntoView({ block: "start" }); } }, p.item) : null),
+        h("p", { class: "small" }, h("b", {}, "Next: "), p.plan),
+        p.parts.length ? h("p", { class: "small dim" }, p.parts.join(", ")) : null,
+        h("div", { class: "row" },
+          h("button", { type: "button", class: "small", disabled: p.status !== "active", onclick: e => go(e, { work: p.id }) }, "Work on it now"),
+          h("button", { type: "button", class: "small quiet", onclick: e => go(e, { project: p.id, status: p.status === "active" ? "paused" : "active" }) }, p.status === "active" ? "Pause" : "Resume"),
+          h("button", { type: "button", class: "small quiet", onclick: e => { if (confirm(`Remove ${p.id}? Its versions stay on disk.`)) go(e, { project: p.id, status: "removed" }); } }, "Remove")),
+        (p.journal || []).length ? h("ul", { class: "rows small" }, p.journal.slice(0, 5).map(j => h("li", { style: "padding:3px 0" }, h("time", { class: "dim" }, clock(j.ts)), " ", j.line))) : null)))
+        : h("p", { class: "dim" }, "None yet: it starts one once a repository has two programs that ran, or start one above."),
+      h("h3", {}, `Worth going back to (${W.waiting})`),
+      W.candidates.length ? h("ul", { class: "rows" }, W.candidates.slice(0, 8).map(c => h("li", { class: "ask" },
+        h("p", {}, h("span", { class: "kind-chip bench-dim" }, c.kind), " ", h("b", {}, c.title), h("span", { class: "dim small" }, ` ${c.state}`)),
+        h("p", { class: "why" }, c.why),
+        h("button", { type: "button", class: "small quiet", onclick: e => go(e, { revisit: c.key }) }, "Go back to it now"))))
+        : h("p", { class: "dim" }, "Nothing right now: what it went back to rests for a while, longer each time it got no better."),
+      (W.journal || []).length ? h("div", {}, h("h3", {}, "What its visits changed"),
+        h("ul", { class: "rows small" }, W.journal.slice(0, 10).map(j => h("li", { style: "padding:4px 0" }, h("time", { class: "dim" }, clock(j.ts)), " ",
+          h("span", { class: j.improved ? "ok" : "dim" }, j.improved ? "better " : "no better "), j.line)))) : null);
   }
 
   // ================================================================== images: what it sees, and the text it reads
@@ -3191,6 +3269,7 @@ it decides whether to say something of its own after an answer, and what`))
     if (S.view === "memory" && due("own", 5000)) jobs.push(get("own", "/memory/own?limit=20"));
     if (S.view === "memory" && due("conversations", 4000)) jobs.push(get("conversations", "/conversations"));
     if (S.view === "code" && due("code", 3000)) jobs.push(get("code", "/code"));
+    if (S.view === "nodes" && due("budgets", 4000)) jobs.push(get("budgets", "/budgets"));
     if (S.view === "images" && due("images", 4000)) jobs.push(get("images", "/images"));
     if (S.view === "mind" && S.mindTab === "lessons" && due("lessons", 4000)) jobs.push(get("lessons", "/lessons"));
     if (S.view === "mind" && S.mindTab === "rewards" && due("rewards", 3000)) jobs.push(get("rewards", "/rewards"));

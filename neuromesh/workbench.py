@@ -424,6 +424,35 @@ class Workbench:
                 "checks": len(checks) + len(tests), "takes": call[1] if call else "", "why": comp.get("why", ""),
                 "status": "incomplete" if comp["unresolved"] else "built", "runnable": bool(main)}
 
+    async def library(self, examples: list[dict], title: str, purpose: str, origin: str) -> dict:
+        """Several functions it built programs from, gathered into one module with all their checks (works.py: a
+        long-term project of its own)."""
+        fns, tests = [], []
+        for ex in examples:
+            got = standalone(ex["source"])
+            if got is None or not got[1].body or not isinstance(got[1].body[0], (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            fns.append((ex, got[1].body[0]))
+            tests += [t for t in self._tests(ex) if t["name"] not in {x["name"] for x in tests}]
+        if not fns:
+            return {"ok": False, "why": "none of its parts parse on their own"}
+        comp = await self.compose(fns[0][0], also=[ex for ex, _ in fns[1:]] + tests)
+        if comp.get("unresolved") or not comp.get("parts"):
+            return {"ok": False, "why": comp.get("why", "")}
+        defined = set(comp["parts"]) | set(comp["constants"]) | {i.split(" as ")[-1].split()[-1] for i in comp["imports"]}
+        main, checks = [], 0
+        for ex, fn in fns:
+            found = self._checks(ex, fn, defined | BUILTINS)
+            checks += len(found)
+            main += [f"_report(\"CHECK\", {lab!r}, lambda: {src}, {want!r})" for lab, src, want in found]
+            call = self._call(fn, ex["name"])
+            if call is not None:
+                main.append(f"_report(\"DEMO\", {call[0][:80]!r}, lambda: {call[0]})")
+        main += [f"_report(\"TEST\", {t['name']!r}, {t['name']})" for t in tests]
+        code = self.program(title, purpose, origin, comp, main, tests)
+        return {"ok": True, "code": code, "parts": [ex["name"] for ex, _ in fns], "checks": checks + len(tests),
+                "helpers": [n for n in comp["parts"] if n not in {ex["name"] for ex, _ in fns} | {t["name"] for t in tests}]}
+
     async def chain(self) -> dict | None:
         """Two functions that ran, one fed into the other: a program that sees what comes out."""
         rows = self.db.execute("SELECT example, repo, name, returns, takes FROM code_programs WHERE kind = 'whole' AND "

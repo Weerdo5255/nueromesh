@@ -828,3 +828,19 @@ progress { vertical-align: middle; margin-left: 8px; width: 160px; accent-color:
   padding: 8px 10px; max-height: 26em; overflow: auto; margin: 6px 0; }
 @media (max-width: 640px) { .books { grid-template-columns: minmax(0, 1fr); } .book-head a { margin-left: 0; } }
 .pic-ask { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
+
+/* node budgets (budgets.py) and what the director can call on */
+.budget-group { margin: 6px 0 14px; }
+.budget { display: grid; grid-template-columns: minmax(180px, 1.2fr) auto minmax(160px, 1fr); gap: 4px 16px; align-items: center;
+  padding: 8px 0; border-top: 1px solid var(--rule); }
+.budget label { font-weight: 600; }
+.budget.changed label::after { content: " (changed)"; font-weight: 400; color: var(--hema); font-size: 12.5px; }
+.budget-set { display: flex; gap: 6px; align-items: center; }
+.budget-set input { width: 9.5em; text-align: right; font-variant-numeric: tabular-nums; }
+.budget-use { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.budget-use .track { flex: 1; height: 6px; background: var(--rule); border-radius: 3px; position: relative; min-width: 60px; }
+.budget-use .track b { position: absolute; left: 0; top: 0; bottom: 0; background: var(--hema); border-radius: 3px; }
+.budget-use .track.over b { background: var(--bad); }
+.budget p { grid-column: 1 / -1; margin: 0; }
+.wiring { margin-top: 14px; }
+@media (max-width: 640px) { .budget { grid-template-columns: minmax(0, 1fr); } }

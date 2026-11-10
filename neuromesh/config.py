@@ -376,7 +376,7 @@ class AgencyPolicy:
     max_self_tasks: int = 3               # tasks it has set itself at once
     explore: float = 0.1                  # chance of trying another possible mode, to learn what it is worth
     modes: tuple = ("research", "practise", "examine", "improve", "consolidate", "build", "experiment", "pursue",
-                    "ruminate", "rest")
+                    "ruminate", "look", "code", "reflect", "revisit", "rest")
     max_self_objectives: int = 4          # objectives it has set itself at once
     research_articles: int = 3            # a self-set learn task reads this many articles
     practice_items: int = 20
@@ -607,6 +607,18 @@ class WorkbenchPolicy:
 
 
 @dataclass
+class WorksPolicy:
+    """Its works (works.py): earlier work it goes back to and improves on its own initiative (the director's
+    "revisit" mode), and long-term projects of its own that it keeps building."""
+    enabled: bool = True
+    revisit_after_hours: float = 12.0   # a piece of work it went back to rests this long (longer each time it got no better)
+    teacher: bool = False               # an LLM teacher may write when it drafts code again (False: on its own)
+    own_projects: bool = True           # it starts projects of its own from repositories it studied
+    max_projects: int = 3
+    min_parts: int = 2                  # parts that ran before a repository becomes a project, and before a version
+
+
+@dataclass
 class CodePolicy:
     """The scratch pad (scratchpad.py): where it writes code, a validator checks it, and it runs only when a person
     approves exactly that code (P20)."""
@@ -777,6 +789,7 @@ class Directives:
     gitea: GiteaPolicy = field(default_factory=GiteaPolicy)
     code: CodePolicy = field(default_factory=CodePolicy)
     workbench: WorkbenchPolicy = field(default_factory=WorkbenchPolicy)
+    works: WorksPolicy = field(default_factory=WorksPolicy)
     vision: VisionPolicy = field(default_factory=VisionPolicy)
     imagesets: ImageSetPolicy = field(default_factory=ImageSetPolicy)
     tutor: TutorPolicy = field(default_factory=TutorPolicy)
@@ -820,6 +833,7 @@ class Directives:
             gitea=build(GiteaPolicy, d.get("gitea")),
             code=build(CodePolicy, d.get("code")),
             workbench=build(WorkbenchPolicy, d.get("workbench")),
+            works=build(WorksPolicy, d.get("works")),
             vision=build(VisionPolicy, d.get("vision")),
             imagesets=build(ImageSetPolicy, d.get("imagesets")),
             tutor=build(TutorPolicy, d.get("tutor")),

@@ -50,6 +50,9 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /pictures                       picture books (Hugging Face image datasets): its lessons, exams and picture memories
   /pictures get <name>|<owner/dataset> [n]   get a ready-made book (cifar10, mnist, words ...) or any image dataset
   /pictures lesson [name]   /pictures exam <name>   /pictures more <name> [n]   /pictures remove <name>
+  /budgets                        node budgets and what is in use     /budget <name> <number>     /budget reset <name>|all
+  /works                          earlier work it goes back to, and its long-term projects     /works now
+  /works start <owner/repo>       /works work [project]     /works pause|resume|remove <project>
   /workbench                      programs it built by itself from the code it studied     /workbench try [example id]
   /gitea                          what its coder nodes learned from Gitea     /gitea study [owner/repo]   study now
   /gitea examples [words]         functions it studied                        /gitea url <url>   point the gitea tool at a Gitea
@@ -976,6 +979,28 @@ async def execute(system, line: str) -> Output:
             out = await gitea_lines(system, rest)
         elif cmd in ("pictures", "picture", "books"):
             out = await picture_lines(system, rest)
+        elif cmd in ("budget", "budgets"):
+            parts = rest.split()
+            by = os.environ.get("USER", "console")
+            if len(parts) == 2 and parts[0] == "reset":
+                out = [f"  {system.budgets.reset(parts[1], by)[1]}"]
+            elif len(parts) == 2:
+                out = [f"  {system.budgets.set(parts[0], parts[1].replace(',', ''), by)[1]}"]
+            else:
+                out = system.budgets.lines()
+        elif cmd == "works":
+            verb, _, arg = rest.strip().partition(" ")
+            w, by = system.works, os.environ.get("USER", "console")
+            if verb == "start" and arg:
+                out = [f"  {w.start(arg.strip(), by)[1]}"]
+            elif verb in ("pause", "resume", "remove") and arg:
+                out = [f"  {w.set_status(arg.strip(), {'pause': 'paused', 'resume': 'active', 'remove': 'removed'}[verb], by)[1]}"]
+            elif verb in ("now", "work", "revisit"):
+                rec = await (w.work(arg.strip(), by=by) if verb == "work" else w.revisit(arg.strip(), by=by) if verb == "revisit"
+                             else w.session(by=by))
+                out = [f"  {rec['line']}"] if rec else ["  nothing to go back to right now"]
+            else:
+                out = w.lines()
         elif cmd == "workbench":
             verb, _, arg = rest.strip().partition(" ")
             if verb in ("try", "experiment", "build", "chain"):

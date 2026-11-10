@@ -23,6 +23,8 @@ from .realm import Realm, RealmTeacher
 from .toolgate import ToolGateTeacher, ToolSwitch
 from .gitea import Apprentice, CodeStudy, CodeTeacher
 from .scratchpad import ScratchPad
+from .budgets import Budgets
+from .works import Works
 from .workbench import Tinkerer, Workbench
 from .imagesets import TEACHER as TEACHER_BOOKS, ImageSets, ImageSetTeacher, Picturebook
 from .vision import GlyphTeacher, Looker, SightTeacher, VisionBank, VisionTeacher
@@ -96,6 +98,7 @@ class System:
         self.guardian = Guardian(self.directives, self.store, self.bus, self.state_dir)
         self.knowledge = KnowledgeStore(self.store.db)  # what research has taught the mesh
         self.encoder = HashingEncoder(self.directives.nodes.input_dim)
+        self.budgets = Budgets(self)       # node budgets a person set from the web page (budgets.py, P4)
         self.registry = NodeRegistry(self.store, self.bus, self.state_dir / "nodes", self.guardian.audit,
                                      self.backend)
         self.tools = ToolRegistry(self.root, self.directives.tools.plugin_dirs, self.store)
@@ -160,6 +163,7 @@ class System:
                                  if getattr(m, "api_key_env", "")} | {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "NEUROMESH_TOKEN"}
         self.scratch = ScratchPad(self)       # code it writes; checked; it runs only once a person approves it (P20)
         self.workbench = Workbench(self)      # programs it builds by itself from the code it studied (workbench.py)
+        self.works = Works(self)              # earlier work it goes back to, and long-term projects of its own (works.py)
         self.tutor = Tutor(self)              # when idle, its Ollama teachers set it orders and mark them (P22)
         self.rewards = Rewards(self)          # people reward and punish what it does, and steer it (P23)
         self.projects = Projects(self)        # a coding project in Gitea, with objectives people set (P20)
@@ -173,6 +177,7 @@ class System:
         self.bus.listen(self.tooldoctor.on_event)
         self.bus.listen(self.scratch.on_event)
         self.bus.listen(self.workbench.on_event)
+        self.bus.listen(self.works.on_event)
         self.bus.listen(self.journal.on_event)
         for cap in self.capabilities:  # what people taught, exactly as they put it, stands (P1)
             for ex in self.store.examples(cap):

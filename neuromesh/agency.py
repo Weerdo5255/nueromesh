@@ -23,12 +23,22 @@ picks a mode:
                  chosen by its curiosity (curiosity.py), and every objective says why
     ruminate     think again about recent answers it was unsure of or could not give: what would it
                  say now? It notes what changed
+    look         its optical nodes: a lesson from a picture book (imagesets.py: its sight node, glyph node and
+                 reader, with an exam every few lessons), or practice reading glyphs it draws (vision.py)
+    code         its coder nodes: an experiment on its workbench - a whole program built from code it studied,
+                 checked and run as P20 allows (workbench.py) - or practice writing code (scratchpad.py)
+    reflect      its thinking nodes: put what its memory nodes hold now into thoughts, opinions and desires of
+                 its own (thinking.py); the desires become aims it may pursue
+    revisit      go back to earlier work and improve it, or take the next step of a long-term project of its
+                 own (works.py): a program that was incomplete, code that failed, a tool that falls short, an
+                 objective that ended short
     rest         nothing is worth the budget right now
 
 The Director is director-0, the primary director node (directors.py), and its mood shapes it: the
 agency node reads the mood as part of its situation (a good mood reads up and practises more; a
 tense, low or wary one checks what it already holds instead of reaching outside), good spirits
-explore more, high arousal decides sooner. When two modes are both worth doing, a duplicate of the
+explore more, high arousal decides sooner. Its ego has a say too (ego.py): what it is fascinated by comes
+first among the topics and aims it could take up, and the decision says so. When two modes are both worth doing, a duplicate of the
 director takes the second one alongside it.
 
 A neural node sits in front of the Director: the agency node, an internal capability like the
@@ -61,17 +71,19 @@ from .tasks import DIRECT
 from .teachers import Lesson, Teacher
 
 AGENCY = "agency"
-MODES = ("research", "practise", "examine", "improve", "consolidate", "build", "experiment", "pursue", "ruminate", "rest")
+MODES = ("research", "practise", "examine", "improve", "consolidate", "build", "experiment", "pursue", "ruminate",
+         "look", "code", "reflect", "revisit", "rest")
 TASK_MODES = ("research", "practise", "improve")
 FEATURES = ("skills", "gap", "topics", "research", "exams", "scores", "memory", "last", "streak", "budget",
-            "selftasks", "mood", "needs", "newtools", "aims", "doubts")
+            "selftasks", "mood", "needs", "newtools", "aims", "doubts", "sight", "coding", "thoughts", "works")
 MOODS = ("steady", "upbeat", "content", "alert", "tense", "subdued", "wary")  # the temperament's moods
 VALUES = {"skills": ("weak", "ok", "none"), "gap": ("none", "small", "large"), "topics": ("none", "some", "many"),
           "research": ("ready", "off", "spent"), "exams": ("due", "fresh", "none"), "scores": ("low", "high", "none"),
           "memory": ("failing", "unverified", "ok", "none"), "last": MODES + ("none",),
           "streak": ("one", "two", "many"), "budget": ("ok", "low"), "selftasks": ("none", "some", "full"),
           "mood": MOODS, "needs": ("none", "some", "many"), "newtools": ("none", "fresh"), "aims": ("none", "some", "gaps"),
-          "doubts": ("none", "some")}
+          "doubts": ("none", "some"), "sight": ("none", "lessons", "practice"), "coding": ("none", "ready"),
+          "thoughts": ("none", "due"), "works": ("none", "due")}
 WHY = {"research": "there are topics to read up on", "improve": "a skill is below its target",
        "examine": "an exam is due", "practise": "its exam scores are low",
        "consolidate": "memory nodes need checking",
@@ -79,14 +91,19 @@ WHY = {"research": "there are topics to read up on", "improve": "a skill is belo
        "experiment": "a tool it wrote has not been tried out yet",
        "pursue": "there is something it wants to understand properly, or find out",
        "ruminate": "some of its recent answers deserve a second thought",
+       "look": "its optical nodes have pictures to learn from",
+       "code": "its coder nodes have studied code to build programs from",
+       "reflect": "its memory holds more than its thinking nodes have thought about",
+       "revisit": "earlier work of its own is worth going back to",
        "rest": "nothing is worth the budget right now"}
 # How the mood moves the drives (only of modes already worth something; rest always can).
-MOOD_DRIVES = {"upbeat": {"research": 0.15, "practise": 0.05, "build": 0.1, "pursue": 0.1},
-               "content": {"research": 0.08, "experiment": 0.05, "pursue": 0.05},
-               "alert": {"examine": 0.08, "consolidate": 0.05, "experiment": 0.05, "ruminate": 0.05},
-               "tense": {"consolidate": 0.15, "examine": 0.1, "research": -0.1, "build": -0.1, "ruminate": 0.15},
-               "subdued": {"rest": 0.3, "research": -0.1, "build": -0.1, "ruminate": 0.1},
-               "wary": {"consolidate": 0.2, "research": -0.3, "build": -0.5, "pursue": -0.6, "ruminate": 0.1}}
+MOOD_DRIVES = {"upbeat": {"research": 0.15, "practise": 0.05, "build": 0.1, "pursue": 0.1, "code": 0.1, "look": 0.05},
+               "content": {"research": 0.08, "experiment": 0.05, "pursue": 0.05, "reflect": 0.08, "revisit": 0.05},
+               "alert": {"examine": 0.08, "consolidate": 0.05, "experiment": 0.05, "ruminate": 0.05, "revisit": 0.05},
+               "tense": {"consolidate": 0.15, "examine": 0.1, "research": -0.1, "build": -0.1, "ruminate": 0.15, "revisit": 0.1},
+               "subdued": {"rest": 0.3, "research": -0.1, "build": -0.1, "ruminate": 0.1, "code": -0.1},
+               "wary": {"consolidate": 0.2, "research": -0.3, "build": -0.5, "pursue": -0.6, "ruminate": 0.1, "reflect": 0.1,
+                        "code": -0.2}}
 MOOD_WHY = {"upbeat": "it is in good spirits, so it reads up and practises",
             "content": "it is content, so it follows its curiosity",
             "alert": "it is alert, so it measures and checks itself",
@@ -141,6 +158,14 @@ def drives(f: dict) -> dict[str, float]:
         d["pursue"] = 0.7
     if f.get("doubts") == "some":                                                            # think it over again
         d["ruminate"] = 0.5
+    if f.get("sight") in ("lessons", "practice"):                                            # its optical nodes
+        d["look"] = 0.5 if f["sight"] == "lessons" else 0.3
+    if f.get("coding") == "ready":                                                           # its coder nodes
+        d["code"] = 0.55
+    if f.get("thoughts") == "due":                                                           # its thinking nodes
+        d["reflect"] = 0.45
+    if f.get("works") == "due":                                                              # what it made before
+        d["revisit"] = 0.6
     last = f.get("last")
     if last in d and last != "rest":                                                         # variety
         d[last] -= {"one": 0.0, "two": 0.15, "many": 0.35}.get(f.get("streak"), 0.0)
@@ -203,6 +228,14 @@ def feasible(f: dict) -> set[str]:
         out.add("pursue")
     if f.get("doubts") == "some":
         out.add("ruminate")
+    if f.get("sight") in ("lessons", "practice"):
+        out.add("look")
+    if f.get("coding") == "ready":
+        out.add("code")
+    if f.get("thoughts") == "due":
+        out.add("reflect")
+    if f.get("works") == "due":
+        out.add("revisit")
     return out
 
 
@@ -211,6 +244,15 @@ class AgencyTeacher(Teacher):
     situations for every mode. A specialist, asked only by the agency capability."""
     name = "agency"
     specialist = True
+
+    # the flag that makes each of these modes possible, and what every flag reads when nothing is going on
+    _HINT = {"look": {"sight": "lessons"}, "code": {"coding": "ready"}, "reflect": {"thoughts": "due"},
+             "revisit": {"works": "due"}, "practise": {"scores": "low", "exams": "fresh", "selftasks": "none"},
+             "research": {"research": "ready", "topics": "some", "selftasks": "none"}, "ruminate": {"doubts": "some"}}
+    _CALM = (("skills", "ok"), ("topics", "none"), ("exams", "none"), ("scores", "none"), ("memory", "ok"), ("needs", "none"),
+             ("newtools", "none"), ("aims", "none"), ("doubts", "none"), ("sight", "none"), ("coding", "none"),
+             ("thoughts", "none"), ("works", "none"), ("mood", "steady"))
+    _QUIET = [k for k, _ in _CALM]
 
     def __init__(self, seed: int | None = None):
         self.rng = random.Random(seed)
@@ -236,6 +278,14 @@ class AgencyTeacher(Teacher):
             f = {k: self.rng.choice(v) for k, v in VALUES.items()}
             if f["skills"] != "weak":
                 f["gap"] = "none"
+            if label != "rest" and self.rng.random() < 0.8:  # most situations have budget left, and a quiet one
+                f["budget"] = "ok"                              # shows what a mode's own flag is worth
+                f.update(self._HINT.get(label, {}))
+                if label == "look" and self.rng.random() < 0.5:
+                    f["sight"] = "practice"
+                for k in self.rng.sample(self._QUIET, self.rng.randrange(0, len(self._QUIET))):
+                    if k not in self._HINT.get(label, {}):
+                        f[k] = dict(self._CALM)[k]
             if policy(f)[0] == label:
                 text = situation_text(f)
                 if text not in out:
@@ -271,6 +321,7 @@ class Director(Agent):
         self.history: deque = deque(state.get("history", []), maxlen=60)
         self.verified_at: float = state.get("verified_at", 0.0)
         self.failed_topics: list = state.get("failed_topics", [])
+        self.reflected: dict = state.get("reflected", {})      # what its memory held when its thinking nodes last reflected
         # targets that did not pay off rest for a while ("practise:gsm8k" -> until), so it does not loop
         self.cooldown: dict[str, float] = {k: v for k, v in state.get("cooldown", {}).items() if v > time.time()}
         self.recent: deque = deque(t for t in state.get("recent", []) if time.time() - t < 3600)
@@ -293,7 +344,8 @@ class Director(Agent):
         state = {"pinned": self.pinned, "enabled": self.override, "self_tasks": self.self_tasks,
                  "self_objectives": self.self_objectives, "values": self.values,
                  "counts": self.counts, "history": list(self.history), "verified_at": self.verified_at,
-                 "failed_topics": self.failed_topics[-50:], "recent": list(self.recent), "cooldown": self.cooldown}
+                 "failed_topics": self.failed_topics[-50:], "recent": list(self.recent), "cooldown": self.cooldown,
+                 "reflected": self.reflected}
         self.sys.store.set_kv("agency.state", json.dumps(state))
 
     def set_mode(self, mode: str, by: str) -> tuple[bool, str]:
@@ -341,7 +393,12 @@ class Director(Agent):
                 "build": "writes a tool for requests no tool could meet (and asks permission to use it)",
                 "experiment": "tries out a tool it wrote",
                 "pursue": "sets itself a long-term objective and works on it by asking itself",
-                "ruminate": "thinks again about recent answers it was unsure of", "rest": "rests"}[mode]
+                "ruminate": "thinks again about recent answers it was unsure of",
+                "look": "has its optical nodes learn from a picture book, or practise reading",
+                "code": "has its coder nodes build a program on its workbench, or practise writing code",
+                "reflect": "has its thinking nodes put what its memory holds into thoughts",
+                "revisit": "goes back to earlier work, or a long-term project of its own, and improves it",
+                "rest": "rests"}[mode]
 
     # ---------------------------------------------------------------- the loop
     async def step(self) -> None:
@@ -445,6 +502,32 @@ class Director(Agent):
         aims = [a for a in self.aims() if not cool("pursue", a["target"].lower())] \
             if book.enabled and len(mine) < pol.max_self_objectives and book.budget_left() > 0 else []
         doubts = book.doubts(5) if book.enabled and book.budget_left() > 0 else []
+        # its optical, coder and thinking nodes, its earlier work, and its ego (see wiring())
+        books, eye = s.imagesets, s.vision
+        sight = "none"
+        if not cool("look", "vision") and eye.enabled:
+            if books.enabled and any(books.practice(n) for n in books.books if n not in books.busy):
+                sight = "lessons"
+            elif "glyphs" in s.capabilities and eye.can_draw and eye.fonts:
+                sight = "practice"
+        bench = s.workbench
+        has_code = s.store.db.execute("SELECT 1 FROM code_examples LIMIT 1").fetchone() is not None
+        coding = "ready" if (not cool("code", "workbench") and bench.enabled and not bench.busy
+                             and (bench.next_example() is not None or has_code)) else "none"
+        think = s.thinking
+        held = self._facts()
+        thoughts = "due" if (think.enabled and held and held != self.reflected.get("facts")
+                             and not cool("reflect", "thoughts")) else "none"
+        works = s.works.due() if s.works.enabled and not cool("revisit", "its works") else {"projects": [], "candidates": []}
+        fascinated = sorted(s.ego.fascinations().values(), key=lambda v: -v.get("times", 0)) if s.ego.enabled else []
+        if fascinated:  # its ego's say: what it is fascinated by comes first (a stable sort: otherwise as before)
+            names = [str(v["name"]).lower() for v in fascinated]
+            pull = lambda text: 0 if any(n in str(text).lower() for n in names) else 1  # noqa: E731
+            topics = sorted(topics, key=lambda t: pull(t[0]))
+            aims = sorted(aims, key=lambda a: pull(a.get("area") or a["target"]))
+            for a in aims[:1]:
+                if pull(a.get("area") or a["target"]) == 0 and "its ego is fascinated" not in a["why"]:
+                    a["why"] = f"{a['why']}; its ego is fascinated by it"
         flags = {
             "skills": "weak" if weak else ("ok" if any(s.registry.champion(c) for c in s.capabilities if c != AGENCY) else "none"),
             "gap": gap, "topics": "none" if not topics else ("many" if len(topics) >= 3 else "some"),
@@ -460,11 +543,14 @@ class Director(Agent):
             "newtools": "fresh" if fresh else "none",
             "aims": ("gaps" if aims[0]["kind"] == "gap" else "some") if aims else "none",
             "doubts": "some" if doubts and not cool("ruminate", "recent answers") else "none",
+            "sight": sight, "coding": coding, "thoughts": thoughts,
+            "works": "due" if works["projects"] or works["candidates"] else "none",
         }
         allowed = set(pol.modes) | {"rest"}
         return {"flags": flags, "text": situation_text(flags), "weak": weak, "topics": topics, "due": due,
                 "practice": practice, "feasible": feasible(flags) & allowed, "any_suite": any_suite,
-                "needs": needs, "fresh": fresh, "aims": aims, "doubts": doubts}
+                "needs": needs, "fresh": fresh, "aims": aims, "doubts": doubts, "works": works,
+                "fascinated": [v["name"] for v in fascinated[:5]]}
 
     def topics(self) -> list[tuple[str, str]]:
         s = self.sys
@@ -601,6 +687,8 @@ class Director(Agent):
             return sit["aims"][0]["target"] if sit.get("aims") else None
         if mode == "ruminate":
             return "recent answers" if sit.get("doubts") else None
+        if mode in ("look", "code", "reflect", "revisit"):
+            return {"look": "vision", "code": "workbench", "reflect": "thoughts", "revisit": "its works"}[mode]
         pick = {"research": sit["topics"], "practise": sit["practice"], "improve": sit["weak"], "examine": sit["due"]}.get(mode)
         return pick[0][0] if pick else None
 
@@ -711,8 +799,108 @@ class Director(Agent):
             record["summary"] = (f"thought again about {len(got)} recent answer{'s' if len(got) != 1 else ''}: "
                                  + (", ".join(f"{verdicts.count(v)} {v}" for v in dict.fromkeys(verdicts)) or "nothing to rethink"))
             record["value"] = round(min(1.0, 0.25 * still + 0.45 * moved), 3) if got else 0.0
+        elif mode == "look":  # its optical nodes
+            record["target"] = "vision"
+            if sit["flags"]["sight"] == "lessons":
+                res = await s.imagesets.lesson(by=record["by"])
+                record["summary"] = res["line"] if res else "no picture book had a lesson for it now"
+                record["value"] = 0.0 if not res else round(min(1.0, 0.25 + 0.6 * res["learned"] / max(1, res.get("of") or 1)
+                                                                + (0.2 if res.get("exam") else 0.0)), 3)
+            else:
+                made = await s.vision.practice()
+                record["summary"] = f"practised reading: drew and learned {made} glyph(s)" if made else "had no glyphs to practise on"
+                record["value"] = 0.5 if made else 0.0
+        elif mode == "code":  # its coder nodes
+            record["target"] = "workbench"
+            rec = await s.workbench.experiment(by=record["by"])
+            if rec is not None:
+                record["summary"] = rec["line"]
+                record["value"] = {"passed": 0.9, "ran": 0.8, "checks out": 0.6, "failed": 0.45, "incomplete": 0.3}.get(rec["status"], 0.1)
+            else:
+                rec = await s.scratch.practice()
+                if rec is None:
+                    record["summary"], record["value"] = "had nothing to build from or practise on", 0.0
+                else:
+                    record["summary"] = (f"practised writing code for '{rec['purpose'][:60]}' ({rec['repo']}): "
+                                         + ("it checks out" if rec["ok"] else "nothing it could write" if rec["ok"] is None else "it does not check out")
+                                         + (", the same kind of code people wrote" if rec.get("same_kind") else ""))
+                    record["value"] = 0.2 + (0.3 if rec["ok"] else 0.0) + (0.2 if rec.get("same_kind") else 0.0)
+        elif mode == "reflect":  # its thinking nodes
+            record["target"] = "thoughts"
+            changed = await s.thinking.form(force=True)
+            self.reflected = {"facts": self._facts(), "ts": round(time.time(), 1)}
+            n = changed.get("formed", 0) + changed.get("reformed", 0)
+            record["summary"] = (f"its thinking nodes reflected on what its memory holds: {changed.get('formed', 0)} new thought(s), "
+                                 f"{changed.get('reformed', 0)} thought again, {changed.get('dropped', 0)} let go; "
+                                 f"{len(s.thinking.thoughts)} in all") if n or changed.get("dropped") else \
+                "its thinking nodes reflected: nothing new to think yet"
+            record["value"] = round(min(1.0, 0.3 * n), 3) if n else 0.1
+        elif mode == "revisit":  # earlier work, and its long-term projects
+            record["target"] = "its works"
+            rec = await s.works.session(by=record["by"])
+            if rec is None:
+                record["summary"], record["value"] = "had nothing to go back to after all", 0.0
+            else:
+                record["summary"] = rec["line"]
+                record["task"] = rec["key"]
+                record["value"] = 0.85 if rec["improved"] else 0.3
         else:
             record["summary"] = "rests"
+
+    # ------------------------------------------------------------------ what it can call on
+    def _wiring_cached(self) -> list[dict]:
+        at, rows = getattr(self, "_wired", (0.0, []))
+        if time.time() - at > 5:
+            try:
+                rows = self.wiring()
+            except Exception as exc:  # status must never fail on this
+                self.log.debug("wiring: %s", exc)
+            self._wired = (time.time(), rows)
+        return rows
+
+    def wiring(self) -> list[dict]:
+        """Its optical, coder, thinking and ego nodes as its director sees them: which nodes, whether each is
+        wired in (it exists and is switched on), what the director can have it do, and whether that is possible now."""
+        s = self.sys
+        allowed = set(self.pol.modes)
+
+        def nodes(*caps):
+            out = []
+            for c in caps:
+                if c in s.capabilities:
+                    champ = s.registry.champion(c)
+                    out.append({"capability": c, "node": champ.id if champ else None,
+                                "holdout": champ.metrics.get("holdout_acc") if champ else None})
+            return out
+        f = self.situation()["flags"]
+        think_nodes = [{"capability": "thinking", "node": n.id, "holdout": None} for n in list(s.thinking.nodes.values())[:6]]
+        rows = [
+            ("vision", "Optical nodes", nodes("sight", "glyphs"), s.vision.enabled, ["look"], f["sight"] != "none",
+             {"lessons": "a picture book has practice images for a lesson", "practice": "it can draw glyphs to practise reading",
+              "none": "no picture book yet, and no fonts to draw glyphs with" if s.vision.enabled else "[vision] is off"}[f["sight"]],
+             "a lesson from a picture book, or practice reading"),
+            ("coder", "Coder nodes", nodes("codekind", "coder", "planner"), s.scratch.enabled and s.workbench.enabled,
+             ["code", "build", "experiment", "revisit"], f["coding"] == "ready" or f["needs"] != "none" or f["newtools"] == "fresh",
+             "it has studied code to build programs from" if f["coding"] == "ready" else
+             "it has studied no code yet (Gitea), and no request needs a tool",
+             "a program on its workbench, practice, a tool for unmet requests, a try-out of a tool it wrote"),
+            ("thinker", "Thinking nodes", think_nodes, s.thinking.enabled, ["reflect", "pursue", "ruminate"],
+             f["thoughts"] == "due" or f["aims"] != "none" or f["doubts"] == "some",
+             "its memory holds more than it has thought about" if f["thoughts"] == "due" else
+             "its desires and doubts give it aims" if f["aims"] != "none" or f["doubts"] == "some" else
+             "nothing new in memory to think about",
+             "new thoughts from what memory holds; its desires become objectives; second thoughts"),
+            ("ego", "Ego node", nodes("ego"), s.ego.enabled, ["every decision"], s.ego.enabled,
+             (f"fascinated by {', '.join(v['name'] for v in list(s.ego.fascinations().values())[:3])}: those come first"
+              if s.ego.enabled and s.ego.fascinations() else "its mood shapes every choice; nothing fascinates it yet")
+             if s.ego.enabled else "[ego] is off",
+             "its mood shapes the drives; what it is fascinated by comes first among topics and aims"),
+        ]
+        return [{"family": fam, "title": title, "nodes": ns, "wired": bool(on),
+                 "modes": [m for m in modes if m in allowed or m == "every decision"],
+                 "blocked": [m for m in modes if m not in allowed and m != "every decision"],
+                 "available": bool(on and avail), "now": now, "does": does}
+                for fam, title, ns, on, modes, avail, now, does in rows]
 
     def _facts(self) -> int:
         return sum(len(n.facts()) for n in self.sys.memory.fact_nodes()) if self.sys.memory.enabled else 0
@@ -867,7 +1055,8 @@ class Director(Agent):
         not pay off rest for a while."""
         s, pol = self.sys, self.pol
         mode = entry["mode"]
-        if target and mode in ("research", "practise", "improve", "examine", "build", "experiment", "pursue", "ruminate") \
+        if target and mode in ("research", "practise", "improve", "examine", "build", "experiment", "pursue", "ruminate",
+                               "look", "code", "reflect", "revisit") \
                 and value < pol.good_value:
             key = f"{mode}:{target.lower() if mode in ('research', 'pursue') else target}"
             self.cooldown[key] = time.time() + pol.retry_after_seconds
@@ -917,5 +1106,5 @@ class Director(Agent):
                           "serves": champ.metrics.get("serves", 0),
                           "trusted": acc is not None and acc >= s.directives.nodes.serve_min_accuracy} if champ else None),
                 "examples": s.store.count(AGENCY) if AGENCY in s.capabilities else 0,
-                "verified_at": self.verified_at}
+                "verified_at": self.verified_at, "wiring": self._wiring_cached()}
 

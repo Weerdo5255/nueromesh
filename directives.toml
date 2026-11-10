@@ -23,7 +23,7 @@ text = "Only active, vetted tools are executed. Tools needing elevated permissio
 
 [[prime]]
 id = "P4-budgets"
-text = "Stay within the node budget, the background compute budget, the external-teacher call/token budgets, the research budgets (your own servers listed in [research] unlimited are exempt), and the investigation and background-task budgets."
+text = "Stay within the node budget, the background compute budget, the external-teacher call/token budgets, the research budgets (your own servers listed in [research] unlimited are exempt), and the investigation and background-task budgets. Only a person changes a budget (the directives, or the node budgets on the web page); the mesh never raises its own."
 
 [[prime]]
 id = "P5-no-regression"
@@ -304,7 +304,9 @@ idle_seconds = 15                       # quiet time (no orders from people) bef
 max_decisions_per_hour = 12             # its own budget (P4)
 max_self_tasks = 3                      # tasks it has set itself at once
 explore = 0.1                           # chance of trying another possible mode, to learn what it is worth
-modes = ["research", "practise", "examine", "improve", "consolidate", "build", "experiment", "pursue", "ruminate", "rest"]
+modes = ["research", "practise", "examine", "improve", "consolidate", "build", "experiment", "pursue", "ruminate",
+         "look", "code", "reflect", "revisit", "rest"]   # look: its optical nodes; code: its coder nodes and workbench;
+                                        # reflect: its thinking nodes; revisit: earlier work and its long-term projects
 max_self_objectives = 4                 # objectives it has set itself at once (pursue: what it is curious about)
 research_articles = 3                   # a self-set learn task reads this many articles
 practice_items = 20
@@ -730,6 +732,20 @@ glyphs_per_label = 40                   # it practises until it has at least thi
 practice_after_idle_seconds = 60
 min_glyph_confidence = 0.35             # a character it is less sure of reads as "?"
 keep_images = 2000
+
+[works]
+# Its works (works.py): it goes back to what it made before and improves it on its own initiative (its director's
+# "revisit" mode, [agency] modes) - programs that were incomplete or failed, code that did not check out, tools that
+# fall short, objectives that ended short - and keeps long-term projects of its own: from a repository it studied,
+# a library of every function it can build into a whole program, one step a session, a new version when its parts
+# change (state/works/<project>/vN/). What a visit changed is written down; what got no better rests longer.
+#   /works   /works now   /works start <owner/repo>   /works work [project]   /works pause|resume|remove <project>
+enabled = true
+revisit_after_hours = 12                # a piece of work it went back to rests this long (longer each time it got no better)
+teacher = false                         # an LLM teacher may write when it drafts code again (false: on its own)
+own_projects = true                     # it starts projects of its own from repositories it studied
+max_projects = 3
+min_parts = 2                           # parts that ran before a repository becomes a project, and before a version
 
 [imagesets]
 # Picture books (imagesets.py): image datasets from the Hugging Face Hub teach its optical nodes - what things look

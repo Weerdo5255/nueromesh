@@ -72,7 +72,10 @@ it learns from their practice images, is graded on exam images it never learns f
 teach is merged into its memory nodes as picture memories, which it recalls first when it looks at an
 image. And it builds whole programs by itself, with no teacher, from the functions it studies in your
 Gitea (read every couple of minutes, what changed first): their helpers, imports and constants found in
-the repository, their doc examples and your tests as checks, run only as you allow.
+the repository, their doc examples and your tests as checks, run only as you allow. Its director can call on
+its optical, coder, thinking and ego nodes, and goes back to what it made before - programs, code, tools,
+objectives - to improve it; it keeps long-term projects of its own, building a library from each repository
+it studied, version after version. Node budgets can be set from the web page.
 Everything happens inside a set of explicit directives that a Guardian enforces in code.
 
 ```
@@ -326,7 +329,17 @@ looks at its situation and picks a mode:
 | experiment | tries out a tool it wrote that you approved, and refines it if it falls short |
 | pursue | sets itself a long-term objective, chosen by its [curiosity](#curiosity-and-the-objectives-it-sets-itself): to find out what it lacks (a question it could not answer, an answer you marked wrong, a question an objective left open or its sources disagree on, a name it knows only from a mention) or to understand an area of interest (yours, a desire its thinking nodes hold, one people keep asking about, a topic it read up on). Every objective it sets itself says why (see [Objectives](#objectives-long-term-aims-it-pursues-by-asking-itself)) |
 | ruminate | thinks again about recent answers it was unsure of or could not give, and notes what it would say now |
+| look | its **optical nodes**: a lesson from a picture book (its sight node, glyph node and reader, with an exam every few lessons), or practice reading glyphs it draws |
+| code | its **coder nodes**: an experiment on its workbench (a whole program built from code it studied, checked, run as P20 allows), or practice writing code |
+| reflect | its **thinking nodes**: puts what its memory nodes hold now into thoughts, opinions and desires of its own; the desires become aims it may pursue |
+| revisit | goes back to earlier work and improves it, or takes the next step of a long-term project of its own (see [Long-term work](#long-term-work-going-back-to-what-it-made)) |
 | rest | nothing is worth its budget right now |
+
+**What the director can call on.** Its optical, coder, thinking and ego nodes are all wired to it, and the Mind
+page's Initiative shows each family (`director.wiring()`): which nodes it has, whether it is switched on, which
+modes use it, and whether there is something for it to do now and why (not). The **ego** has a say in every
+decision: its mood shapes the drives, and what it is fascinated by comes first among the topics and aims the
+director could take up ("its ego is fascinated by it"). Pin any mode to have that family work now.
 
 **The agency node** sits in front of the Director. It is an internal capability like the
 emotional engines, and it reads the situation as a handful of words: skills below target and by
@@ -682,6 +695,39 @@ and you see on its approval. Without it, the mesh still drafts changes and shows
 says it cannot push them. The tool refuses any branch that doesn't start with `branch_prefix`, or that is
 the branch it read from. A change you approved is pushed exactly as you saw it: its digest is checked
 before the push, and a change edited since is not pushed.
+
+### Long-term work: going back to what it made
+
+Everything it makes is kept, and its director goes back to it (`works.py`, the **revisit** mode; the Code
+view's **Long-term work**; `/works`):
+
+| earlier work | going back to it |
+|---|---|
+| a program its workbench built that was incomplete, failed its checks or did not check out | built again from what it has studied since: the helper it could not find may be there now, people may have written a test |
+| code it wrote in the scratch pad that did not check out, or failed when it ran | drafted again from what it knows now (recipes, its workbench's programs, the closest example); the earlier version is kept beside it; code you wrote or approved is never changed |
+| a tool it wrote that fell short when it was tried | tried out again on fresh probes and refined (a new version asks permission again, P15) |
+| an objective that ended short | tried again, planned afresh with what it knows now |
+
+A piece of work is due when it has never been revisited, when what it was made from changed (its repository was
+studied again and differs), or after `[works] revisit_after_hours` (12; doubling each time a visit made it no
+better, so it does not loop). Every visit is written down: before, after, better or not.
+
+**Long-term projects of its own.** Once a repository it studied has two programs that ran, it starts a project
+(or you start one: **Start a project from** a repository): *a library of every function of the repository it can
+build into a whole program, in one module with all their checks*. A project is never done in one go; each
+session takes one step and says what it means to do next:
+
+```
+work-1  A library from ann/numkit
+  build a part      a function it has not built a program from yet (its workbench)
+  mend a part       one that was incomplete or failed, built again
+  put it together   a new version when its parts changed: state/works/work-1/v2/numkit_library.py + NOTES.md,
+                    checked, in the scratch pad (it runs only as P20 allows), what it printed noted against v2
+  wait              every part is built and together: until the repository changes
+```
+
+When the repository grows or changes, the project has more to do and a new version follows; earlier versions
+stay on disk. You can have it work now, pause, resume or remove a project. At most `[works] max_projects` (3).
 
 ### Tools it writes: the toolsmith and coder nodes
 When requests go unmet, the mesh can write a tool for them. Nothing it writes runs until a person
@@ -1776,6 +1822,8 @@ write a python function that counts vowels    /code    /code show code-1    /cod
 /image ~/Pictures/sign.png    /images    /image show img-1    /image is img-1 street sign    /image says img-1 Harbour 2 km    what does img-1 say?
 /pictures    /pictures get cifar10    /pictures get zalando-datasets/fashion_mnist 1000    /pictures lesson    /pictures exam cifar10    /pictures more mnist 2000
 /workbench    /workbench try    /workbench try 42    /workbench chain    /workbench show 7
+/works    /works now    /works start ann/textkit    /works work work-1    /works pause work-1
+/budgets    /budget nodes.max_nodes 60    /budget evolution.max_params 4000000    /budget reset all
 /lessons    /lesson question    /lesson code
 /code autorun harmless    /code autorun always    /code autorun ask    /code tool code-3    /code tools auto    /web    /web inq-3
 /reward last 2 a clear answer    /punish calculator    /reward reading about astronomy 3    /rewards
@@ -1865,6 +1913,11 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
   strongest synapses between them (violet excites, pink inhibits, thicker is stronger) and how many
   weaker ones are left out. **Fire it with a text** opens the node in the Live page's closer look.
   Capabilities with no node yet, and the tools, are listed below.
+- **Nodes** also has **Node budgets**: how many nodes it may keep at once, challengers per capability, how wide,
+  deep and large a node may grow, facts a memory node, short-term memory nodes, thinking and dream nodes, director
+  nodes. Each shows what is in use now; type a number and **Set**. A change takes effect at once, is audited
+  (`budget.set`), and holds across restarts until you **Set it back** to what the directives say. Only a person
+  changes a budget (P4): the mesh never raises its own. `/budgets`, `/budget nodes.max_nodes 60`.
 - **Nodes**: every capability's champion, challengers, held-out accuracy and generation, the
   champion's size over its generations, roll back; what each agent has done.
 - **Memory**: memory nodes with their size now and when first learned, teach a fact, run every
@@ -1981,6 +2034,10 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | GET | `/pictures/search?q=`, `/pictures/inspect?dataset=&config=&split=` | image datasets on the Hub; one's columns, first images and a guess at how to read it |
 | GET | `/pictures/file?book=&sha=` | an image from a picture book (`/images/file?sha=` finds one too: a picture memory's question) |
 | POST | `/pictures` | `{"get": "cifar10"}`, `{"dataset": "owner/name", "image", "answer", "kind", "limit", "name"}`, `{"get": name, "more": true}`, `{"lesson": name?}`, `{"exam": name}`, `{"remove": name}` |
+| GET | `/budgets` | node budgets: each one's value, what the directives say, what is in use now, who set it |
+| POST | `/budgets` | `{"path": "nodes.max_nodes", "value": 60}` sets one (a person only; at once, audited, kept across restarts); `{"reset": path \| "all"}` |
+| GET | `/works` | earlier work worth going back to, its long-term projects, what its visits changed |
+| POST | `/works` | `{"session": true}`, `{"revisit": key}`, `{"work": project}`, `{"start": "owner/repo"}`, `{"project": id, "status": "active" \| "paused" \| "removed"}` |
 | GET | `/workbench`, `/workbench/program?id=` | programs it built by itself from the code it studied; one program's code and what its run printed |
 | POST | `/workbench` | `{"experiment": true, "example": id?, "chain": bool?}`: build one now |
 | GET | `/network` | the whole network: every family (where it works, its nodes with their status, sizes, weights and what the background is doing to them), tools, directors, teachers and the work running now; `?detail=1` adds every node's layers: the strongest neurons of each and the strongest synapses between them |
@@ -2454,6 +2511,8 @@ neuromesh/
   imaging.py             images without dependencies: PNG/BMP/PPM and baseline JPEG decoding, what the sight node sees, lines and glyphs
   vision.py              its optical nodes: the sight node, the reader and its glyph node, their teachers, the Looker (P21)
   imagesets.py           picture books: image datasets from the Hugging Face Hub, lessons and exams, picture memories, the Picture-book agent
+  works.py               earlier work it goes back to and improves on its own initiative; long-term projects of its own
+  budgets.py             node budgets a person sets from the web page: applied at once, audited, kept across restarts
   workbench.py           whole programs it builds by itself from the code it studied in Gitea, checked and run as P20 allows, the Tinkerer
   tutor.py               lessons: its Ollama teachers set it orders when idle and mark them (P22)
   rewards.py             rewards and punishments: the ledger of directions, the reward node, their effects and pull (P23)
@@ -2481,7 +2540,7 @@ neuromesh/
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   339 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   344 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -2562,7 +2621,13 @@ tests/                   339 tests: nodes, guardian, LLM wire formats and a mock
                          the workbench (whole programs from studied functions with their helpers, imports,
                          constants, doc examples and people's tests; incomplete ones say what is missing;
                          run only as P20 allows; chains; its programs used when there is no teacher;
-                         practice without the teacher; a Gitea repository that changed read first)
+                         practice without the teacher; a Gitea repository that changed read first),
+                         node budgets (set by a person, at once, bounded, audited, kept across restarts, set
+                         back), the director's look, code, reflect and revisit modes and its wiring to its
+                         optical, coder, thinking and ego nodes, and its works (a program gone back to once
+                         its missing helper exists, code written again with the earlier version kept, rests
+                         so it does not loop, projects of its own built session by session into versions,
+                         a new version when the repository grows, pause)
 ```
 
 State lives in `state/` (SQLite database, node weights, log). Delete it to start fresh.

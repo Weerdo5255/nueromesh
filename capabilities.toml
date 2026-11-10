@@ -146,8 +146,9 @@ doask = ["check the build", "answer the question", "fix this", "tell me the tota
 
 [agency]
 answer = "In that situation I would {label} ({description})."
-description = "The mesh's own initiative: given its situation (skills below target, exams due, topics to read up on, memory nodes to check, its budgets), decide what to do next when no one has asked it for anything."
-labels = ["research", "practise", "examine", "improve", "consolidate", "build", "experiment", "pursue", "ruminate", "rest"]
+description = "The mesh's own initiative: given its situation (skills below target, exams due, topics to read up on, memory nodes to check, what its optical, coder and thinking nodes could do, earlier work worth going back to, its budgets), decide what to do next when no one has asked it for anything."
+labels = ["research", "practise", "examine", "improve", "consolidate", "build", "experiment", "pursue", "ruminate", "rest",
+          "look", "code", "reflect", "revisit"]
 open_labels = false
 internal = true
 kind = "agency"
@@ -164,6 +165,10 @@ experiment = "try out a tool it wrote, and refine it if it falls short"
 pursue = "set itself a long-term objective: plan it, and work on it by asking itself"
 ruminate = "think again about recent answers it was unsure of, and what it would say now"
 rest = "do nothing for now"
+look = "have its optical nodes learn: a lesson from a picture book, or practice reading glyphs it draws"
+code = "have its coder nodes build a whole program on its workbench from code it studied, or practise writing code"
+reflect = "have its thinking nodes put what its memory holds now into thoughts of its own"
+revisit = "go back to earlier work - a program, code, a tool, an objective, a long-term project of its own - and improve it"
 
 [ego]
 answer = "In that situation my ego would choose: {label} ({description})."

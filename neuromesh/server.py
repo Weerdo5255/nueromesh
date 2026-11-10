@@ -166,6 +166,10 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                                    "bmp": "image/bmp"}.get(item["ext"], "application/octet-stream"))
         if path == "/workbench":  # programs it builds by itself from the code it studied
             return 200, system.workbench.status()
+        if path == "/budgets":  # node budgets: what each is, what is in use, who set it
+            return 200, system.budgets.status()
+        if path == "/works":  # earlier work it goes back to, and its long-term projects
+            return 200, system.works.status()
         if path == "/workbench/program":  # ?id=: one program: its code and what its run printed
             got = system.workbench.get(int(query.get("id", 0) or 0))
             return (200, got) if got else (404, {"error": "no such program"})
@@ -189,7 +193,8 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, Raw(*got)
         if path == "/code":  # Gitea study, the scratch pad and its practice
             return 200, {"gitea": system.code_study.status(), "scratch": system.scratch.status(),
-                         "tools": system.codetools.status(), "workbench": system.workbench.status()}
+                         "tools": system.codetools.status(), "workbench": system.workbench.status(),
+                         "works": system.works.status()}
         if path == "/websearch":  # questions nobody answered in time, searched with your SearXNG
             return 200, system.websearch.status()
         if path == "/code/item":  # ?id=code-3
@@ -482,6 +487,30 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             except (ValueError, RuntimeError) as exc:
                 return 400, {"ok": False, "message": str(exc)}
             return 400, {"error": "say what to do: get, dataset, lesson, exam or remove"}
+        if path == "/budgets":  # {"path": "nodes.max_nodes", "value": 60} | {"reset": path | "all"}: a person sets a node budget
+            by = str(body.get("by") or "web")
+            if body.get("reset"):
+                ok, msg = system.budgets.reset(str(body["reset"]), by)
+            else:
+                ok, msg = system.budgets.set(str(body.get("path") or ""), body.get("value"), by)
+            return (200 if ok else 400), {"ok": ok, "message": msg, **system.budgets.status()}
+        if path == "/works":  # {"session": true} | {"revisit": key?} | {"work": project?} | {"start": "owner/repo"}
+            #                   {"project": id, "status": "active" | "paused" | "removed"}
+            w, by = system.works, str(body.get("by") or "web")
+            if body.get("start"):
+                ok, msg = w.start(str(body["start"]), by)
+                return (200 if ok else 400), {"ok": ok, "message": msg}
+            if body.get("project"):
+                ok, msg = w.set_status(str(body["project"]), str(body.get("status") or ""), by)
+                return (200 if ok else 400), {"ok": ok, "message": msg}
+            if "work" in body:
+                rec = await w.work(str(body.get("work") or ""), by=by)
+            elif "revisit" in body:
+                rec = await w.revisit(str(body.get("revisit") or ""), by=by)
+            else:
+                rec = await w.session(by=by)
+            return (200 if rec else 400), ({"ok": True, "message": rec["line"], **rec} if rec else
+                                           {"ok": False, "message": "nothing to go back to right now"})
         if path == "/workbench":  # {"experiment": true, "example": id?, "chain": bool?}
             res = await system.workbench.experiment(int(body["example"]) if body.get("example") else None,
                                                     bool(body["chain"]) if "chain" in body else None,

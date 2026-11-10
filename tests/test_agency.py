@@ -25,7 +25,8 @@ AGENCY_ON = {**FAST,
 def flags(**kw):
     f = {"skills": "ok", "gap": "none", "topics": "none", "research": "off", "exams": "none", "scores": "none",
          "memory": "none", "last": "none", "streak": "one", "budget": "ok", "selftasks": "none", "mood": "steady",
-         "needs": "none", "newtools": "none", "aims": "none", "doubts": "none"}
+         "needs": "none", "newtools": "none", "aims": "none", "doubts": "none", "sight": "none", "coding": "none",
+         "thoughts": "none", "works": "none"}
     f.update(kw)
     return f
 
@@ -205,7 +206,7 @@ class AgencyNodeTests(unittest.IsolatedAsyncioTestCase):
             teacher = s.teachers.teachers[AGENCY]
             spec = s.capabilities[AGENCY]
             for mode in MODES:
-                for text in await teacher.generate(spec, mode, 30):
+                for text in await teacher.generate(spec, mode, 60):
                     s.learn(AGENCY, text, mode, "agency")
 
             def trusted():
@@ -219,7 +220,7 @@ class AgencyNodeTests(unittest.IsolatedAsyncioTestCase):
                     break
             if not rec["how"].startswith("agency node"):  # (not sure in this situation yet: a little more practice)
                 for mode in MODES:
-                    for text in await teacher.generate(spec, mode, 30):
+                    for text in await teacher.generate(spec, mode, 60):
                         s.learn(AGENCY, text, mode, "agency")
                 for _ in range(40):
                     await asyncio.sleep(0.5)
