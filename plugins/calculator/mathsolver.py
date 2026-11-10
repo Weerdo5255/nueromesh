@@ -219,7 +219,7 @@ def tokenize(text: str) -> list[tuple[str, object]]:
             if text[i].isspace():
                 i += 1
                 continue
-            raise MathError(f"it does not understand '{text[i]}'")
+            raise MathError(f"it doesn't know what '{text[i]}' means in a calculation")
         i = m.end()
         if m.group("num"):
             raw = m.group("num")
@@ -1670,7 +1670,7 @@ WORDS = [
     (r"\bthe\s+quotient\s+of\s+(\S+)\s+and\s+(\S+)", r"(\1 / \2)"),
     (r"\b(?:the\s+)?remainder\s+(?:of|when)\s+(\S+)\s+(?:is\s+)?divided\s+by\s+(\S+)", r"(\1 % \2)"),
     (r"\b(?:the\s+)?remainder\s+(?:of|when)\s+(\S+)\s+(?:is\s+)?/\s*(\S+)", r"(\1 % \2)"),
-    (r"\b(\d+\s*/\s*\d+)\s+of\s+", r"(\1)*"), (r"\bhalf\s+of\b", "0.5*"), (r"\b(?:double|twice)\b", "2*"), (r"\btriple\b", "3*"),
+    (r"\b(\d+\s*/\s*\d+)\s+of\s+", r"(\1)*"), (r"(\(\s*\d+(?:\.\d+)?\s*/\s*\d+(?:\.\d+)?\s*\))\s+of\s+", r"\1*"), (r"\bhalf\s+of\b", "0.5*"), (r"\b(?:double|twice)\b", "2*"), (r"\btriple\b", "3*"),
 ]
 DEGREES = (r"(\d)\s*(?:°|degrees?\b|deg\b)", r"\1*pi/180")  # only beside trigonometry
 
@@ -1719,10 +1719,7 @@ def resolve(text: str, ctx: Context, variables: bool = True):
             return node, {}
     except MathError:
         pass
-    try:
-        toks = tokenize(text)
-    except MathError:
-        raise MathError("it could not find a calculation in that")
+    toks = tokenize(text)  # a character it cannot read is named, not hidden
     groups, cur = [], []
     for tok in toks + [("end", None)]:
         if tok[0] == "name" and _unknown(tok[1]):
@@ -1837,6 +1834,173 @@ def _split_vars(text: str) -> str:
             return w
         return "*".join(w)
     return re.sub(r"(?<![A-Za-z_])[A-Za-z]{2,3}(?![A-Za-z_(])", fix, text)
+
+
+# ======================================================================== input checking
+# Before anything reads it, an order is tidied: other ways of writing the same symbols become the ones the
+# parser knows, LaTeX becomes plain maths, braces and square brackets used for grouping become parentheses,
+# labels with a colon ("calculate:", "Problem 3:") and ratios (3:4) are read, unbalanced brackets are mended
+# (and said so), and a character it cannot read is named rather than skipped.
+_SUPER = dict(zip("⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱˣʸ", "0123456789+-=()nixy"))
+_SUB = dict(zip("₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₓ", "0123456789+-=()x"))
+_VULGAR = {"½": "1/2", "⅓": "1/3", "⅔": "2/3", "¼": "1/4", "¾": "3/4", "⅕": "1/5", "⅖": "2/5", "⅗": "3/5", "⅘": "4/5",
+           "⅙": "1/6", "⅚": "5/6", "⅐": "1/7", "⅛": "1/8", "⅜": "3/8", "⅝": "5/8", "⅞": "7/8", "⅑": "1/9", "⅒": "1/10"}
+_SAME = [("*", "∗⋅∙•✕✖⨯⊗·×"), ("/", "÷∕⁄∶"), ("-", "−–—‒‐‑﹣－⁃"), ("+", "＋﹢∔"), ("=", "＝﹦"), ("^", "ˆ＾"),
+         ("(", "（﹙⟨"), (")", "）﹚⟩"), ("[", "［⟦"), ("]", "］⟧"), ("{", "｛"), ("}", "｝"), ("<", "＜"), (">", "＞"),
+         ("|", "∣｜"), (",", "，"), ("!", "！"), ("%", "％٪"), (" ", "\u00a0\u2009\u2002\u2003\u202f\u205f\u3000\t\r\n")]
+_SAME_MAP = {c: to for to, chars in _SAME for c in chars}
+_LATEX_INNER = [  # innermost first: \frac{\frac{1}{2}}{4}
+    (r"\\[dt]?frac\s*\{\s*d\s*\}\s*\{\s*d\s*[a-z]\s*\}", " the derivative of "),   # \frac{d}{dx}
+    (r"\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}", r"((\1)/(\2))"),
+    (r"\\sqrt\s*\[([^\]]+)\]\s*\{([^{}]*)\}", r"root(\2, \1)"), (r"\\sqrt\s*\{([^{}]*)\}", r"sqrt(\1)"),
+    (r"\^\s*\{([^{}]*)\}", r"^(\1)"),
+]
+_LATEX = [
+    (r"\$\$?(.+?)\$\$?", r"\1"),                                    # $...$ around maths (not "$5", a price)
+    (r"\\int\s*_\s*\{?([^{}\s^]+)\}?\s*\^\s*\{?([^{}\s]+?)\}?\s+(.+?)\s*\\?[,;]?\s*d([a-z])\b", r"integrate \3 from \1 to \2"),
+    (r"\\int\s*(.+?)\s*\\?[,;]?\s*d([a-z])\b", r"integrate \1"),
+    (r"\\lim\s*_\s*\{\s*([a-z])\s*\\(?:to|rightarrow)\s*([^{}]+?)\s*\}\s*(.+)", r"limit of \3 as \1 approaches \2"),
+    (r"\\sum\s*_\s*\{\s*([a-z])\s*=\s*([^{}]+?)\s*\}\s*\^\s*\{?([^{}\s]+?)\}?\s+(.+)", r"sum of \4 for \1 from \2 to \3"),
+    (r"\\(?:left|right|big|Big|bigg|Bigg)\s*([()\[\]|.])", r"\1"), (r"\\(?:left|right)\s*\\?\{", "("), (r"\\(?:left|right)\s*\\?\}", ")"),
+    (r"\\(?:cdot|times|ast)\b", "*"), (r"\\div\b", "/"), (r"\\pm\b", "+"), (r"\\(?:le|leq)\b", "<="), (r"\\(?:ge|geq)\b", ">="),
+    (r"\\(?:ne|neq)\b", "!="), (r"\\infty\b", "inf"), (r"\\(?:operatorname|mathrm|text|mathit|mathbf)\s*\{([^{}]*)\}", r"\1"),
+    (r"\\([A-Za-z]+)", r"\1"), (r"\\[,;:!\s]", " "), (r"_\{([^{}]*)\}", r"\1"),
+]
+
+
+_CALC = re.compile(r"\d\s*(?:[-+*/^×÷]|\*\*|\bplus\b|\bminus\b|\btimes\b|\bdivided\b)\s*[\d(]", re.I)
+
+
+def _fewer_brackets(t: str) -> str:
+    """((3)/(4)) -> (3/4): a bare number or letter needs no brackets of its own (not '2(3)', 'f(x)' or '(2)3')."""
+    for _ in range(8):
+        before = t
+        t = re.sub(r"(?<![\w)])\((-?\d+(?:\.\d+)?|[A-Za-z]|pi)\)(?![\w(.])", r"\1", t)
+        t = re.sub(r"\(\(([^()]*)\)\)", r"(\1)", t)
+        if t == before:
+            break
+    return t
+
+
+class Tidied(str):
+    """An order after input checking; .notes says what was mended."""
+    notes: list
+
+
+def tidy(text: str) -> Tidied:
+    """The order, made readable (see above). Raises MathError naming a character it cannot read."""
+    import unicodedata
+    notes: list[str] = []
+    t = str(text)
+    t = re.sub(r"[\u200b-\u200d\u2060\ufeff]", "", t)                  # zero-width characters
+    t = re.sub(r"[“”„‟\"«»`]|(?<!\w)['‘’]|['‘’](?!\w)", "", t)         # quotes around things
+    t = re.sub(r"(\d)\s*([½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅐⅛⅜⅝⅞⅑⅒])", lambda m: f"({m.group(1)}+{_VULGAR[m.group(2)]})", t)  # 1½
+    t = "".join(f"({_VULGAR[c]})" if c in _VULGAR else c for c in t)
+    t = re.sub(r"[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱˣʸ]+", lambda m: "^(" + "".join(_SUPER[c] for c in m.group(0)) + ")", t)
+    t = "".join(_SUB.get(c, c) for c in t)
+    t = re.sub(r"√\s*\(", "sqrt(", t)
+    t = t.replace("∛", "cbrt ").replace("√", "sqrt ").replace("π", "pi").replace("∞", "inf")
+    t = "".join(_SAME_MAP.get(c, c) for c in t)
+    t = unicodedata.normalize("NFKC", t)                                 # fullwidth digits and letters
+    if "\\" in t:                                                         # LaTeX
+        for _ in range(8):  # nested \frac{\frac{..}{..}}{..}: from the inside out
+            before = t
+            for pat, rep in _LATEX_INNER:
+                t = re.sub(pat, rep, t)
+            if t == before:
+                break
+        for pat, rep in _LATEX:
+            t = re.sub(pat, rep, t)
+        t = _fewer_brackets(t)
+        notes.append("LaTeX read as plain maths")
+    t = re.sub(r"\^\s*\{([^{}]*)\}", r"^(\1)", t)                         # 2^{10}
+    t = re.sub(r"(?<![\w.])[$€£¥₹₩](?=\s*\d)|(?<=\d)\s*[$€£¥₹₩]", "", t)   # prices: the numbers count
+    t = re.sub(r"\b(sqrt|cbrt|abs|sin|cos|tan|ln|log|exp)\s*\{", r"\1(", t)
+    if "{" in t or "}" in t:  # braces: a set of equations, or grouping
+        t = re.sub(r"\{([^{}]*=[^{}]*)\}", r" \1 ", t)
+        t = t.replace("{", "(").replace("}", ")")
+    t = _square_brackets(t)
+    t, colon = _colons(t)
+    if colon:
+        notes.append(colon)
+    t = re.sub(r"^\s*([a-z])\s*\(\s*([a-z])\s*\)\s*=\s*(.+?)\s+(at|when|where|for|if)\s+\2\s*=", r"\3 \4 \2 =", t, flags=re.I)
+    t = re.sub(r"^\s*([a-z])\s*\(\s*(-?[\d.]+)\s*\)\s*(?:,|;|where|if|when|given)?\s*(?:where|if|when|given)?\s*\1\s*\(\s*([a-z])\s*\)\s*=\s*(.+)$",
+               lambda m: f"{m.group(4)} when {m.group(3)} = {m.group(2)}", t, flags=re.I)   # f(3) where f(x) = ...
+    t = re.sub(r"^\s*(?:[a-z]|\d{1,2}|[ivx]{1,4})\)\s+(?=\S)", "", t)   # "a) 5*5", "2) ...": an item in a list
+    bad = re.search(r"[#@&~`¬¦§¶†‡※⁂]", t)
+    if bad:
+        raise MathError(f"it doesn't know what '{bad.group(0)}' means in a calculation")
+    t, mended = _balance(t)
+    if mended:
+        notes.append(mended)
+    out_ = Tidied(" ".join(t.split()))
+    out_.notes = notes
+    return out_
+
+
+def _square_brackets(t: str) -> str:
+    """[ ] used for grouping become ( ); [1, 2; 3, 4] (a list or a matrix) stays."""
+    chars, stack = list(t), []
+    for i, c in enumerate(chars):
+        if c == "[":
+            stack.append(i)
+        elif c == "]" and stack:
+            j = stack.pop()
+            inner = "".join(chars[j + 1:i])
+            if "," not in inner and ";" not in inner and inner.strip():
+                chars[j], chars[i] = "(", ")"
+    return "".join(chars)
+
+
+_INTENT = re.compile(r"\b(?:solve|calculate|compute|evaluate|simplify|expand|factor|factori[sz]e|differentiate|derivative|"
+                     r"integrate|integral|limit|find|work\s+out|what|mean|median|mode|average|variance|deviation|sum|product|"
+                     r"gcd|lcm|prime|convert|determinant|inverse|transpose|for\s+[a-z])\b", re.I)
+_LABEL = re.compile(r"^\s*((?:[A-Za-z][A-Za-z'’.]*\s*){1,6}(?:\d+[a-z]?\s*)?|[a-z]\)\s*|\d+[.)]\s*)\s*:\s*(?=\S)")
+
+
+def _colons(t: str) -> tuple[str, str]:
+    """'calculate: 2+2', 'Problem 3: ...', 'solve for x: ...' (a label), '... : solve', and ratios '3:4'."""
+    note = ""
+    m = re.match(r"^(.+?)\s*:\s*(solve|calculate|compute|evaluate|simplify|expand|factor|factori[sz]e|differentiate|"
+                 r"integrate)\s*[.!?]*\s*$", t, re.I)
+    if m:                                    # "x^2 - 5x + 6 = 0 : solve"
+        t = f"{m.group(2)} {m.group(1)}"
+    m = _LABEL.match(t)
+    if m and (not re.search(r"\d\s*$", m.group(1).strip()) or re.match(r"^\s*(?:problem|question|exercise|q|task|"
+                                                                          r"example|part|no\.?)\s*\d", m.group(1), re.I)):
+        label = m.group(1).strip()  # kept only when it says what to do ("solve for x:", "calculate:")
+        keep = label if _INTENT.search(label) else ""
+        keep = re.sub(r"\b(?:the\s+)?(?:following|expression|equation|problem|question|exercise|task|this|example)\b",
+                      "", keep, flags=re.I).strip()
+        t = (keep + " " + t[m.end():]).strip()
+    clock = re.compile(r"\b(?:at|by|until|till|before|after|around|from|since)\s+(\d{1,2}:\d{2})(?:\s*(?:am|pm))?\b(?:\s*,)?", re.I)
+    times = clock.findall(t)
+    if times and _CALC.search(clock.sub(" ", t)):  # "at 3:30 what is 2+2": a time of day, not part of the sum
+        t = re.sub(r"\s+", " ", clock.sub(" ", t)).strip()
+        note = f"the time {', '.join(times)} left out"
+    if re.search(r"(?<![\w:])\d+(?:\.\d+)?\s*:\s*\d+(?:\.\d+)?(?![\w:])", t) and not re.search(r"\b(?:am|pm|o'?clock|h)\b", t, re.I):
+        t = re.sub(r"(?<![\w:])(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)(?![\w:])", r"(\1/\2)", t)
+        note = "; ".join(x for x in (note, "a ratio a:b read as a/b") if x)
+    return t, note
+
+
+def _balance(t: str) -> tuple[str, str]:
+    """Unbalanced parentheses: an extra ')' is dropped, a missing one added at the end."""
+    out_, depth, dropped = [], 0, 0
+    for c in t:
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            if depth == 0:
+                dropped += 1
+                continue
+            depth -= 1
+        out_.append(c)
+    fixed = "".join(out_) + ")" * depth
+    if dropped or depth:
+        return fixed, "unbalanced brackets mended: " + ", ".join(
+            x for x in (f"{dropped} extra ')' dropped" if dropped else "", f"{depth} missing ')' added" if depth else "") if x)
+    return fixed, ""
 
 
 # ============================================================================ intents
@@ -2496,15 +2660,21 @@ def evaluate(text: str, ctx: Context, raw: str) -> dict:
 def answer(text: str, context=None) -> dict:
     """The calculator's answer to an order: a result dict, or raises MathError / NeedToKnow."""
     ctx = Context(context)
-    raw = " ".join(str(text).split())
+    raw = tidy(text)  # input checking: odd characters, braces, LaTeX, labels and ratios with ':' (see tidy)
     low = raw.lower()
-    low = re.sub(r"×|·", "*", low)
+    r = None
     for handler in (matrices, percentages, number_theory, statistics):
-        r = handler(low)
+        r = handler(re.sub(r"[\[\](){}]", " ", low) if handler is statistics else low)  # mean of [1, 2, 3]
         if r is not None:
-            return r
-    for handler in (calculus, algebra):
-        r = handler(low, ctx)
-        if r is not None:
-            return r
-    return evaluate(low, ctx, raw)
+            break
+    if r is None:
+        for handler in (calculus, algebra):
+            r = handler(low, ctx)
+            if r is not None:
+                break
+    if r is None:
+        r = evaluate(low, ctx, raw)
+    if raw.notes and isinstance(r, dict) and r.get("say"):
+        r["say"] = f"{r['say']} (read as: {raw}; {'; '.join(raw.notes)})"
+        r["read_as"] = str(raw)
+    return r

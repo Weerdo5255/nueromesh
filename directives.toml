@@ -561,6 +561,9 @@ worker_requests = 5000                  # a worker is replaced after this many r
 # url = "http://localhost:8888"                     # your SearXNG (or start with --searxng URL); its settings.yml
 #                                                   #   must allow JSON: search: formats: [html, json]
 # engines = "google,duckduckgo"                     # which engines it asks (default: the instance's own)
+# timeout = 25                                      # seconds it waits for SearXNG (its slowest engine); one request at
+#                                                   #   a time, and after a timeout, 429 or 5xx it rests:
+# backoff = 15                                      #   this many seconds, doubling per failure in a row (max 5 min)
 # [tools.config.wikipedia]
 # language = "de"                                   # research German Wikipedia
 # user_agent = "MyMesh/1.0 (https://example.org; me@example.org)"   # Wikimedia asks for contact details
@@ -683,6 +686,9 @@ teacher = true                          # an LLM teacher reads the results and a
 own_reading = true                      # without a teacher: SearXNG's answers, infoboxes and snippets
 min_sources = 1
 skip_personal = true                    # questions about you, or with an address, number or key, stay home
+retries = 4                             # a search SearXNG was too slow for (or rate-limited) is tried again ...
+retry_minutes = 5                       # ... this long after, doubling each time (the searxng tool also rests
+                                        # between requests: [tools.config.searxng] timeout and backoff)
 
 [vision]
 # Its optical nodes (vision.py, P21): the sight node says what an image shows, its reader reads the text

@@ -2,6 +2,7 @@
 replies a test decides, a Gitea with a few repositories, a SearXNG whose results a test sets, and the Hugging Face Hub with a few datasets."""
 import json
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -285,6 +286,16 @@ class _SearXNG(BaseHTTPRequestHandler):
         if u.path == "/search":
             if q.get("format") != "json" or not owner.json:
                 return self._send({"message": "format not allowed"}, 403)
+            with owner.lock:
+                owner.in_flight += 1
+                owner.most_at_once = max(owner.most_at_once, owner.in_flight)
+            try:
+                if owner.slow > 0:  # its engines are slow: this search takes a while
+                    owner.slow -= 1
+                    time.sleep(owner.delay)
+            finally:
+                with owner.lock:
+                    owner.in_flight -= 1
             hit = next((v for k, v in owner.answers.items() if k.lower() in q.get("q", "").lower()), None)
             return self._send({"query": q.get("q"), "number_of_results": len((hit or {}).get("results", [])),
                                "results": [dict(r, engine=r.get("engines", ["google"])[0]) for r in (hit or {}).get("results", [])],
@@ -295,7 +306,8 @@ class _SearXNG(BaseHTTPRequestHandler):
 
 class MockSearXNG(_Server):
     """A SearXNG: /config, and /search?format=json with the results set in .answers ({words in the query: {"results":
-    [{title, url, content, engines}], "answers": [...], "infoboxes": [...]}}). .json = False refuses JSON (403);
+    [{title, url, content, engines}], "answers": [...], "infoboxes": [...]}}). .slow = n makes the next n searches take
+    .delay seconds; .most_at_once is the most searches it ever answered at the same time. .json = False refuses JSON (403);
     .limiter (on) turns away clients without a browser's Accept, Accept-Language and Accept-Encoding (429), and it
     answers in gzip when asked."""
 
@@ -304,6 +316,11 @@ class MockSearXNG(_Server):
         self.requests: list[dict] = []
         self.json = True
         self.limiter = True            # its bot detection is on, as in SearXNG's Docker set-up
+        self.slow = 0                  # the next this-many searches take .delay seconds
+        self.delay = 0.0
+        self.in_flight = 0             # searches it is answering now, and the most it ever answered at once
+        self.most_at_once = 0
+        self.lock = threading.Lock()
         super().__init__(_SearXNG)
 
 

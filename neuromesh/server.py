@@ -70,6 +70,13 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, system.challenges.status()
         if path == "/tools/doctor":
             return 200, system.tooldoctor.status()
+        if path == "/network":  # the whole network: every family and node, its stations and links; ?detail=1: neurons
+            from . import network as net
+            todo: list = []
+            out = net.network(system, query.get("detail", "") in ("1", "true", "yes"), todo)
+            if todo:  # every node's neurons and synapses: off the event loop
+                await asyncio.to_thread(net.fill, system, todo)
+            return 200, out
         if path == "/conversations":  # conversations, and its short-term memory nodes
             return 200, system.conversations.status()
         if path == "/realm":  # its sense of fact and fiction; ?text= judges one

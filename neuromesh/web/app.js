@@ -998,7 +998,9 @@ it decides whether to say something of its own after an answer, and what`))
           h("button", { type: "button", class: "primary", onclick: e => act(e.target, () => api("/approve", { id: a.id, approve: true, by: "web" }), `Approved ${a.subject}`) }, "Approve"),
           h("button", { type: "button", onclick: e => act(e.target, () => api("/approve", { id: a.id, approve: false, by: "web" }), `Denied ${a.subject}`) }, "Deny"))));
     }
+    const listed = new Set(kinds.includes("approvals") ? (st.approvals || []).map(a => a.id) : []);
     for (const q of kinds.includes("inquiries") ? st.mind?.inquiries || [] : []) {
+      if (q.approval_id && listed.has(q.approval_id)) continue;  // the approval itself is listed above: asked once
       out.push(h("div", { class: "ask" }, h("p", {}, q.question), q.why ? h("p", { class: "why" }, `Why it asks: ${q.why}`) : null, replyForm(q.id, q.kind === "clarify" ? [] : q.options)));
     }
     for (const q of kinds.includes("questions") ? st.questions || [] : []) {
@@ -1038,12 +1040,375 @@ it decides whether to say something of its own after an answer, and what`))
 
   function renderLive() {
     const d = S.dash;
+    renderWhole();
     renderSpecimen(d.mesh);
     renderMicroscope();
     renderWork(d.work);
     renderLiveLog();
     renderAttention(d.status);
     renderGoals(d.status);
+  }
+
+  // ------------------------------------------------------------------ the whole mesh (network.py)
+  // Every family of nodes - the router, the skills it routes to, the inner capabilities, memory, thinking, dreams -
+  // drawn as a cluster where it works in the way an order travels. A node's area grows with its weights, so a big
+  // mesh is drawn big. What the background is doing right now (training, evaluating, lessons) glows, with a line
+  // from whoever is doing it.
+  const wts = n => n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}k` : String(n || 0);
+  const NODE_CLS = { champion: "m-champ", instance: "m-inst", candidate: "m-chall", retired: "m-retired", learning: "m-mem learning",
+                     compressed: "m-mem", active: "m-mem", dream: "m-dream-n", thought: "m-mem" };
+  const STATION_NAME = { routes: "routes", tools: "tools", memory: "memory", answers: "answers", directors: "directors",
+                         images: "what it sees", code: "code it writes", ego: "its ego", router: "the router" };
+  function netScale(net) {
+    const big = Math.max(1, ...net.families.flatMap(f => f.nodes.map(n => n.params || 0)));
+    return Math.min(0.05, 24 / Math.sqrt(big));
+  }
+  const netR = (params, k) => Math.max(2.6, Math.min(28, 2.2 + k * Math.sqrt(Math.max(0, params || 0))));
+  function packFamily(f, k) {  // the champion in the middle, the rest on a spiral around it, none overlapping
+    const rank = { champion: 0, instance: 1, candidate: 2, learning: 2, retired: 3 };
+    const items = f.nodes.map(n => ({ n, r: f.kind === "memory" || f.kind === "thinking" ? Math.max(3.2, netR(n.params, k) * 1.2) : netR(n.params, k) }))
+      .sort((a, b) => (rank[a.n.status] ?? 2) - (rank[b.n.status] ?? 2) || b.r - a.r);
+    const placed = [];
+    for (const it of items) {
+      if (!placed.length) { placed.push({ ...it, x: 0, y: 0 }); continue; }
+      for (let t = 1; t < 4000; t++) {
+        const a = t * 0.62, d = 1.6 * Math.sqrt(t) * 2.2;
+        const x = d * Math.cos(a), y = d * Math.sin(a);
+        if (placed.every(p => Math.hypot(p.x - x, p.y - y) >= p.r + it.r + 1.8)) { placed.push({ ...it, x, y }); break; }
+      }
+    }
+    const R = placed.length ? Math.max(12, ...placed.map(p => Math.hypot(p.x, p.y) + p.r)) + 5 : 10;
+    return { placed, R };
+  }
+  function netLayout(net, W) {
+    const k = netScale(net);
+    const F = {};
+    for (const f of net.families) F[f.id] = { f, ...packFamily(f, k) };
+    const by = st => net.families.filter(f => f.station === st && f.id !== "dispatch" && f.kind !== "memory").map(f => F[f.id]);
+    const X = { orders: Math.round(0.03 * W), directors: Math.round(0.11 * W), router: Math.round(0.24 * W), routes: Math.round(0.43 * W),
+                side: Math.round(0.6 * W), answers: Math.round(0.82 * W), you: W - 30 };
+    const egoF = by("ego");
+    const egoD = egoF.length ? Math.max(...egoF.map(f => 2 * f.R)) + 34 : 0;
+    const lab = 30, gap = 14, top = (net.ego ? 34 : 14) + egoD + 10;
+    // the routes column: each skill family, then the tools, then memory and the teachers
+    const col = [];
+    for (const f of by("routes").sort((a, b) => a.f.id.localeCompare(b.f.id))) col.push({ kind: "family", fam: f, h: 2 * f.R + lab });
+    const tools = net.tools || [];
+    col.push({ kind: "tools", h: Math.max(30, Math.ceil(tools.length / 6) * 24) + lab, beside: by("tools") });
+    const mem = F.memory;
+    col.push({ kind: "memory", fam: mem, h: Math.max(mem ? 2 * mem.R : 24, 24) + lab + 26, beside: by("memory") });
+    let y = top;
+    for (const c of col) {
+      const besideH = Math.max(0, ...(c.beside || []).map(b => 2 * b.R + lab));
+      c.h = Math.max(c.h, besideH);
+      c.y = y + c.h / 2 - lab / 2;
+      y += c.h + gap;
+    }
+    const routesBottom = y;
+    const mid = (top + routesBottom - gap) / 2;
+    // routed families and their neighbours
+    let right = X.routes + 40;
+    for (const c of col) {
+      if (c.fam) { c.fam.x = X.routes + c.fam.R; c.fam.y = c.y; right = Math.max(right, c.fam.x + c.fam.R); }
+      if (c.kind === "tools") right = Math.max(right, X.routes + Math.min(6, tools.length) * 22);
+      let bx = X.side;
+      for (const b of c.beside || []) { b.x = bx + b.R; b.y = c.y; bx += 2 * b.R + 60; right = Math.max(right, b.x + b.R); }
+    }
+    // where answers gather: clear of everything in the routes column, then the engines answers pass on the way out
+    X.hub = Math.min(W - 150, Math.max(X.answers - 90, right + 44));
+    X.answers = Math.max(X.answers, X.hub + 90);
+    const outs = by("answers");
+    const outH = outs.reduce((a, f) => a + 2 * f.R + lab + gap, 0);
+    let oy = mid - outH / 2;
+    for (const f of outs) { f.x = X.answers; f.y = oy + f.R; oy += 2 * f.R + lab + gap; }
+    const lowest = Math.max(routesBottom, oy);
+    // the rows below: what it sees, the code it writes
+    const rows = [["images", by("images")], ["code", by("code")]].filter(([, fs]) => fs.length);
+    let ry = lowest + 30;
+    const rowsOut = [];
+    for (const [name, fs] of rows) {
+      const hh = Math.max(...fs.map(f => 2 * f.R)) + lab;
+      let rx = X.router;
+      for (const f of fs) { f.x = rx + f.R; f.y = ry + f.R; rx += 2 * f.R + 70; }
+      rowsOut.push({ name, y: ry + Math.max(...fs.map(f => f.R)), x: X.router - 22 });
+      ry += hh + 18;
+    }
+    // directors and the agency on the left, the router in the middle, its ego (and dreams) at the top
+    const router = F.dispatch;
+    if (router) { router.x = X.router; router.y = mid; }
+    const agency = by("directors");
+    let ay = mid - 70;
+    for (const f of agency) { f.x = X.directors; f.y = ay - f.R; ay -= 2 * f.R + lab; }
+    let ex = X.routes;
+    for (const f of egoF) { f.x = ex + f.R; f.y = (net.ego ? 34 : 14) + f.R; ex += 2 * f.R + 70; }
+    const shift = 0;
+    const work = (net.work || []);
+    const actors = [...new Set(work.map(w => w.actor))];
+    const railY = ry + 48;
+    const H = actors.length ? railY + 18 : railY - 22;
+    return { W, H, k, F, X, col, mid, rows: rowsOut, tools, actors, railY, shift, top, lab };
+  }
+  function nodeTipNet(n, f) {
+    const sizes = n.sizes?.length ? `${n.sizes.map(num).join(" → ")} neurons, ` : n.shape ? `${n.shape}, ` : "";
+    const score = n.holdout != null ? `, held-out ${pct(n.holdout)}` : n.tests ? `, tests ${n.tests}` : n.fitness != null ? `, fitness ${n.fitness}` : "";
+    const doing = (n.busy || []).filter(b => b.now).map(b => `\nnow: ${b.kind} by ${b.actor}: ${b.text}`).join("");
+    return `${n.id} (${f.name}, ${n.status})\n${sizes}${num(n.params)} weights${score}` +
+      (n.serves ? `, served ${num(n.serves)}` : "") + (n.facts != null ? `, ${n.facts} facts` : "") + doing;
+  }
+  function drawNet(net, W, opts = {}) {
+    const g = netLayout(net, W);
+    const { F, X } = g;
+    const svg = sv("svg", { viewBox: `0 ${-g.shift} ${g.W} ${g.H}`, class: "net" + (opts.big ? " big" : ""), role: "img",
+      "aria-label": `The whole mesh: ${net.nodes} nodes in ${net.families.length} families, ${num(net.params)} weights` });
+    const nodePos = {};
+    const at = (fam, p) => ({ x: fam.x + p.x, y: fam.y + p.y });
+    const edges = sv("g", { class: "net-edges" }), clusters = sv("g", {}), live = sv("g", { class: "net-live" });
+    svg.append(edges, clusters, live);
+    if (net.ego) svg.insertBefore(sv("rect", { x: 8, y: 10, width: g.W - 16, height: g.railY - 44, rx: 22, class: "net-membrane" }), edges);
+    const hub = (x, y, label, cls = "") => {
+      clusters.append(sv("circle", { cx: x, cy: y, r: 4, class: "net-hub " + cls }));
+      if (label) clusters.append(sv("text", { x, y: y + 18, "text-anchor": "middle", class: "m-dim" }, label));
+    };
+    // the way an order travels
+    hub(X.orders, g.mid, "orders");
+    const dirs = net.directors || [];
+    dirs.forEach((d, i) => { const yy = g.mid + (i - (dirs.length - 1) / 2) * 16;
+      clusters.append(sv("polygon", { points: `${X.directors},${yy - 6} ${X.directors + 6},${yy} ${X.directors},${yy + 6} ${X.directors - 6},${yy}`,
+        class: "m-director" + (d.role === "primary" ? "" : " dup") + (d.busy ? " busy" : "") }, sv("title", {}, `${d.id}: ${d.doing}`))); });
+    clusters.append(sv("text", { x: X.directors, y: g.mid + dirs.length * 8 + 20, "text-anchor": "middle", class: "m-dim" }, "directors"));
+    edges.append(sv("path", { d: `M ${X.orders + 6} ${g.mid} L ${X.directors - 10} ${g.mid}`, class: "m-edge" }));
+    const router = F.dispatch;
+    if (router) edges.append(sv("path", { d: `M ${X.directors + 10} ${g.mid} L ${router.x - router.R - 2} ${g.mid}`, class: "m-edge" }));
+    hub(X.hub, g.mid, "answers");
+    hub(X.you, g.mid, "you");
+    edges.append(sv("path", { d: `M ${X.hub + 6} ${g.mid} L ${X.you - 6} ${g.mid}`, class: "m-edge" }));
+    const ax = X.hub - 4;
+    for (const c of g.col) {
+      const x1 = router ? router.x + router.R : X.router, xl = X.routes - 4;
+      edges.append(sv("path", { d: `M ${x1} ${g.mid} C ${x1 + 90} ${g.mid}, ${xl - 90} ${c.y}, ${xl} ${c.y}`, class: "m-edge" }));
+      const xr = c.kind === "family" ? c.fam.x + c.fam.R + 4 : X.routes + (c.kind === "tools" ? Math.min(6, g.tools.length) * 22 : (c.fam ? 2 * c.fam.R : 30)) + 8;
+      const xs = Math.max(xr, ...(c.beside || []).map(b => b.x + b.R + 4));
+      const bend = Math.max(12, Math.min(60, (ax - xs) / 2));
+      edges.append(sv("path", { d: `M ${xs} ${c.y} C ${xs + bend} ${c.y}, ${ax - bend} ${g.mid}, ${ax} ${g.mid}`, class: "m-edge faint" }));
+    }
+    // tools: squares; the tool gate beside them
+    const tc = g.col.find(c => c.kind === "tools");
+    g.tools.forEach((t, i) => {
+      const x = X.routes + (i % 6) * 22, yy = tc.y - 10 + Math.floor(i / 6) * 22 - (Math.ceil(g.tools.length / 6) - 1) * 11;
+      const cls = t.state === "active" ? "" : t.state === "quarantined" || t.state === "rejected" ? " bad" : t.state.startsWith("pending") ? " pending" : " off";
+      clusters.append(sv("rect", { x, y: yy, width: 15, height: 15, rx: 3, class: "m-tool" + cls + ((t.busy || []).length ? " busy" : ""), "data-tool": t.id },
+        sv("title", {}, `${t.name} v${t.version} [${t.state}], ${num(t.runs)} runs`)));
+      nodePos["tool:" + t.id] = { x: x + 7.5, y: yy + 7.5 };
+    });
+    const toolRows = Math.max(1, Math.ceil(g.tools.length / 6));
+    clusters.append(sv("text", { x: X.routes, y: tc.y - 10 - (toolRows - 1) * 11 + (toolRows - 1) * 22 + 30, class: "m-sub" },
+      g.tools.length ? `tools (${g.tools.length})` : "no tools yet"));
+    const mc = g.col.find(c => c.kind === "memory");
+    if (!mc.fam) clusters.append(sv("text", { x: X.routes, y: mc.y, class: "m-dim" }, "memory nodes are off"));
+    const teach = (net.teachers || []).filter(t => !t.specialist).map(t => t.id);
+    clusters.append(sv("text", { x: X.routes, y: mc.y + (mc.fam ? mc.fam.R + 44 : 20), class: "m-dim" }, cut(`then teachers: ${teach.join(", ") || "none"}`, 46)));
+    // every family: its nodes, packed; its name and size
+    for (const fam of Object.values(F)) {
+      if (fam.x === undefined) continue;
+      const f = fam.f;
+      const famBusy = (f.busy || []).some(b => b.now);
+      clusters.append(sv("circle", { cx: fam.x, cy: fam.y, r: fam.R, class: "net-fam " + f.kind + (famBusy ? " busy" : "") + (f.nodes.length ? "" : " empty") },
+        sv("title", {}, `${f.name}: ${f.nodes.length} node${f.nodes.length === 1 ? "" : "s"}, ${num(f.params)} weights. ${f.description}`)));
+      for (const p of fam.placed) {
+        const n = p.n, pos = at(fam, p), now = (n.busy || []).some(b => b.now), recent = (n.busy || []).length > 0;
+        nodePos[n.id] = { ...pos, r: p.r };
+        const shapeCls = NODE_CLS[n.status] || "m-inst";
+        const el = f.kind === "memory" ? sv("polygon", { points: hexagon(pos.x, pos.y, p.r), class: shapeCls })
+          : sv("circle", { cx: pos.x, cy: pos.y, r: p.r, class: shapeCls });
+        el.setAttribute("data-netnode", n.id);
+        el.append(sv("title", {}, nodeTipNet(n, f)));
+        if (now || recent) live.append(sv("circle", { cx: pos.x, cy: pos.y, r: p.r + 4, class: "net-pulse" + (now ? " now" : "") }));
+        clusters.append(el);
+      }
+      const name = f.id === "dispatch" ? "the router" : f.name;
+      clusters.append(sv("text", { x: fam.x, y: fam.y + fam.R + 14, "text-anchor": "middle", class: "net-fam-name" + (f.nodes.length ? "" : " empty") }, name));
+      if (f.nodes.length) clusters.append(sv("text", { x: fam.x, y: fam.y + fam.R + 27, "text-anchor": "middle", class: "m-dim small-t" },
+        `${f.nodes.filter(n => n.status !== "retired").length} node${f.nodes.length === 1 ? "" : "s"}, ${wts(f.params)} weights`));
+      // where an inner family works
+      if (f.kind === "inner" && f.station !== "routes") {
+        const to = f.station === "answers" ? { x: ax, y: g.mid } : f.station === "directors" ? { x: X.directors, y: g.mid - 10 }
+          : f.station === "tools" ? { x: X.routes + Math.min(6, g.tools.length) * 22, y: tc.y } : f.station === "memory" ? { x: X.routes + (mc.fam ? 2 * mc.fam.R : 20), y: mc.y }
+          : f.station === "ego" ? null : f.station === "images" || f.station === "code" ? null : null;
+        if (to) edges.append(sv("line", { x1: fam.x, y1: fam.y, x2: to.x, y2: to.y, class: "net-link" }));
+      }
+    }
+    for (const r of g.rows) clusters.append(sv("text", { x: r.x, y: r.y + 4, "text-anchor": "end", class: "m-sub" }, STATION_NAME[r.name] || r.name));
+    if (net.ego) clusters.append(sv("text", { x: 24, y: 28, class: "m-sub" }, "its ego, around everything"));
+    // the background, working now: who is doing it, and on what
+    if (g.actors.length) {
+      clusters.append(sv("text", { x: 16, y: g.railY - 17, class: "m-sub" }, "working now"));
+      g.actors.forEach((a, i) => {
+        const x = 30 + i * Math.min(150, (g.W - 60) / g.actors.length), yy = g.railY;
+        const mine = (net.work || []).filter(w => w.actor === a);
+        const nowish = mine.some(w => w.now !== false);
+        live.append(sv("rect", { x: x - 4, y: yy - 11, width: Math.min(140, 14 + a.length * 7.4), height: 20, rx: 10, class: "net-actor" + (nowish ? "" : " past") },
+          sv("title", {}, mine.map(w => `${w.kind}: ${w.text}`).join("\n"))));
+        live.append(sv("text", { x: x + 4, y: yy + 3.5, class: "net-actor-t" }, cut(a, 17)));
+        for (const w of mine) {
+          const targets = w.nodes.map(id => nodePos[id]).filter(Boolean);
+          if (!targets.length && w.family && F[w.family]?.x !== undefined) targets.push({ x: F[w.family].x, y: F[w.family].y, r: F[w.family].R });
+          for (const t of targets.slice(0, 6)) {
+            const x0 = x + 10, y0 = yy - 11, my = (y0 + t.y) / 2;
+            live.append(sv("path", { d: `M ${x0} ${y0} C ${x0} ${my}, ${t.x} ${my}, ${t.x} ${t.y + (t.r || 4)}`, class: "net-work" + (w.now === false ? " past" : "") }));
+          }
+        }
+      });
+    }
+    return svg;
+  }
+  // the same worker doing the same kind of thing to the same nodes, many times a second: one row, the latest text
+  function workGroups(work) {
+    const out = new Map();
+    for (const w of work) {
+      const key = `${w.actor}|${w.kind}|${w.family || ""}|${w.nodes.join(",")}`;
+      const had = out.get(key);
+      if (had) { had.times += 1; if (w.now && !had.now) Object.assign(had, { text: w.text, now: true }); }
+      else out.set(key, { ...w, times: 1 });
+    }
+    return [...out.values()];
+  }
+  function renderWhole() {
+    const net = S.extra.net;
+    const host = $("#whole-svg");
+    if (!net) return;
+    const now = workGroups(net.work || []).length;
+    $("#whole-sum").textContent = `${net.nodes} nodes in ${net.families.filter(f => f.nodes.length).length} families, ${wts(net.params)} weights` +
+      (now ? `; ${now} thing${now === 1 ? "" : "s"} running now` : "");
+    fill(host, drawNet(net, 900));
+  }
+  function goToNode(id) {
+    S.netFocus = id;
+    if (S.view !== "network") location.hash = "#network";
+    else focusCard();
+  }
+  function focusCard() {
+    if (!S.netFocus) return;
+    const card = document.getElementById(`card-${S.netFocus}`);
+    if (!card) return;
+    $$(".ncard.focus").forEach(c => c.classList.remove("focus"));
+    card.classList.add("focus");
+    card.scrollIntoView({ behavior: reduceMotion() ? "auto" : "smooth", block: "center" });
+    S.netFocus = null;
+  }
+  for (const id of ["#whole-svg", "#network"]) {
+    document.addEventListener("click", e => {
+      const el = e.target.closest?.(`${id} [data-netnode]`);
+      if (el) goToNode(el.dataset.netnode);
+    });
+  }
+
+  // ------------------------------------------------------------------ the network, every neuron (Network page)
+  function circuitSvg(n, width) {
+    const L = n.layers;
+    if (!L) {
+      return h("p", { class: "dim small" }, n.shape ? `Shape ${n.shape}.` : n.sizes?.length ? `${n.sizes.map(num).join(" → ")} neurons.` : "No weights to show.");
+    }
+    const cols = L.length, padL = 54, padR = 96, top = 30, rowH = 13;
+    const rows = Math.max(...L.map(l => l.shown.length));
+    const H = top + 16 + rows * rowH;
+    const x = c => padL + (c * (width - padL - padR)) / Math.max(1, cols - 1);
+    const ys = L.map(l => { const m = l.shown.length, off = ((rows - m) * rowH) / 2; return l.shown.map((_, i) => top + 10 + off + i * rowH); });
+    const svg = sv("svg", { viewBox: `0 0 ${width} ${H}`, class: "circuit", role: "img",
+      "aria-label": `${n.id}: ${L.map(l => `${l.size} ${l.kind}`).join(", ")}; strongest synapses drawn` });
+    const syn = sv("g", {}), cells = sv("g", {});
+    svg.append(syn, cells);
+    L.forEach((l, c) => {
+      if (l.synapses?.length) {
+        const max = Math.max(1e-9, ...l.synapses.map(s => Math.abs(s[2])));
+        for (const [i, j, w] of l.synapses.slice().reverse()) {
+          const rel = Math.abs(w) / max, x1 = x(c), x2 = x(c + 1), y1 = ys[c][i], y2 = ys[c + 1][j];
+          syn.append(sv("path", { d: `M ${x1} ${y1} C ${(x1 + x2) / 2} ${y1}, ${(x1 + x2) / 2} ${y2}, ${x2} ${y2}`,
+            class: "c-syn " + (w >= 0 ? "exc" : "inh"), style: `stroke-width:${(0.35 + 1.8 * rel).toFixed(2)};opacity:${(0.12 + 0.8 * rel).toFixed(2)}` },
+            sv("title", {}, `${l.kind === "input" ? "input #" + l.shown[i] : "h" + l.shown[i]} → ${c + 1 === cols - 1 ? (L[c + 1].labels?.[j] || "out") : "h" + L[c + 1].shown[j]}: weight ${w >= 0 ? "+" : ""}${w}`)));
+        }
+      }
+      const maxS = Math.max(1e-9, ...l.strength);
+      l.shown.forEach((u, i) => {
+        const rel = l.strength[i] / maxS;
+        cells.append(sv("circle", { cx: x(c), cy: ys[c][i], r: (1.8 + 3 * rel).toFixed(2), class: "c-cell " + l.kind },
+          sv("title", {}, `${l.kind === "output" ? l.labels[i] : l.kind === "input" ? "input #" + u : "hidden h" + u}: strength ${l.strength[i]}`)));
+        if (l.kind === "output") cells.append(sv("text", { x: x(c) + 8, y: ys[c][i] + 3.5, class: "c-label" }, cut(l.labels[i], 14)));
+      });
+      const more = l.size - l.shown.length;
+      cells.append(sv("text", { x: x(c), y: top - 12, "text-anchor": "middle", class: "c-cap" },
+        `${num(l.size)} ${l.kind === "input" ? "in" : l.kind === "output" ? "out" : "hidden"}`));
+      const roomy = cols < 2 || (x(1) - x(0)) > 78;  // close columns: the count alone, so the labels don't run together
+      if (more > 0) cells.append(sv("text", { x: x(c), y: H - 3, "text-anchor": "middle", class: "c-more" }, roomy ? `+${num(more)} weaker` : `+${num(more)}`));
+    });
+    return svg;
+  }
+  const FAM_KIND = { router: "the router", skill: "a skill it routes to", inner: "an inner capability", memory: "memory nodes",
+                     thinking: "thinking nodes", dreams: "dream nodes" };
+  const NSTATUS = { champion: "champion", instance: "instance", candidate: "challenger", retired: "retired", learning: "learning",
+                    compressed: "compressed", dream: "dream", active: "active" };
+  function nodeCard(n, f) {
+    const span = n.params >= 250000 ? 3 : n.params >= 60000 ? 2 : 1;
+    const now = (n.busy || []).filter(b => b.now);
+    const recent = (n.busy || []).filter(b => !b.now);
+    const facts = [n.sizes?.length ? `${n.sizes.map(num).join(" → ")} neurons` : n.shape || "",
+      `${num(n.params)} weights`, n.holdout != null ? `held-out ${pct(n.holdout)}` : "", n.tests ? `tests ${n.tests}` : "",
+      n.facts != null ? `${n.facts} fact${n.facts === 1 ? "" : "s"}` : "", n.thoughts != null ? `${n.thoughts} thoughts` : "",
+      n.fitness != null ? `fitness ${n.fitness}` : "", n.serves ? `served ${num(n.serves)}` : "", n.steps ? `${num(n.steps)} training slices` : "",
+      n.generation ? `generation ${n.generation}` : ""].filter(Boolean).join("; ");
+    return h("article", { class: `ncard span${span}` + (now.length ? " busy" : ""), id: `card-${n.id}` },
+      h("header", {}, h("b", { class: "mono" }, n.id), h("span", { class: `nstat ${n.status}` }, NSTATUS[n.status] || n.status),
+        now.length ? h("span", { class: "nbusy" }, `${now[0].kind} now`) : recent.length ? h("span", { class: "nbusy past" }, `${recent[0].kind} just now`) : null),
+      h("p", { class: "dim small" }, facts),
+      circuitSvg(n, span === 3 ? 980 : span === 2 ? 640 : 320),
+      now.length ? h("p", { class: "small nwork" }, now.map(b => `${b.actor}: ${b.text}`).join("; ")) : null,
+      n.layers && f.kind !== "dreams" ? h("p", { class: "small" }, h("a", { href: "#live", onclick: () => { S.closer = true; store.set("closer", "1"); setTimeout(() => selectNode(n.id, null), 400); } }, "Fire it with a text")) : null);
+  }
+  function renderNetwork() {
+    const host = $("#network");
+    const net = S.extra.netFull || S.extra.net;
+    if (!net) return fill(host, h("p", { class: "dim" }, "Loading the network…"));
+    if (busy(host)) return;
+    const fams = net.families.slice().sort((a, b) => ["router", "skill", "inner", "memory", "thinking", "dreams"].indexOf(a.kind) -
+      ["router", "skill", "inner", "memory", "thinking", "dreams"].indexOf(b.kind) || b.params - a.params);
+    const live = S.extra.net || net;
+    const busyNow = Object.fromEntries(live.families.flatMap(f => f.nodes.map(n => [n.id, n.busy || []])));
+    const empty = fams.filter(f => !f.nodes.length);
+    const sections = fams.filter(f => f.nodes.length).map(f => {
+      const nodes = f.nodes.map(n => ({ ...n, busy: busyNow[n.id] || n.busy }));
+      const live = nodes.filter(n => n.status !== "retired"), gone = nodes.filter(n => n.status === "retired");
+      return h("section", { class: "nfam", id: `fam-${f.id}` },
+        h("div", { class: "nfam-head" }, h("h2", {}, f.id === "dispatch" ? "The router" : f.name),
+          h("span", { class: "dim small" }, `${FAM_KIND[f.kind] || f.kind}${f.station && f.station !== "routes" && f.kind === "inner" ? `, working at ${STATION_NAME[f.station] || f.station}` : ""}; ` +
+            `${live.length} node${live.length === 1 ? "" : "s"}, ${num(f.params)} weights` + (f.examples ? `, ${num(f.examples)} examples` : ""))),
+        f.description ? h("p", { class: "small nfam-desc" }, cut(f.description, 220)) : null,
+        live.length ? h("div", { class: "ncards" }, live.map(n => nodeCard(n, f))) : h("p", { class: "dim small" }, "No node yet: its teachers answer until one is grown and validated."),
+        gone.length ? h("p", { class: "dim small" }, `Retired: ${gone.map(n => n.id).join(", ")}`) : null);
+    });
+    const work = live.work || [];
+    fill(host,
+      h("div", { class: "net-head" },
+        h("p", { class: "lede" }, `${net.nodes} nodes in ${net.families.filter(f => f.nodes.length).length} families, ${num(net.params)} weights. ` +
+          "Each node's area grows with its weights. In every node, the neurons with the strongest weights are drawn and the strongest synapses between them: violet excites, pink inhibits."),
+        h("div", { class: "net-legend small" }, [["m-champ", "champion"], ["m-inst", "instance"], ["m-chall", "challenger"], ["m-retired", "retired"], ["m-mem", "memory node"], ["m-tool", "tool"], ["net-pulse now", "working now"]]
+          .map(([c, t]) => h("span", {}, sv("svg", { width: 14, height: 14, viewBox: "0 0 14 14", "aria-hidden": "true" }, c === "m-tool" ? sv("rect", { x: 2, y: 2, width: 10, height: 10, rx: 2, class: c }) : c === "m-mem" ? sv("polygon", { points: hexagon(7, 7, 5.5), class: c }) : sv("circle", { cx: 7, cy: 7, r: 5, class: c })), t)))),
+      h("div", { class: "whole-svg big" }, drawNet(live, 1240, { big: true })),
+      work.length ? h("div", { class: "net-work-list" }, h("h2", {}, "Working now"),
+        h("ul", { class: "rows" }, workGroups(work).map(w => h("li", {}, h("b", {}, w.actor), ` ${w.kind}: ${w.text} `,
+          w.times > 1 ? h("span", { class: "dim" }, `(${w.times} in the last few seconds) `) : null,
+          w.nodes.map(id => h("a", { href: `#network`, class: "chip", onclick: e => { e.preventDefault(); goToNode(id); } }, id)))))) : null,
+      h("nav", { class: "net-index small", "aria-label": "Families" }, fams.filter(f => f.nodes.length).map(f => h("a", { href: `#network`, onclick: e => { e.preventDefault(); document.getElementById(`fam-${f.id}`)?.scrollIntoView({ behavior: reduceMotion() ? "auto" : "smooth" }); } },
+        `${f.id === "dispatch" ? "router" : f.name} (${f.nodes.length})`))),
+      sections,
+      empty.length ? h("section", { class: "nfam" }, h("div", { class: "nfam-head" }, h("h2", {}, "Not grown yet"),
+          h("span", { class: "dim small" }, "capabilities with no node yet: teachers and policies answer until one is grown and validated")),
+        h("ul", { class: "rows small nfam-empty" }, empty.map(f => h("li", {}, h("b", {}, f.name), ` ${FAM_KIND[f.kind] || f.kind}` +
+          (f.kind === "inner" && STATION_NAME[f.station] ? `, works at ${STATION_NAME[f.station]}` : "") + (f.examples ? `; ${num(f.examples)} examples so far` : ""),
+          f.description ? h("span", { class: "dim" }, ` - ${cut(f.description, 110)}`) : null)))) : null,
+      (net.tools || []).length ? h("section", { class: "nfam" }, h("div", { class: "nfam-head" }, h("h2", {}, "Tools"), h("span", { class: "dim small" }, "run in the sandbox, not neurons")),
+        h("ul", { class: "rows small" }, net.tools.map(t => h("li", {}, h("b", {}, t.name), ` v${t.version}: ${t.state}, ${num(t.runs)} runs`)))) : null,
+      (net.tasks || []).length ? h("section", { class: "nfam" }, h("div", { class: "nfam-head" }, h("h2", {}, "Background tasks")),
+        h("ul", { class: "rows small" }, net.tasks.map(t => h("li", {}, h("b", {}, t.id), ` ${t.what}`)))) : null);
+    focusCard();
   }
 
   // ------------------------------------------------------------------ nodes view
@@ -1454,7 +1819,10 @@ it decides whether to say something of its own after an answer, and what`))
     const w = q.web;
     if (!w || !w.ok) return null;
     return h("div", { class: "row web-note" },
-      h("span", { class: "dim small" }, w.tried ? "It searched the web for this and found no answer." : `If nobody answers by ${clock(w.at)}, it searches the web (your SearXNG).`),
+      h("span", { class: "dim small" }, w.tried ? `It searched the web for this and found no answer${w.last ? ` (${cut(w.last, 90)})` : ""}.`
+        : w.attempts ? `Its last search didn't get through (${cut(w.last, 90)}); it tries again at ${clock(w.at)}.`
+        : Date.now() / 1000 >= w.at ? (w.paused ? `Its time is up, but the web search waits: ${w.paused}.` : "Its time is up: it searches the web for this within a minute.")
+        : `If nobody answers by ${clock(w.at)}, it searches the web (your SearXNG).`),
       h("button", { type: "button", class: "small quiet", disabled: !w.tool, title: w.tool ? "" : "Approve the searxng tool first",
         onclick: e => act(e.target, () => api("/websearch", { inquiry: q.id, by: "web" }), r => r.message) }, "Search the web now"));
   }
@@ -2594,7 +2962,7 @@ it decides whether to say something of its own after an answer, and what`))
   }
 
   // ------------------------------------------------------------------ views and polling
-  const VIEWS = ["live", "nodes", "memory", "mind", "code", "images", "logs", "status"];
+  const VIEWS = ["live", "network", "nodes", "memory", "mind", "code", "images", "logs", "status"];
   function setView() {
     const [v, sub] = location.hash.replace("#", "").split("/");
     const next = VIEWS.includes(v) ? v : "live";
@@ -2614,6 +2982,7 @@ it decides whether to say something of its own after an answer, and what`))
     const code = (d.status.approvals || []).filter(a => a.kind === "code" || a.kind === "project-change").length;
     $("#badge-code").textContent = code ? String(code) : "";
     if (S.view === "live") renderLive();
+    else if (S.view === "network") renderNetwork();
     else if (S.view === "nodes") renderNodes();
     else if (S.view === "memory") renderMemory(force);
     else if (S.view === "mind") renderMind(force);
@@ -2663,6 +3032,8 @@ it decides whether to say something of its own after an answer, and what`))
     } else if (S.view === "status") {
       if (due("knowledge", 10000)) jobs.push(get("knowledge", "/knowledge?n=25"));
     }
+    if ((S.view === "live" || S.view === "network") && due("net", 2000)) jobs.push(get("net", "/network"));
+    if (S.view === "network" && due("netFull", 12000)) jobs.push(get("netFull", "/network?detail=1"));
     if (S.view === "memory" && due("own", 5000)) jobs.push(get("own", "/memory/own?limit=20"));
     if (S.view === "memory" && due("conversations", 4000)) jobs.push(get("conversations", "/conversations"));
     if (S.view === "code" && due("code", 3000)) jobs.push(get("code", "/code"));

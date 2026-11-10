@@ -18,8 +18,13 @@ Requests (the "input"):
                                                 what it searched for; a tool's "query" is a question for a director)
     anything else                               an order: what it found, the top results with where they came from
 
-Speed: started with --serve (manifest: persistent = true) it stays running and answers requests as JSON lines, many at
-once, over kept-alive connections.
+Speed: started with --serve (manifest: persistent = true) it stays running and answers requests as JSON lines over
+kept-alive connections.
+
+Patience: SearXNG asks many engines and can be slow. It sends ONE request at a time (the next waits for the one in
+flight), waits up to "timeout" seconds (25) for an answer, and never sends the same request again after a timeout.
+After a timeout, a 429 or a 5xx it rests - 15 s, doubling to at most 5 minutes - before it sends anything else, and
+says how long ("retry_after"); the mesh waits that long too (manifest: one_at_a_time, backoff_s).
 """
 import gzip
 import http.client
@@ -37,7 +42,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 DEFAULTS = {"url": "http://localhost:8888", "engines": "", "categories": "general", "language": "en", "safesearch": 1,
-            "results": 8, "use_proxy": False, "timeout": 20, "user_agent": "neuromesh"}
+            "results": 8, "use_proxy": False, "timeout": 25, "user_agent": "neuromesh", "backoff": 15}
 LOCAL = ("localhost", "127.0.0.1", "::1")
 _JSON_OK: dict = {}  # SearXNG address -> when a search in JSON last worked (the health check need not search again)
 LEADS = re.compile(r"^\s*(?:please\s+)?(?:(?:can|could)\s+you\s+)?(?:search\s+(?:the\s+)?(?:web|internet|online)\s+(?:for|about)|"
@@ -48,6 +53,25 @@ TAILS = re.compile(r"\s+(?:online|on\s+the\s+(?:web|internet)|on\s+searxng)\s*[?
 
 class Transient(Exception):
     """SearXNG is down, busy, or its engines did not answer: not a broken tool."""
+
+    def __init__(self, message: str, retry_after: float = 0.0):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+GATE = threading.Lock()                       # one request to SearXNG at a time
+REST = {"until": 0.0, "fails": 0, "why": ""}  # resting after a timeout, a 429 or a 5xx
+
+
+def _rest(why: str, backoff: float) -> float:
+    REST["fails"] += 1
+    wait = min(300.0, max(1.0, backoff) * 2 ** (REST["fails"] - 1))
+    REST["until"], REST["why"] = time.time() + wait, why
+    return wait
+
+
+def _rested() -> None:
+    REST["fails"], REST["until"], REST["why"] = 0, 0.0, ""
 
 
 class Pool:
@@ -98,6 +122,21 @@ class SearXNG:
                 "user-agent": str(self.cfg.get("user_agent") or "neuromesh")}
 
     def get(self, path: str, params: dict | None = None):
+        """One request, after the one in flight, and not while it rests (see the module docstring)."""
+        with GATE:
+            left = REST["until"] - time.time()
+            if left > 0:
+                raise Transient(f"SearXNG is resting after {REST['why']}: next request in {left:.0f}s", retry_after=left)
+            try:
+                got = self._get(path, params)
+            except Transient as exc:
+                if "no SearXNG at" not in str(exc) or "timed out" in str(exc):
+                    exc.retry_after = exc.retry_after or _rest(str(exc)[:80], float(self.cfg.get("backoff") or 15))
+                raise
+            _rested()
+            return got
+
+    def _get(self, path: str, params: dict | None = None):
         q = ("?" + urllib.parse.urlencode(params)) if params else ""
         headers = self.headers()
         if self.proxy:
@@ -113,6 +152,10 @@ class SearXNG:
                     if r.will_close:
                         POOL.drop(self.scheme, self.netloc)
                     break
+                except TimeoutError:  # it is slow, not gone: never sent again straight away
+                    POOL.drop(self.scheme, self.netloc)
+                    raise Transient(f"SearXNG at {self.base} timed out after {self.timeout:g}s (its engines may be slow; "
+                                    "raise [tools.config.searxng] timeout, or lower its engines' timeouts)")
                 except (http.client.HTTPException, OSError) as exc:
                     POOL.drop(self.scheme, self.netloc)
                     if attempt:
@@ -144,7 +187,11 @@ class SearXNG:
         except urllib.error.HTTPError as exc:
             return exc.code, b""
         # (urllib does not undo gzip: the answer is read below by _decoded)
+        except TimeoutError:
+            raise Transient(f"SearXNG at {self.base} timed out after {self.timeout:g}s (its engines may be slow)")
         except (urllib.error.URLError, OSError) as exc:
+            if isinstance(getattr(exc, "reason", None), TimeoutError):
+                raise Transient(f"SearXNG at {self.base} timed out after {self.timeout:g}s (its engines may be slow)")
             raise Transient(f"no SearXNG at {self.base} ({getattr(exc, 'reason', exc)})")
 
     def config(self) -> dict:
@@ -269,7 +316,10 @@ def reply(request: dict) -> dict:
     try:
         return handle(request)
     except Transient as exc:
-        return {"error": str(exc), "transient": True}
+        out = {"error": str(exc), "transient": True}
+        if exc.retry_after:
+            out["retry_after"] = round(exc.retry_after, 1)
+        return out
     except Exception as exc:  # a fault in this code: the trace lets the mesh find it (tooldoctor.py)
         return {"error": f"{type(exc).__name__}: {exc}", "trace": traceback.format_exc()[-3000:]}
 

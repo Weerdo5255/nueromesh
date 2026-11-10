@@ -12,7 +12,7 @@ from neuromesh import web
 from neuromesh.runtime import System
 from neuromesh.server import serve_http
 
-from test_system import FAST, make_root
+from test_system import FAST, make_root, wait_for
 
 WEB = {**FAST, "memory": {"enabled": True, "interval_seconds": 0.02, "sync_seconds": 0.05}}
 
@@ -65,7 +65,7 @@ class StaticFileTests(unittest.TestCase):
         for view in ("code", "images"):
             self.assertIn(f'id="view-{view}"', page)
             self.assertIn(f'data-view="{view}"', page)
-        self.assertIn('const VIEWS = ["live", "nodes", "memory", "mind", "code", "images", "logs", "status"]', script)
+        self.assertIn('const VIEWS = ["live", "network", "nodes", "memory", "mind", "code", "images", "logs", "status"]', script)
         for part in ('api("/tools/switch"', 'get("code", "/code")', 'api("/code", { write:', 'action: "approve"',
                      'get("images", "/images")', 'api("/images", { name: f.name, data', 'api("/images/correct"',
                      'get("lessons", "/lessons")', "Approve and run", "Let it decide", "/images/file?sha="):
@@ -91,6 +91,15 @@ class StaticFileTests(unittest.TestCase):
             self.assertIn(part, script)
         for name in ("Reward it", "Punish it"):  # every reward button says what it does
             self.assertIn(f'"aria-label": "{name}"', script)
+
+    def test_the_whole_mesh_and_the_network_page(self):
+        page = (web.WEB_DIR / "index.html").read_text()
+        script = (web.WEB_DIR / "app.js").read_text()
+        for part in ('id="view-network"', 'data-view="network"', 'id="whole"', 'id="whole-svg"', 'href="#network"'):
+            self.assertIn(part, page)
+        for part in ('get("net", "/network")', 'get("netFull", "/network?detail=1")', "function drawNet(", "function renderWhole(",
+                     "function renderNetwork(", "function circuitSvg(", "Not grown yet", "Working now", "function workGroups("):
+            self.assertIn(part, script)
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_the_script_parses(self):
@@ -164,6 +173,52 @@ class WebServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(node["unknowns"])
         code, _, _ = await http(port, "GET", "/memory?node=nope")
         self.assertEqual(code, 404)
+
+    async def test_the_network_endpoint(self):
+        from neuromesh import network as net
+        s = self.system
+        port = await self.serve()
+        for q in ["what is 12 * 7", "the hotel was lovely", "urgency: the server is down asap"]:
+            await s.submit(q)
+        self.assertTrue(await wait_for(lambda: s.registry.champion("dispatch") is not None, timeout=60))
+        code, _, body = await http(port, "GET", "/network")
+        self.assertEqual(code, 200)
+        light = json.loads(body)
+        self.assertFalse(light["detail"])
+        fams = {f["id"]: f for f in light["families"]}
+        self.assertEqual(fams["dispatch"]["kind"], "router")
+        for f in light["families"]:  # every family has its place in the way an order travels
+            self.assertIn(f["station"], light["stations"], f["id"])
+            self.assertEqual(f["params"], sum(n["params"] for n in f["nodes"] if n["status"] != "retired"))
+            for n in f["nodes"]:
+                self.assertNotIn("layers", n)
+        self.assertEqual(light["nodes"], sum(len(f["nodes"]) for f in light["families"]))
+        self.assertIn("calculator", {t["id"] for t in light["tools"]})
+        router = fams["dispatch"]["nodes"]
+        self.assertTrue(router and all(n["sizes"][0] > 0 and n["params"] > 0 for n in router))
+        # with detail: the strongest neurons of every layer and the strongest synapses between them
+        code, _, body = await http(port, "GET", "/network?detail=1")
+        full = json.loads(body)
+        node = next(f for f in full["families"] if f["id"] == "dispatch")["nodes"][0]
+        layers = node["layers"]
+        self.assertEqual([l["size"] for l in layers], node["sizes"])
+        self.assertEqual((layers[0]["kind"], layers[-1]["kind"]), ("input", "output"))
+        self.assertEqual(len(layers[-1]["labels"]), len(layers[-1]["shown"]))
+        for a, b in zip(layers, layers[1:]):
+            self.assertLessEqual(len(a["shown"]), max(16, 2 * 16))
+            self.assertTrue(a["synapses"])
+            for r, c, w in a["synapses"]:  # indices into what is shown, strongest first
+                self.assertLess(r, len(a["shown"]))
+                self.assertLess(c, len(b["shown"]))
+            ws = [abs(w) for _, _, w in a["synapses"]]
+            self.assertEqual(ws, sorted(ws, reverse=True))
+        # what the background is doing, to which node
+        nid = node["id"]
+        with s.activity.track("training", "trainer", f"training: {nid} slice 1 on 9 examples"):
+            busy = net.network(s)
+        mine = next(n for f in busy["families"] for n in f["nodes"] if n["id"] == nid)
+        self.assertTrue(any(b["actor"] == "trainer" and b["now"] for b in mine["busy"]))
+        self.assertTrue(any(w["actor"] == "trainer" and nid in w["nodes"] for w in busy["work"]))
 
     async def test_the_token_protects_the_data_not_the_page(self):
         os.environ["NEUROMESH_TOKEN"] = "s3cret"

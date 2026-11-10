@@ -99,6 +99,8 @@ class Inquiry:
     about: str = ""           # objective: which objective and question ("obj-1:q3")
     by: str = ""              # who answered it, when not a person (e.g. "the web (the ollama teacher)")
     sources: list = field(default_factory=list)  # where that answer came from (title, url)
+    approval_of: str = ""     # approvals: what its approval is about ("tool:kiwix"): asked again after a restart, it
+                              # follows the new approval; decided by any path, the question goes
 
 
 @dataclass
@@ -169,6 +171,7 @@ class Mind:
         self.orders_seen = 0
         self.investigations = 0
         self._announced: dict[str, float] = {}
+        self._born = time.time()
 
     @property
     def enabled(self) -> bool:
@@ -343,10 +346,15 @@ class Mind:
     def on_event(self, ev) -> None:
         if ev.topic == "teacher.lesson" and ev.data.get("source") == "human" and ev.data.get("reason") == "correction":
             self.corrections += 1
-        elif ev.topic == "approval.decided":  # decided elsewhere (/approve, the web): its question is answered
+        elif ev.topic == "approval.decided":  # decided elsewhere (the approvals panel, /approve, the API): it goes
+            status, by = ev.data.get("status"), ev.data.get("by") or "human"
+            about = f"{ev.data.get('kind')}:{ev.data.get('subject')}"
             for q in self.open_inquiries():
-                if q.approval_id and q.approval_id == ev.data.get("id"):
-                    self._close(q, "answered", f"{ev.data.get('status')} by {ev.data.get('by')}", ev.data.get("by") or "human")
+                same = q.approval_id and q.approval_id == ev.data.get("id")
+                alike = status in ("approved", "denied") and q.approval_of and q.approval_of == about  # asked twice
+                if same or alike:
+                    self._close(q, "answered" if status in ("approved", "denied") else "dropped",
+                                f"{status} by {by}" + ("" if same else f" ({ev.data.get('id')})"), by)
 
     def observe(self, order, res) -> None:
         """After every order: note the tone, gaps and unknown skills; ask what an unfulfilled order meant."""
@@ -357,7 +365,8 @@ class Mind:
         tone = next((st["label"] for st in res.steps if st.get("capability") == "affect"), None)
         if tone:
             self.tones.append(tone)
-        m = _SKILL_RE.match(order.text) if res.route not in ("objectives", "tasks", "toolsmith") else None
+        served = res.ok and str(res.route).startswith(("tool:", "skill:"))  # "math: 12/4" the calculator did: no new skill
+        m = _SKILL_RE.match(order.text) if res.route not in ("objectives", "tasks", "toolsmith") and not served else None
         if m:
             name = m.group(1).lower()
             if (name not in s.capabilities and name not in s.tools.tools and name != "tool"
@@ -494,12 +503,42 @@ class Mind:
             if kind == "clarify":
                 for old in [q for q in self.open_inquiries() if q.kind == "clarify"]:
                     self._close(old, "dropped", "superseded by a newer question", "mind", quiet=True)
+        a = self.sys.guardian.approvals.get(approval_id) if approval_id else None
         q = Inquiry(f"inq-{next(self._inq_ids)}", kind, question, why, list(options), order_id, proposal_id,
-                    approval_id, created_at=now, about=about)
+                    approval_id, created_at=now, about=about, approval_of=f"{a.kind}:{a.subject}" if a is not None else "")
         self.inquiries[q.id] = q
         self.sys.store.save_record("inquiries", q.id, q.status, asdict(q))
         self.sys.bus.publish("mind.inquiry", id=q.id, kind=kind, question=question)
         return q
+
+    def tidy(self) -> int:
+        """Questions about approvals that are no longer waiting go: decided by any path, or gone with a restart (then
+        it follows a new approval about the same thing, if there is one). Returns how many it closed."""
+        g = self.sys.guardian
+        closed = 0
+        for q in self.open_inquiries():
+            if not q.approval_id:
+                continue
+            a = g.approvals.get(q.approval_id)
+            if a is not None and a.status == "pending":
+                continue
+            if a is not None:
+                self._close(q, "answered" if a.status in ("approved", "denied") else "dropped",
+                            f"{a.status} by {a.decided_by or 'someone'}", a.decided_by or "guardian", quiet=True)
+                closed += 1
+                continue
+            again = next((x for x in g.pending_approvals() if q.approval_of and f"{x.kind}:{x.subject}" == q.approval_of), None)
+            if again is not None:  # asked again after a restart: the question follows the new approval
+                q.approval_id = again.id
+                self.sys.store.save_record("inquiries", q.id, q.status, asdict(q))
+                continue
+            if time.time() - self._born < 120:
+                continue  # just started: what it asks again may not have been asked yet
+            self._close(q, "dropped", "its approval is no longer waiting (it was asked before a restart)", "mind", quiet=True)
+            closed += 1
+        if closed:
+            self.sys.bus.publish("inquiry.answered", id="", kind="approval", status="tidied", by="mind")
+        return closed
 
     def _close(self, q: Inquiry, status: str, answer: str, by: str, quiet: bool = False) -> None:
         q.status, q.answer, q.answered_at = status, answer[:500], self.clock()
@@ -727,6 +766,7 @@ class Mind:
         """Re-form opinions and turn evidence into proposals."""
         if not self.enabled:
             return
+        self.tidy()
         self.form_opinions()
         s = self.sys
         known = sorted(set(s.capabilities) | set(s.tools.tools))
@@ -819,10 +859,13 @@ class Mind:
         if ws is None or not ws.enabled:
             return None
         ok, why = ws.eligible(q)
-        return {"ok": ok, "why": "" if ok else why, "at": q.created_at + ws.pol.answer_after_minutes * 60,
-                "tried": q.id in ws.tried, "tool": ws.tool() is not None}
+        t = ws.tried.get(q.id) or {}
+        at = max(q.created_at + ws.pol.answer_after_minutes * 60, t.get("next_at", 0) if not t.get("done") else 0)
+        return {"ok": ok, "why": "" if ok else why, "at": at, "tried": bool(t.get("done")), "attempts": t.get("attempts", 0),
+                "last": t.get("why", ""), "tool": ws.tool() is not None, "paused": ws.waiting_why()}
 
     def status(self) -> dict:
+        self.tidy()  # what the page lists: never a question whose approval already went through
         kinds = Counter(n.kind for n in self.notes.values())
         return {"enabled": self.enabled, "note_counts": dict(kinds), "private": len(self.private_notes()),
                 "opinions": len(self.opinions()),

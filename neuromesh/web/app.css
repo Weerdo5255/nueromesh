@@ -711,3 +711,81 @@ tr.tool-removed td b { text-decoration: line-through; text-decoration-color: var
 .tbl tr.diag-row td { padding-top: 0; }
 .tbl tr.diag-row .diag { margin-top: 0; max-width: 100%; }
 .diag pre.diff { max-height: 40vh; }
+
+/* ------------------------------------------------------------------ the whole mesh (Live) and every neuron (Network) */
+.whole { margin-bottom: 18px; }
+.whole-bar { display: flex; align-items: baseline; gap: 6px 14px; flex-wrap: wrap; margin-bottom: 6px; }
+.whole-bar h2 { margin: 0; }
+.whole-bar a { margin-left: auto; }
+.specimen-title { margin: 6px 0 6px; }
+.whole-svg { background: var(--panel); border: 1px solid var(--rule); border-radius: 12px; padding: 6px; overflow-x: auto; }
+.whole-svg svg.net { display: block; width: 100%; min-width: 720px; height: auto; }
+.whole-svg.big svg.net { min-width: 980px; }
+.net-membrane { fill: color-mix(in srgb, var(--hema) 3%, transparent); stroke: var(--hema); stroke-opacity: .35; stroke-width: 1.4; stroke-dasharray: 3 5; }
+.net-hub { fill: var(--ink-3); }
+.net-fam { fill: color-mix(in srgb, var(--hema) 5%, transparent); stroke: var(--edge); stroke-width: 1; }
+.net-fam.inner { fill: color-mix(in srgb, var(--eosin) 3%, transparent); }
+.net-fam.memory { fill: color-mix(in srgb, var(--hema) 7%, transparent); }
+.net-fam.empty { fill: none; stroke-dasharray: 2 3; }
+.net-fam.busy { stroke: var(--eosin); stroke-width: 1.8; }
+.net-fam-name { fill: var(--ink); font: 600 12.5px var(--sans); }
+.net-fam-name.empty { fill: var(--ink-3); font-weight: 450; }
+.small-t { font-size: 11.5px; }
+.net-link { stroke: var(--edge); stroke-width: 1; stroke-dasharray: 2 4; }
+.m-edge.faint { opacity: .45; }
+.net svg [data-netnode], .net [data-netnode] { cursor: pointer; }
+.net-pulse { fill: none; stroke: var(--eosin); stroke-width: 1.4; opacity: .45; }
+.net-pulse.now { stroke-width: 2.2; opacity: .9; animation: net-pulse 1.4s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes net-pulse { 50% { opacity: .25; transform: scale(1.18); } }
+.net-actor { fill: var(--eosin-soft); stroke: var(--eosin); stroke-width: 1; }
+.net-actor-t { fill: var(--eosin); font: 600 11.5px var(--sans); }
+.net-work { fill: none; stroke: var(--eosin); stroke-width: 1.2; stroke-dasharray: 3 4; opacity: .75; animation: net-flow 1.2s linear infinite; }
+@keyframes net-flow { to { stroke-dashoffset: -14; } }
+.m-tool.busy { stroke: var(--eosin); stroke-width: 2; }
+.m-dream-n { fill: color-mix(in srgb, var(--hema) 30%, transparent); stroke: var(--hema); stroke-dasharray: 2 2; }
+@media (prefers-reduced-motion: reduce) { .net-pulse.now, .net-work { animation: none; } }
+
+.net-head { display: grid; gap: 8px; margin-bottom: 12px; }
+.net-head .lede { max-width: 90ch; }
+.net-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--ink-2); }
+.net-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.net-work-list { margin: 16px 0 6px; }
+.net-work-list li { padding: 4px 0; }
+.net-work-list .chip { margin-left: 4px; }
+.net-index { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 14px 0 4px; padding: 8px 0; border-bottom: 1px solid var(--rule); }
+.nfam { margin: 22px 0 8px; }
+.nfam-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.nfam-head h2 { margin: 0; }
+.nfam-desc { color: var(--ink-2); max-width: 90ch; margin: 4px 0 10px; }
+.ncards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; grid-auto-flow: dense; }
+.ncard { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.ncard.span2 { grid-column: span 2; }
+.ncard.span3 { grid-column: span 3; }
+.ncard.busy { border-color: color-mix(in srgb, var(--eosin) 55%, var(--rule)); box-shadow: 0 0 0 2px var(--eosin-soft); }
+.ncard.focus { outline: 2px solid var(--hema); outline-offset: 2px; }
+.ncard header { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.ncard header b { overflow-wrap: anywhere; }
+.ncard p { margin: 4px 0; }
+.nstat { font-size: 12px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--rule); color: var(--ink-2); }
+.nstat.champion { background: var(--hema); border-color: var(--hema); color: var(--panel); }
+.nstat.instance { border-color: var(--hema); color: var(--hema); }
+.nstat.candidate { border-color: var(--eosin); color: var(--eosin); }
+.nbusy { font-size: 12px; color: var(--eosin); font-weight: 600; }
+.nbusy.past { font-weight: 450; opacity: .8; }
+.nwork { color: var(--eosin); }
+svg.circuit { display: block; width: 100%; height: auto; margin-top: 6px; }
+.c-syn { fill: none; }
+.c-syn.exc { stroke: var(--hema); }
+.c-syn.inh { stroke: var(--eosin); }
+.c-cell { stroke-width: 1; }
+.c-cell.input { fill: var(--ink-3); stroke: none; }
+.c-cell.hidden { fill: var(--hema-soft); stroke: var(--hema); }
+.c-cell.output { fill: var(--hema); stroke: none; }
+.c-label { fill: var(--ink-2); font: 10.5px var(--sans); }
+.c-cap { fill: var(--ink-2); font: 11px var(--sans); }
+.c-more { fill: var(--ink-3); font: 10px var(--sans); }
+@media (max-width: 900px) { .ncard.span3 { grid-column: span 2; } }
+@media (max-width: 680px) { .ncard.span2, .ncard.span3 { grid-column: auto; } .ncards { grid-template-columns: 1fr; } }
+.net-actor.past { fill: none; stroke-dasharray: 2 2; opacity: .7; }
+.net-work.past { animation: none; opacity: .3; }
+.net .m-dim, .net .m-sub { font-size: 12px; }

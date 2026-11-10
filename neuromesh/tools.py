@@ -59,6 +59,10 @@ class ToolManifest:
     author: str = ""                            # "neuromesh": its own toolsmith wrote it (P15)
     persistent: bool = False                    # it can stay running (tool.py --serve): see Worker
     secrets: tuple = ()                         # environment variables it is given (e.g. GITEA_TOKEN), shown on its approval
+    one_at_a_time: bool = False                 # one request at a time: the next waits for the one in flight (its server
+                                                # is slow or rate-limited, e.g. SearXNG)
+    backoff_s: float = 0.0                      # after a timeout or a transient failure, it rests this long (doubling,
+                                                # up to 5 minutes) before the next request is sent; 0: never
 
     @property
     def route(self) -> str:
@@ -76,7 +80,8 @@ class ToolManifest:
                    examples=list(m.get("examples", [])), templates=list(m.get("templates", [])),
                    fillers=dict(m.get("fillers", {})), config=dict(m.get("config", {})),
                    author=str(m.get("author", "")), persistent=bool(m.get("persistent", False)),
-                   secrets=tuple(str(x) for x in m.get("secrets", []) if str(x).strip()))
+                   secrets=tuple(str(x) for x in m.get("secrets", []) if str(x).strip()),
+                   one_at_a_time=bool(m.get("one_at_a_time", False)), backoff_s=float(m.get("backoff_s", 0) or 0))
 
 
 @dataclass
@@ -116,6 +121,7 @@ class ToolRun:
     query: dict | None = None                   # the tool asks a director for context before it can answer
     refused: bool = False                       # the tool switch is off for it: it never ran (toolgate.py)
     trace: str = ""                             # the tool's traceback, when its own code failed (tooldoctor.py)
+    retry_after: float = 0.0                    # seconds to wait before asking it again (a timeout, a busy server)
 
 
 _LAUNCHER = """
@@ -207,6 +213,28 @@ class Sandbox:
         self.worker_requests = worker_requests      # a worker is replaced after this many requests
         self.workers: dict[str, Worker] = {}
         self._starting: dict[str, asyncio.Lock] = {}
+        self._one: dict[str, asyncio.Lock] = {}     # tools that take one request at a time
+        self.resting: dict[str, dict] = {}          # tool -> {"until", "why", "fails"}: no request before "until"
+
+    def rest_left(self, name: str) -> float:
+        """Seconds before a resting tool may be asked again (0: now)."""
+        r = self.resting.get(name)
+        return max(0.0, r["until"] - time.time()) if r else 0.0
+
+    def _rested(self, tool: Tool, run: ToolRun) -> None:
+        """After a run: a timeout or a transient failure rests the tool (doubling); a success ends its rest."""
+        m = tool.manifest
+        if not m.backoff_s or run.refused:
+            return
+        if run.ok or run.not_found or run.query is not None:
+            self.resting.pop(m.name, None)
+            return
+        if not (run.transient or run.error.startswith("timeout after")):
+            return
+        r = self.resting.setdefault(m.name, {"until": 0.0, "why": "", "fails": 0})
+        r["fails"] += 1
+        wait = run.retry_after or min(300.0, m.backoff_s * 2 ** (r["fails"] - 1))
+        r["until"], r["why"] = time.time() + wait, run.error[:160]
 
     NETWORK_ENV = ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
                    "SSL_CERT_FILE", "SSL_CERT_DIR")
@@ -264,6 +292,35 @@ class Sandbox:
         why = self.gate(tool) if self.gate is not None else None
         if why:  # the tool switch is off for it: it does not run, for anything (toolgate.py)
             return ToolRun(False, error=why, refused=True)
+        if not (m.one_at_a_time or m.backoff_s):
+            return await self._run(tool, text, timeout, config, context)
+        # a slow or rate-limited server: one request at a time, and none while it rests after a timeout
+        t0 = time.time()
+        lock = self._one.setdefault(m.name, asyncio.Lock())
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout)
+        except asyncio.TimeoutError:
+            return ToolRun(False, error=f"{m.name} was still busy with another request after {timeout:g}s",
+                           transient=True, retry_after=m.backoff_s or 5.0)
+        try:
+            left = self.rest_left(m.name)
+            budget = timeout - (time.time() - t0)
+            if left > 0:
+                r = self.resting[m.name]
+                if left > max(0.0, budget - 1.0):  # it can't wait that long for this caller: said, and when to come back
+                    return ToolRun(False, error=f"{m.name} is resting after '{r['why']}': next request in {left:.0f}s",
+                                   transient=True, retry_after=left)
+                await asyncio.sleep(left)
+                budget = timeout - (time.time() - t0)
+            run = await self._run(tool, text, max(1.0, budget), config, context)
+            self._rested(tool, run)
+            return run
+        finally:
+            lock.release()
+
+    async def _run(self, tool: Tool, text: str, timeout: float, config: dict | None = None,
+                   context: list | None = None) -> ToolRun:
+        m = tool.manifest
         entry = (m.path / m.entrypoint).resolve()
         if m.path.resolve() not in entry.parents:
             return ToolRun(False, error="entrypoint escapes the tool folder")
@@ -275,8 +332,9 @@ class Sandbox:
             try:
                 w = await self._worker(tool)
                 data = await w.call(request, timeout)
-            except asyncio.TimeoutError:
-                return ToolRun(False, error=f"timeout after {timeout}s", ms=(time.perf_counter() - t0) * 1000)
+            except asyncio.TimeoutError:  # a networked tool's server was slow: that passes (it isn't held against it)
+                return ToolRun(False, error=f"timeout after {timeout:g}s", ms=(time.perf_counter() - t0) * 1000,
+                               transient="network" in m.permissions)
             except Exception as exc:  # the worker died (its CPU budget, a crash): a fresh one next time
                 return ToolRun(False, error=f"the tool's worker stopped ({exc})", ms=(time.perf_counter() - t0) * 1000,
                                transient=True)
@@ -295,7 +353,8 @@ class Sandbox:
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
-            return ToolRun(False, error=f"timeout after {timeout}s", ms=(time.perf_counter() - t0) * 1000)
+            return ToolRun(False, error=f"timeout after {timeout:g}s", ms=(time.perf_counter() - t0) * 1000,
+                           transient="network" in m.permissions)
         ms = (time.perf_counter() - t0) * 1000
         if proc.returncode != 0:
             stderr = err.decode(errors="replace")
@@ -312,8 +371,13 @@ class Sandbox:
         if not isinstance(data, dict):
             return ToolRun(False, error="tool printed invalid JSON", ms=ms)
         if "error" in data:
+            try:
+                retry = max(0.0, min(3600.0, float(data.get("retry_after") or 0)))
+            except (TypeError, ValueError):
+                retry = 0.0
             return ToolRun(False, error=str(data["error"]), ms=ms, transient=bool(data.get("transient")),
-                           not_found=bool(data.get("not_found")), trace=str(data.get("trace") or "")[-4000:])
+                           not_found=bool(data.get("not_found")), trace=str(data.get("trace") or "")[-4000:],
+                           retry_after=retry)
         if data.get("query"):  # it asks a director for context (see the module docstring)
             q = data["query"] if isinstance(data["query"], dict) else {"ask": str(data["query"])}
             q = {k: str(v)[:300] for k, v in q.items() if k in ("ask", "about", "why")}
@@ -344,6 +408,7 @@ class ToolRegistry:
         self._persisted = store.load_tools()
         # tools a person removed from the mesh: their files stay where they are, and scans pass them by
         self.removed: dict[str, dict] = json.loads(store.get_kv("tools.removed") or "{}")
+        self.retry_at: dict[str, float] = {}  # quarantined only because their server didn't answer: tested again then
 
     def save_removed(self) -> None:
         self.store.set_kv("tools.removed", json.dumps(self.removed))

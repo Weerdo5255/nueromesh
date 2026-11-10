@@ -78,7 +78,7 @@ class PanelTests(unittest.IsolatedAsyncioTestCase):
         for route in ("skill:sentiment", "skill:urgency", "tool:calculator", "tool:word_stats", "answer:direct"):
             self.assertIn(route, text)
         self.assertIn(f"challenger {s.registry.candidates('sentiment')[0].id}", text)
-        self.assertIn("calculator v1.1.0 [active]", text)
+        self.assertIn(f"calculator v{s.tools.tools['calculator'].manifest.version} [active]", text)
         ascii_text = "\n".join(line for line, _ in network_lines(s, ASCII))
         self.assertTrue(all(ord(ch) < 128 for ch in ascii_text), "ASCII mode must not emit Unicode")
 

@@ -1217,7 +1217,7 @@ class Explorer(Agent):
                     if run.ok:  # it ran, but gave the wrong answer
                         run = ToolRun(False, run.output, f"expected {ex.get('expect')!r}, got {run.output!r}", run.ms)
                     failures.append({"input": ex["input"], "expected": ex.get("expect"),
-                                     "got": run.output, "error": run.error})
+                                     "got": run.output, "error": run.error, "transient": run.transient})
                     s.tooldoctor.note(tool, run, ex["input"], "self-test", ex.get("expect"))
         rate = passed / len(examples)
         if rate >= s.directives.tools.self_test_pass_rate:
@@ -1227,6 +1227,10 @@ class Explorer(Agent):
             tool.note = f"self-tests passed {passed}/{len(examples)}"
             tool.last_error = "; ".join(dict.fromkeys((f["error"] or f"expected {f['expected']!r}, got {f['got']!r}")
                                                       for f in failures[:2]))[:600]
+            if failures and all(f.get("transient") for f in failures):  # its server didn't answer: not its fault
+                wait = max(60.0, s.sandbox.rest_left(tool.name) + 5)
+                s.tools.retry_at[tool.name] = time.time() + wait
+                tool.note += f"; its server didn't answer, so it is tested again in {wait / 60:.0f} min"
             s.tools.persist(tool)
             s.guardian.audit("explorer", "tool.quarantined", tool.name, failures=failures[:3])
             s.bus.publish("tool.quarantined", tool=tool.name, reason=tool.note)
@@ -1376,7 +1380,9 @@ class Investigator(Agent):
             if not tool.manifest.examples:
                 continue
             since = self.quarantine_seen.setdefault(tool.name, now)
-            if now - since >= cool and s.retest_tool(tool.name)[0]:
+            soon = s.tools.retry_at.get(tool.name)  # its server didn't answer its self-tests: tried again sooner
+            if (now - since >= cool or (soon and now >= soon)) and s.retest_tool(tool.name)[0]:
+                s.tools.retry_at.pop(tool.name, None)
                 self.quarantine_seen.pop(tool.name, None)
                 s.guardian.audit("investigator", "tool.retest", tool.name,
                                  reason=f"quarantined for {cool:.0f}s; running its self-tests again")

@@ -1,9 +1,9 @@
 name = "calculator"
-version = "1.1.0"
+version = "1.2.0"
 description = "Mathematics: arithmetic (exact fractions, powers, roots, logs, trig), equations and systems of equations, inequalities, expanding and factoring, derivatives, integrals, limits, sums, primes and factors, statistics and matrices. Asks a director for any quantity it does not know."
 entrypoint = "tool.py"
 permissions = []
-keywords = ['re:\d\s*([-+*/x^]|\*\*)\s*\d', "calculate", "compute", "plus", "minus", "times", "multiplied",
+keywords = ['re:\d\s*([-+*/x^×÷·]|\*\*)\s*[\d({\[]', 're:[)}\]]\s*[-+*/^×÷·]', 're:\\(frac|sqrt|cdot|times)\b', "calculate", "compute", "plus", "minus", "times", "multiplied",
             "divided", "+", "*", "/", "=", "work out", "sum of", "power of", "cubed", "squared", "square root", "percent", "%",
             're:\bsolve\b', 're:\bequation', 're:\bderivative\b', 're:\bdifferentiate\b', 're:\bintegra(l|te)\b',
             're:\blimit of\b', 're:\bfactori[sz]e\b|\bprime factors?\b|\bfactor\s+(\d|[a-z]\s*\^|\()', 're:\bis \d+ (a )?prime\b',
@@ -61,3 +61,13 @@ route = false                           # a self-test only, not routing data
 input = "integrate x^2 from 0 to 3"
 expect = "9"
 route = false                           # a self-test only, not routing data
+
+[[examples]]
+input = "calculate: {2 + 3} * [4 - 1]"
+expect = "15"
+route = false                           # braces, brackets and a label with a colon
+
+[[examples]]
+input = "\\frac{3}{4} \\cdot 8"
+expect = "6"
+route = false                           # LaTeX

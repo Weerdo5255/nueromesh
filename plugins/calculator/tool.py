@@ -1,6 +1,9 @@
 """Calculator tool: arithmetic, equations, calculus, number theory, statistics and matrices
 (mathsolver.py: pure Python, no eval()). When an order names a quantity it does not know ("the speed
-of light times 3"), it asks a director ({"query": ...}) and is run again with the answer as context."""
+of light times 3"), it asks a director ({"query": ...}) and is run again with the answer as context.
+Input is checked first (mathsolver.tidy): braces, LaTeX, labels and ratios with ':', other ways of writing
+symbols, unbalanced brackets. An order it can't read is answered with why ("bad_input"), which is not
+held against the tool."""
 import json
 import os
 import re
@@ -33,9 +36,13 @@ def main():
                                     "why": f"to calculate with {need.phrase}"}}))
         return
     except MathError as exc:
-        result = legacy(text)
-        if result is None:
-            raise exc
+        try:
+            result = legacy(text)
+        except MathError:
+            result = None
+        if result is None:  # the order, not this code: said plainly, and not held against the tool
+            print(json.dumps({"error": str(exc), "not_found": True, "bad_input": True}))
+            return
     print(json.dumps(result))
 
 

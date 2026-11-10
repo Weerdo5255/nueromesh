@@ -121,6 +121,63 @@ class NumberTheoryAndMoreTests(unittest.TestCase):
         self.assertEqual(ask("increase 80 by 15%")["output"], 92)
 
 
+class InputCheckingTests(unittest.TestCase):
+    """mathsolver.tidy: what people paste - braces, LaTeX, labels and ratios with ':', other symbols, odd brackets."""
+
+    def test_braces_brackets_and_labels(self):
+        for text, want in [("calculate: {2 + 3} * [4 - 1]", 15), ("{{1+1}}*3", 6), ("q1: 3 + 4", 7), ("math: 6 × 7", 42),
+                           ("Problem 2: 7*6", 42), ("a) 5*5", 25), ("solve: x + 1 = 3", 2), ("solve {2x + 3 = 11}", 4),
+                           ("x^2 - 5x + 6 = 0 : solve", "x = 2 or x = 3"), ("mean of [1, 2, 3, 4]", 2.5)]:
+            self.assertEqual(ask(text)["output"], want, text)
+
+    def test_latex(self):
+        for text, want in [(r"\frac{3}{4} \cdot 8", 6), (r"\dfrac{\frac{1}{2}}{4}", 0.125), (r"$\sqrt{16} + 2^{3}$", 12),
+                           (r"\sqrt[3]{27}", 3), (r"\frac{x}{2} = 4", 8), (r"\sin(\frac{\pi}{2})", 1),
+                           (r"\frac{d}{dx}(x^3 + 2x)", "3x^2 + 2"), (r"\int_0^3 x^2 dx", 9), (r"\int_{0}^{\pi} \sin(x) \, dx", 2),
+                           (r"\lim_{x \to 0} \frac{\sin(x)}{x}", 1), (r"\sum_{k=1}^{10} k^2", 385)]:
+            self.assertEqual(ask(text)["output"], want, text)
+        r = ask(r"\frac{3}{4} \cdot 8")
+        self.assertEqual(r["read_as"], "(3/4) * 8")  # no brackets around bare numbers
+        self.assertIn("LaTeX read as plain maths", r["say"])
+
+    def test_other_ways_of_writing_symbols(self):
+        for text, want in [("10 ÷ 4", 2.5), ("2³ + 1", 9), ("½ + ¼", 0.75), ("1½ * 2", 3), ("x² − 5x + 6 = 0", "x = 2 or x = 3"),
+                           ("√49 + 1", 8), ("2 ∶ 4", 0.5), ("$5 + $3", 8), ("“2 + 2”", 4), ("2​+​2", 4)]:
+            self.assertEqual(ask(text)["output"], want, text)
+
+    def test_colons_ratios_and_times(self):
+        r = ask("the ratio 3:4")
+        self.assertEqual(r["output"], 0.75)
+        self.assertIn("a ratio a:b read as a/b", r["say"])
+        self.assertEqual(ask("ratio 3:4 of 20")["output"], 15)
+        self.assertEqual(ask("(3/4) of 20")["output"], 15)
+        r = ask("at 3:30 what is 2+2")  # a time of day is not part of the sum
+        self.assertEqual(r["output"], 4)
+        self.assertIn("the time 3:30 left out", r["say"])
+        self.assertEqual(ask("f(x) = x^2 + 1 at x = 3")["output"], 10)
+        self.assertEqual(ask("f(3) where f(x)=2x+1")["output"], 7)
+
+    def test_unbalanced_brackets_are_mended_and_said(self):
+        for text, note in [("((2+3)*4", "1 missing ')' added"), ("(2+3))*4", "1 extra ')' dropped")]:
+            r = ask(text)
+            self.assertEqual(r["output"], 20, text)
+            self.assertIn(note, r["say"])
+        self.assertEqual(ms.tidy("(2)(3)"), "(2)(3)")  # brackets that mean something stay
+        self.assertEqual(ask("2(3)")["output"], 6)
+
+    def test_what_it_cannot_read_is_named(self):
+        for text, char in [("what is 3 # 4", "#"), ("5 @ 2", "@")]:
+            with self.assertRaises(ms.MathError) as cm:
+                ask(text)
+            self.assertIn(f"'{char}'", str(cm.exception))
+        out = run_tool("what is 3 # 4")  # said plainly, as the order's fault, not the tool's
+        self.assertTrue(out["bad_input"] and out["not_found"])
+        self.assertIn("'#'", out["error"])
+        self.assertNotIn("trace", out)
+        t = ms.tidy("{2+3}*[4-1]")
+        self.assertEqual((t, t.notes), ("(2+3)*(4-1)", []))
+
+
 class LoopBackTests(unittest.TestCase):
     def test_it_asks_a_director_for_what_it_does_not_know(self):
         with self.assertRaises(ms.NeedToKnow) as caught:

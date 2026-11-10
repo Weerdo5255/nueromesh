@@ -212,6 +212,8 @@ class WebSearchPolicy:
     min_sources: int = 1                # results an answer must cite
     skip_personal: bool = True          # questions about you or your things ("my", "I") are never sent to the web
     keep: int = 300
+    retries: int = 4                    # a search that timed out (or SearXNG was busy) is tried again, up to this many times
+    retry_minutes: float = 5.0          # ... after this long, then double
 
 
 @dataclass

@@ -17,10 +17,17 @@
                             on with it - and a person's word still overrides it. What it could not answer stays open.
 
 Each question is searched once on its own (again when a person presses Search the web now); [websearch] max_per_hour
-searches an hour at most. The Searcher agent looks for due questions every [websearch] check_every_seconds.
+searches an hour at most. The Searcher agent looks for due questions every [websearch] check_every_seconds - it is light
+work, so it runs even while the mesh is busy training (not while it is paused, halted or asleep).
+
+Patience with SearXNG: one search at a time; a timeout, a 429 or a 5xx rests it (plugins/searxng, the sandbox) and the
+Searcher sends nothing while it rests. A question whose search failed that way is tried again later ([websearch]
+retry_minutes, then double, up to [websearch] retries times), not given up on. A clarify question superseded by a
+newer one (the mind keeps only the newest open, so it doesn't nag) is still searched when its time is up.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -29,17 +36,21 @@ from collections import Counter, deque
 from .agents import Agent
 from .knowledge import content_words
 
-PERSONAL = re.compile(r"\b(i|i'm|i've|i'd|me|my|mine|myself|our|ours|we|we're|us)\b", re.I)
+PERSONAL = re.compile(r"\b(i|i'm|i've|i'd|i'll|me|my|mine|myself|our|ours|ourselves)\b", re.I)
+_GENERIC = re.compile(r"\b(?:tell|show|give|teach|remind|let)\s+me\b|\bhow\s+(?:do|can|should|would|could)\s+(?:i|we)\b|"
+                      r"\b(?:can|should|could)\s+(?:i|we)\b|\bfor\s+me\b|\bwhat\s+(?:do|should|can)\s+i\b", re.I)
 SECRET = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+|\b\d{7,}\b|\b(?:sk|pk|ghp|gho|xox[abp])[-_][A-Za-z0-9_-]{8,}|\b[A-Fa-f0-9]{32,}\b"
                     r"|\b(?:password|passwd|token|api[_ ]?key)\b", re.I)
 _LEAD = re.compile(r"^\s*(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:tell\s+me\s+)?", re.I)
 
 
 def personal(text: str) -> str:
-    """Why this question stays at home ('' if it may be searched)."""
+    """Why this question stays at home ('' if it may be searched). "tell me ...", "how do I ..." ask about the
+    world, not about you; "my", "our", "I am" are about you."""
     if SECRET.search(text):
         return "it has something like an address, a long number or a key in it"
-    if PERSONAL.search(text):
+    rest = _GENERIC.sub(" ", _LEAD.sub("", text))
+    if PERSONAL.search(rest):
         return "it is about you or your things"
     return ""
 
@@ -73,7 +84,10 @@ class WebSearch:
         raw = system.store.get_kv("websearch.state")
         st = json.loads(raw) if raw else {}
         self.history: deque = deque(st.get("history", []), maxlen=max(10, self.pol.keep))
-        self.tried: dict[str, float] = st.get("tried", {})
+        # question -> {"at", "attempts", "next_at", "done", "why"} (older states kept a time: searched, and done)
+        self.tried: dict[str, dict] = {k: (v if isinstance(v, dict) else {"at": v, "attempts": 1, "next_at": 0.0,
+                                                                           "done": True, "why": ""})
+                                       for k, v in st.get("tried", {}).items()}
         self.counts: Counter = Counter(st.get("counts", {}))
         self.times: deque = deque(st.get("times", []), maxlen=500)
         self._busy = False
@@ -138,7 +152,7 @@ class WebSearch:
         return self.pol.enabled
 
     def save(self) -> None:
-        tried = dict(sorted(self.tried.items(), key=lambda kv: kv[1])[-500:])
+        tried = dict(sorted(self.tried.items(), key=lambda kv: kv[1].get("at", 0))[-500:])
         self.sys.store.set_kv("websearch.state", json.dumps({"history": list(self.history), "tried": tried,
                                                              "counts": dict(self.counts), "times": list(self.times),
                                                              "settings": self.settings}))
@@ -171,7 +185,9 @@ class WebSearch:
         return None
 
     def eligible(self, q) -> tuple[bool, str]:
-        if q.status != "open":
+        superseded = (q.kind == "clarify" and q.status == "dropped" and q.answer.startswith("superseded")
+                      and time.time() - q.created_at < 86400)  # the mind asks only the newest; the web still looks
+        if q.status != "open" and not superseded:
             return False, "it is not open"
         if q.kind not in self.pol.kinds or q.approval_id or q.proposal_id:
             return False, "only people answer that kind of question"
@@ -182,35 +198,69 @@ class WebSearch:
             return False, f"it stays at home: {personal(text)}"
         return True, text
 
+    def candidates(self) -> list:
+        """Open questions, and clarify questions the mind superseded with a newer one."""
+        now = time.time()
+        return [q for q in self.sys.mind.inquiries.values()
+                if q.status == "open" or (q.kind == "clarify" and q.status == "dropped" and now - q.created_at < 86400)]
+
+    def finished(self, q) -> bool:
+        t = self.tried.get(q.id)
+        return bool(t) and (t.get("done") or time.time() < t.get("next_at", 0))
+
     def due(self) -> list:
         if not self.enabled or not getattr(self.sys.mind, "enabled", False):
             return []
         wait = self.pol.answer_after_minutes * 60
         now = time.time()
         out = []
-        for q in self.sys.mind.open_inquiries():
-            if q.id in self.tried or now - q.created_at < wait:
+        for q in self.candidates():
+            if self.finished(q) or now - q.created_at < wait:
                 continue
             if self.eligible(q)[0]:
                 out.append(q)
         return sorted(out, key=lambda q: q.created_at)
 
+    def waiting_why(self) -> str:
+        """Why the Searcher isn't searching right now ('' when it may)."""
+        g = self.sys.guardian
+        if not self.enabled:
+            return "web search is off"
+        if self.tool() is None:
+            return "the searxng tool isn't active"
+        if g.halted or g.paused:
+            return "the mesh is paused"
+        if g.sleeping:
+            return "the mesh is asleep (it searches when it wakes)"
+        if self.budget() <= 0:
+            return f"its {self.pol.max_per_hour} searches this hour are spent"
+        left = self.sys.sandbox.rest_left("searxng")
+        if left > 0:
+            return f"SearXNG is resting after '{self.sys.sandbox.resting['searxng']['why'][:80]}' ({left:.0f}s left)"
+        return ""
+
     # ------------------------------------------------------------------ searching and answering
     async def search(self, text: str) -> tuple[dict | None, str]:
+        found, why, _ = await self._search(text)
+        return found, why
+
+    async def _search(self, text: str) -> tuple[dict | None, str, float]:
+        """SearXNG's results, or why not and - when it may answer later (slow, busy, resting) - how long to wait."""
         s, t = self.sys, self.tool()
         if t is None:
-            return None, "the searxng tool isn't active (approve it, and switch it on)"
+            return None, "the searxng tool isn't active (approve it, and switch it on)", 0.0
         if not s.guardian.authorize_tool_run(t).allowed:
-            return None, "the guardian won't let it run the searxng tool now"
+            return None, "the guardian won't let it run the searxng tool now", 60.0
         payload = json.dumps({"op": "search", "q": text, "engines": self.pol.engines, "categories": self.pol.categories,
                               "language": self.pol.language, "results": self.pol.results})
         timeout = t.manifest.timeout_s or s.directives.tools.default_timeout_s
         self.times.append(time.time())
         run = await s.sandbox.run(t, payload, timeout, s.tool_config(t))
-        s.record_tool_run(t, run)
+        s.record_tool_run(t, run, text=text)
         if not run.ok:
-            return None, (run.error or "SearXNG found nothing")[:240]
-        return dict(run.extra), ""
+            later = (run.retry_after or 60.0) if run.transient else 0.0
+            return None, (run.error or "SearXNG found nothing")[:240], later
+        return dict(run.extra), "", 0.0
 
     async def compose(self, question: str, found: dict) -> tuple[dict | None, str]:
         """An answer from what SearXNG found: a teacher's reading of the results, or its own."""
@@ -259,9 +309,10 @@ class WebSearch:
         if self.budget() <= 0:
             rec["why"] = f"its budget of {self.pol.max_per_hour} searches this hour is spent"
             return rec
-        self.tried[q.id] = time.time()
+        t = self.tried.setdefault(q.id, {"at": 0.0, "attempts": 0, "next_at": 0.0, "done": False, "why": ""})
+        t["at"], t["attempts"] = time.time(), t["attempts"] + 1
         with s.activity.track("websearch", "searcher", f"searching the web: {text[:70]}"):
-            found, why = await self.search(text)
+            found, why, later = await self._search(text)
             made = None
             if found is not None:
                 rec["results"] = len(found.get("results") or [])
@@ -270,10 +321,19 @@ class WebSearch:
         self.counts["searched"] += 1
         if made is None:
             rec["why"] = why
-            self.counts["not answered"] += 1
+            if later and t["attempts"] < max(1, self.pol.retries):  # slow or busy: tried again, not given up on
+                wait = max(later, self.pol.retry_minutes * 60 * 2 ** (t["attempts"] - 1))
+                t.update(next_at=time.time() + wait, done=False, why=why)
+                rec["retry_at"] = round(t["next_at"], 1)
+                rec["why"] = f"{why} - it tries again in {wait / 60:.0f} min (attempt {t['attempts']} of {self.pol.retries})"
+                self.counts["will retry"] += 1
+            else:
+                t.update(done=True, why=why)
+                self.counts["not answered"] += 1
             self._record(rec)
-            s.bus.publish("web.unanswered", inquiry=q.id, question=text[:200], why=why[:200], by=by)
+            s.bus.publish("web.unanswered", inquiry=q.id, question=text[:200], why=rec["why"][:200], by=by)
             return rec
+        t.update(done=True, why="answered")
         rec.update(ok=True, answer=made["answer"], sources=made["sources"], read_by=made["read_by"], how=made["how"],
                    confidence=made["confidence"])
         self.apply(q, text, made)
@@ -319,6 +379,8 @@ class WebSearch:
     async def tick(self) -> dict | None:
         if self._busy or not self.enabled or self.tool() is None or self.budget() <= 0:
             return None
+        if self.sys.sandbox.rest_left("searxng") > 0:  # SearXNG is resting after a timeout: nothing more until it has
+            return None
         due = self.due()
         if not due:
             return None
@@ -334,6 +396,9 @@ class WebSearch:
         if q is None:
             return {"ok": False, "why": f"no question {inquiry_id}"}
         self.tried.pop(q.id, None)
+        left = self.sys.sandbox.rest_left("searxng")
+        if 0 < left <= 60:  # resting after a timeout: a person can wait a minute; longer, they are told
+            await asyncio.sleep(left)
         return await self.answer(q, by=by)
 
     def status(self) -> dict:
@@ -348,9 +413,14 @@ class WebSearch:
                 "kinds": list(self.pol.kinds), "budget": self.budget(), "max_per_hour": self.pol.max_per_hour,
                 "counts": dict(self.counts), "history": list(self.history)[-30:][::-1],
                 "teacher": self.pol.teacher and self.sys.teachers.has_llm(),
-                "due": [q.id for q in self.due()],
-                "waiting": [{"id": q.id, "minutes": round((time.time() - q.created_at) / 60, 1)}
-                            for q in self.sys.mind.open_inquiries() if self.eligible(q)[0] and q.id not in self.tried]}
+                "due": [q.id for q in self.due()], "paused": self.waiting_why(),
+                "resting": round(self.sys.sandbox.rest_left("searxng"), 1),
+                "waiting": [{"id": q.id, "minutes": round((time.time() - q.created_at) / 60, 1),
+                             "search_in": round(max(0.0, q.created_at + self.pol.answer_after_minutes * 60 - time.time(),
+                                                    (self.tried.get(q.id) or {}).get("next_at", 0) - time.time()) / 60, 1),
+                             "attempts": (self.tried.get(q.id) or {}).get("attempts", 0),
+                             "superseded": q.status == "dropped"}
+                            for q in self.candidates() if self.eligible(q)[0] and not (self.tried.get(q.id) or {}).get("done")]}
 
     def lines(self) -> list[str]:
         st = self.status()
@@ -374,7 +444,9 @@ class Searcher(Agent):
 
     async def step(self) -> None:
         s = self.sys
-        if not s.websearch.enabled or not s.guardian.background_allowed():
+        # light work for a person's question: it doesn't wait for training to quieten down (the duty cycle), only
+        # for the mesh to be awake and running (P2)
+        if not s.websearch.enabled or not s.guardian.background_allowed(light=True):
             return
         rec = await s.websearch.tick()
         if rec is not None:

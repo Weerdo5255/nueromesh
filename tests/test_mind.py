@@ -196,6 +196,46 @@ class MindTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await wait_for(lambda: calc.state == "active", timeout=20), calc.note)
         self.assertTrue(any(a["kind"] == "tool.retest" for a in s.store.recent_audit(100)))
 
+    async def test_questions_about_approvals_go_once_the_approval_is_decided(self):
+        s, m = self.system, self.system.mind
+        g = s.guardian
+        a = g.request_approval("tool", "kiwix", {"actor": "test"})
+        q = m.ask("approval", "May it use kiwix?", approval_id=a.id)
+        self.assertEqual(q.approval_of, "tool:kiwix")
+        g.decide(a.id, True, by="human")  # decided in the approvals panel, not by answering the question
+        self.assertTrue(await wait_for(lambda: q.status != "open"))
+        self.assertEqual((q.status, q.answer), ("answered", "approved by human"))
+        self.assertNotIn(q, m.open_inquiries())
+        # asked twice about the same thing: deciding either one answers both questions
+        a1, a2 = g.request_approval("tool", "gitea", {}), g.request_approval("tool", "gitea", {})
+        q1, q2 = m.ask("approval", "gitea?", approval_id=a1.id), m.ask("approval", "gitea again?", approval_id=a2.id)
+        g.decide(a2.id, False, by="human")
+        self.assertTrue(await wait_for(lambda: q1.status != "open" and q2.status != "open"))
+        # approvals live in memory: after a restart the question follows a new approval about the same thing
+        a3 = g.request_approval("tool", "searxng", {})
+        q3 = m.ask("approval", "searxng?", approval_id=a3.id)
+        del g.approvals[a3.id]  # (what a restart does)
+        a4 = g.request_approval("tool", "searxng", {})
+        self.assertEqual(m.tidy(), 0)
+        self.assertEqual((q3.status, q3.approval_id), ("open", a4.id))
+        g.decide(a4.id, True)
+        self.assertTrue(await wait_for(lambda: q3.status == "answered"))
+        # ... or goes, once nothing asks again (after a short grace while the mesh starts up)
+        a5 = g.request_approval("plugin", "dice", {})
+        q5 = m.ask("approval", "dice?", approval_id=a5.id)
+        del g.approvals[a5.id]
+        self.assertEqual(m.tidy(), 0)
+        m._born -= 600
+        self.assertEqual(m.tidy(), 1)
+        self.assertEqual(q5.status, "dropped")
+        self.assertFalse([x for x in m.open_inquiries() if x.kind == "approval"])
+
+    async def test_an_order_a_tool_served_is_not_an_unknown_skill(self):
+        m = self.system.mind
+        res = await self.say("math: 12 / 4")
+        self.assertTrue(res.ok and res.route.startswith("tool:"), res.route)
+        self.assertNotIn("math", m.unknown_skills)
+
     async def test_budget_and_persistence(self):
         s = self.system
         s.directives.mind.investigations_per_hour = 1

@@ -35,6 +35,7 @@
 
 <nav class="views" id="views" aria-label="Views">
   <a href="#live" data-view="live">Live</a>
+  <a href="#network" data-view="network">Network</a>
   <a href="#nodes" data-view="nodes">Nodes</a>
   <a href="#memory" data-view="memory">Memory</a>
   <a href="#mind" data-view="mind">Mind <span class="badge" id="badge-mind"></span></a>
@@ -48,6 +49,15 @@
   <section class="view" id="view-live">
     <div class="live">
       <div class="specimen-col">
+        <section class="whole" id="whole" aria-labelledby="whole-title">
+          <div class="whole-bar">
+            <h2 id="whole-title">The whole mesh</h2>
+            <p class="small dim" id="whole-sum"></p>
+            <a href="#network" class="small">Every neuron</a>
+          </div>
+          <div class="whole-svg" id="whole-svg"><div class="empty">Waiting for NeuroMesh…</div></div>
+        </section>
+        <h2 class="specimen-title">How an order travels</h2>
         <div class="specimen-bar">
           <p class="small dim" id="specimen-hint">Hover a node for its shape and scores.</p>
           <button type="button" id="closer" class="small" aria-pressed="false" aria-controls="microscope">Closer look</button>
@@ -74,6 +84,10 @@
         <div class="mic-node" id="mic-anatomy"></div>
       </div>
     </section>
+  </section>
+
+  <section class="view" id="view-network" hidden>
+    <div id="network"></div>
   </section>
 
   <section class="view" id="view-nodes" hidden>

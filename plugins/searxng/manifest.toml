@@ -1,13 +1,15 @@
 name = "searxng"
-version = "1.0.0"
+version = "1.1.0"
 description = "Searches the web through your own SearXNG (a metasearch engine that asks Google, DuckDuckGo, Bing and others at once and returns their results). The mesh uses it to answer questions nobody answered in time (websearch.py); asked an order (\"search the web for ...\") it lists what it found."
 entrypoint = "tool.py"
 permissions = ["network"]      # HTTP to your SearXNG -> needs a human's approval once (P3)
 provides = "web"               # search results: read to answer a question, not kept as articles
 keywords = ["search the web", "web search", "google", "searxng", "search online", "look online", "on the internet",
             "on the web"]
-timeout_s = 30
-persistent = true              # it stays running (tool.py --serve): kept-alive connections, searches at once
+timeout_s = 45                 # SearXNG waits for its engines: up to "timeout" (25 s) for its answer, and a margin
+persistent = true              # it stays running (tool.py --serve): kept-alive connections
+one_at_a_time = true           # one search at a time: the next waits for the one in flight
+backoff_s = 15                 # after a timeout, a 429 or a 5xx: no request for 15 s, doubling up to 5 minutes
 
 templates = ["search the web for {topic}", "google {topic}", "look up {topic} online", "search online for {topic}",
              "what does the web say about {topic}", "find {topic} on the internet"]
@@ -26,6 +28,8 @@ language = "en"
 safesearch = 1                 # 0 off, 1 moderate, 2 strict
 results = 8                    # results returned for a search
 use_proxy = false              # talk to SearXNG directly, even if HTTP(S)_PROXY is set
+timeout = 25                   # seconds it waits for SearXNG's answer (it is never asked again straight away)
+backoff = 15                   # seconds it rests after a timeout, a 429 or a 5xx (doubling, up to 5 minutes)
 
 # Self-test: SearXNG answers, and answers in JSON (no assumption about which engines it has).
 [[examples]]

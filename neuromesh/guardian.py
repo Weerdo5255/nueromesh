@@ -124,13 +124,16 @@ class Guardian:
             self._busy.popleft()
         return sum(s for _, s in self._busy) / window
 
-    def background_allowed(self, dreaming: bool = False) -> bool:
+    def background_allowed(self, dreaming: bool = False, light: bool = False) -> bool:
         """Background work may run (P2). While the mesh sleeps, all of it waits except dreaming,
-        which may use the dream duty cycle."""
+        which may use the dream duty cycle. Light work (searching the web for a question someone asked)
+        doesn't wait for the duty cycle."""
         if not self.d.background.enabled or self.halted or self.paused:
             return False
         if self.sleeping and not dreaming:
             return False
+        if light:
+            return True
         limit = self.d.background.max_duty_cycle
         if dreaming:
             limit = max(limit, self.d.dreams.duty_cycle)

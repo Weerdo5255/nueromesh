@@ -486,6 +486,20 @@ exact where it can (fractions, big integers, surds):
 | statistics | `mean of 3, 5, 7, 10`; `standard deviation of 2, 4, 4, 4, 5, 5, 7, 9` (population and sample) |
 | matrices | `determinant of [[1,2],[3,4]]`; `inverse of [[1,2],[3,4]]` -> [[-2, 1], [3/2, -1/2]] |
 
+**What people paste.** Every order is checked before it is read (`mathsolver.tidy`), and what it mended is
+said with the answer ("read as: ..."):
+
+| | read as |
+|---|---|
+| braces and brackets | `{2 + 3} * [4 - 1]` -> (2 + 3) * (4 - 1); `solve {2x + 3 = 11}`; `mean of [1, 2, 3, 4]` |
+| LaTeX | `\frac{3}{4} \cdot 8`, `\dfrac{\frac{1}{2}}{4}`, `$\sqrt{16} + 2^{3}$`, `\sqrt[3]{27}`, `\frac{d}{dx}(x^3 + 2x)`, `\int_0^3 x^2 dx`, `\lim_{x \to 0} \frac{\sin(x)}{x}`, `\sum_{k=1}^{10} k^2` |
+| colons | labels (`calculate: 2+2`, `Problem 2: 7*6`, `q1: 3 + 4`, `solve for x: ...`, `... : solve`); a ratio `3:4` -> 3/4; a time of day (`at 3:30`) is left out of the sum |
+| other symbols | `×` `·` `÷` `∶` `−` `–`, superscripts (`2³`), subscripts, `½` and `1½`, `√49`, `π`, `∞`, prices (`$5 + $3`), quotes, zero-width characters |
+| brackets that don't match | `((2+3)*4` and `(2+3))*4`: mended, and said |
+
+A character it can't read in a calculation (`3 # 4`) is named in its answer; that is the order's fault, not
+the tool's, so it is not held against the calculator (`"bad_input"`).
+
 A quantity it does not know ("the number of bones in the human body times 2") becomes a question
 for a director. Word problems ("Sam has 23 apples and gives away 9") are not its job: a director
 sends those to the direct answer, so a teacher that can read them answers them.
@@ -1149,6 +1163,16 @@ is, or what an objective couldn't find out - and nobody answers within `[websear
      objective, it carries on with it
 ```
 
+**Patience with a slow SearXNG.** SearXNG waits on its slowest engine, so a search can take a while. The tool
+waits up to `[tools.config.searxng] timeout` seconds (25) for an answer and sends **one request at a time**:
+another waits its turn. After a timeout, a 429 or a 5xx it **rests** before the next request (15 s, doubling
+with each failure in a row up to 5 minutes, or as long as SearXNG's `Retry-After` says), and nothing is sent
+while it rests (`one_at_a_time` and `backoff_s` in its manifest; the sandbox keeps the same rule). A timeout
+is SearXNG's slowness, not the tool's fault: it is never quarantined for it. A question whose search timed out
+is **tried again** - `[websearch] retries` times (4), `retry_minutes` apart (5, doubling) - and the Questions
+tab says when. Superseded questions (an order it asked about again) are searched too, and searching goes on
+while the mesh is busy training (it is light work); only a pause or sleep holds it.
+
 **On the page.** The Mind's Questions tab opens with **When nobody answers**: web search **On**/**Off**, how
 many minutes a question **waits for you** first, **your SearXNG**'s address (**Save and test** runs the
 searxng tool's self-test again), whether the tool is ready - and if its self-test failed, why, with **Test
@@ -1355,7 +1379,11 @@ curiosity ---> goals        investigated in the background with its own tools an
   wording. It asks what to read up on, which labels a proposed skill should have, and for approval
   of a tool it wants. Questions show under the order's result, in the live view's `mind:` line and
   in `/inquiries`; answer with `/reply <id> <answer>`. Conversational questions are rate-limited
-  (`max_inquiries_per_hour`) and only the newest clarifying question stays open.
+  (`max_inquiries_per_hour`) and only the newest clarifying question stays open. A question about an
+  approval goes as soon as the approval is decided, however it was decided (the approvals panel,
+  `/approve`, the API, or another question about the same thing). Approvals live in memory: after a
+  restart, a question follows the approval asked again about the same thing, or goes if nothing asks
+  again; the page never lists a question whose approval it already shows.
 - **It proposes capabilities; only a human adopts them (P10).** Two orders like `language: bonjour`
   name a skill that doesn't exist: it proposes a `language` skill and asks for its labels. Three
   unfulfilled orders about `translate` become a proposed `translate` tool. A label you tried to use
@@ -1704,7 +1732,16 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
 
 ![The web interface: the node network, an answer from a memory node, work in progress and the activity log](docs/web-interface.png)
 
-- **Live**: the node network drawn like a specimen under a microscope: its initiative at the top
+- **Live** opens with **the whole mesh**: every family of nodes - the router, the skills it routes to,
+  the tools and the tool gate, memory, the inner capabilities (ego, affect, reward, agency, sight,
+  the code nodes, ...) - drawn where each works in the way an order travels, inside the ego's
+  membrane. Every node is a circle (memory nodes hexagons) whose **area grows with its weights**, and
+  a family's circle is as big as what it holds, so a large mesh is drawn large. What the background
+  is doing right now glows: a pulse on each node being trained, evaluated or taught, and under the
+  drawing **working now** - each background worker (trainer, evaluator, tutor, compressor,
+  thinker, ...) with a line to the nodes it is working on. A capability with no node yet is a dashed
+  outline. Click a node to open it on the **Network** page.
+- **Live** then shows the node network drawn like a specimen under a microscope: its initiative at the top
   (the agency node in front of the director, the director nodes as diamonds, the mode it chose,
   the tasks it set itself), the director diamond every order passes on its way in and again
   before it reaches you, its dream nodes at the bottom (they glow while it sleeps), the router, every route
@@ -1728,6 +1765,13 @@ let the browser's own voice stand in ("Browser voice when ComfyUI can't speak").
   strongest path from an input to its answer, and which words pushed it towards that answer or
   away from it (gradient × input). The signal crosses the drawing layer by layer when it fires
   (not with reduced motion). It can follow new orders through the node you are looking at.
+- **Network**: the complete network in all detail. The whole mesh drawn large, then what is working
+  now (each worker, what it is doing and to which node), then every family with a card for each of
+  its nodes - champion first, bigger nodes on bigger cards - each drawing its layers (input, hidden,
+  output) with the strongest 16 neurons of each layer sized by how much weight goes through them, the
+  strongest synapses between them (violet excites, pink inhibits, thicker is stronger) and how many
+  weaker ones are left out. **Fire it with a text** opens the node in the Live page's closer look.
+  Capabilities with no node yet, and the tools, are listed below.
 - **Nodes**: every capability's champion, challengers, held-out accuracy and generation, the
   champion's size over its generations, roll back; what each agent has done.
 - **Memory**: memory nodes with their size now and when first learned, teach a fact, run every
@@ -1840,6 +1884,7 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | GET | `/challenges/catalog`, `/challenges/search?q=`, `/challenges/inspect?dataset=&config=&split=&mapping=<json>`, `/challenges/export?suite=` | the ready-made benchmarks; datasets on the Hub; a dataset's columns, first rows and how it would be read; a suite's manifest and items |
 | POST | `/challenges/import`, `/challenges/remove` | `{"name", "kind", "items": "<JSONL, JSON or CSV>", "labels"}` (or an exported suite as `items`); `{"suite": "..."}` |
 | POST | `/tools/diagnose`, `/tools/remove`, `/tools/restore` | `{"tool": "kiwix"}`: why it fails (and a fix to approve); take it out of the mesh (`"why"`); bring it back, re-vetted. `GET /tools/doctor`: every diagnosis and fix |
+| GET | `/network` | the whole network: every family (where it works, its nodes with their status, sizes, weights and what the background is doing to them), tools, directors, teachers and the work running now; `?detail=1` adds every node's layers: the strongest neurons of each and the strongest synapses between them |
 | GET | `/conversations`, `/realm?text=` | conversations and short-term memory nodes (secrets hidden); fact or fiction for a text |
 | POST | `/memory/short`, `/conversations/end` | `{"id": "stm-3", "action": "keep" \| "forget"}`; `{"id": "conv-2"}`: its ego decides now. `POST /order` takes `"conversation": "<id>"` |
 | POST | `/task` | `{"id": "task-1", "action": "pause" \| "resume" \| "remove"}` |
@@ -2096,6 +2141,9 @@ permissions = []               # e.g. ["network"] -> needs human approval
 keywords = ["...", 're:\d+\s*[*/+-]\s*\d+']   # offline teacher's routing cues; re: patterns count double
 supersedes = "old_tool"        # optional: retire old_tool and relabel its routing data
 provides = "knowledge"         # optional: results are retained and recalled (see Research)
+one_at_a_time = true           # optional: one request at a time (a slow server); the rest wait their turn
+backoff_s = 15                 # optional: after a timeout or {"error", "transient": true} reply, no request
+                               # for this long (doubling per failure, up to 5 min; a reply's "retry_after" wins)
 [config]                       # optional: settings passed to the tool as "config" on every run
 templates = ["..."]            # optional: practice orders the offline teacher can generate
 [[examples]]                   # self-tests; all must pass before activation
@@ -2106,6 +2154,8 @@ Then: Guardian vets permissions → (human approval if needed) → sandboxed sel
 added to `dispatch` → manifest examples seeded → teachers write practice orders → Architect
 expands the routing node → Evaluator promotes it → old router disposed after the grace period.
 
+An error reply marked `"transient": true` (its server was slow or down) or `"not_found": true` (nothing to
+find, or an order it can't read, like the calculator's `"bad_input"`) is not held against the tool.
 An error reply may carry `"trace": traceback.format_exc()` (every bundled plugin sends one): when the
 tool keeps failing, the tool doctor reads it to tell a fault in your code from one outside it.
 
@@ -2318,6 +2368,8 @@ neuromesh/
   codelib.py             the code library: the building blocks made tools are written from, with probes to test them
   objectives.py          objectives: the planner teacher, plans, queries against itself, rumination, write-ups, second thoughts (P16)
   anatomy.py             a closer look: the paths orders take, how a node is built, and which synapses fire for an input
+  network.py             the whole network for the Live page and the Network page: every family, its nodes and
+                         where they work, what the background is doing to them, each node's strongest neurons and synapses
   corrections.py         was it right? the next most likely answers, worked out now, and learning from what a person picks
   thinking.py            thinking nodes after the memory nodes: thoughts in its own words (the honesty guard), opinions, desires (P17)
   curiosity.py           areas of interest and gaps in what it knows: the objectives its director sets itself
@@ -2328,7 +2380,7 @@ neuromesh/
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   308 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   322 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),
@@ -2336,12 +2388,15 @@ tests/                   308 tests: nodes, guardian, LLM wire formats and a mock
                          that evolves larger in a running system), memory nodes (tests in the memory database, files imported, own statements untested,
                          compression that never accepts a failing node, merging (exact stacking, the
                          90% rule, relearning what fails), people's edits, answers),
-                         the web interface (its files, the endpoints it uses, the token), independent
+                         the web interface (its files, the endpoints it uses, the token, the whole
+                         network with every node's strongest neurons and synapses and the work on it), independent
                          agency (the drive policy, outcomes teaching the agency node, people in charge),
                          sleep and dreams (no outside calls, waking checks and evolution, orders wake it,
                          imagination labelled and never stored), directors (always one, both ends of
                          every order, the memory gate, disclosed disagreements, duplicates, the mood,
-                         tools asking directors, retries up to max_attempts), the calculator's mathematics,
+                         tools asking directors, retries up to max_attempts), the calculator's mathematics
+                         and its input checking (braces, LaTeX, labels, ratios and times with ':', other
+                         symbols, mended brackets, a character it can't read named),
                          the toolsmith (every recipe's code passes its probes, the code check, nothing
                          runs before approval, changed code asks again, experiments and refinement,
                          initiative that builds and experiments, the coder node taking over), objectives
@@ -2357,7 +2412,8 @@ tests/                   308 tests: nodes, guardian, LLM wire formats and a mock
                          answers; yes, a pick, or none with or without the right answer, each learned and
                          answered right next time; a memory node learning not to answer), temperament and
                          the honesty guard (incl. tampered templates), the mind (discretion,
-                         questions, proposals, investigations), background tasks, full system,
+                         questions, proposals, investigations, questions that go once their approval is
+                         decided, before or after a restart), background tasks, full system,
                          live console (incl. a pseudo-terminal run), compute
                          backends (4 GPU parity tests run where PyTorch or CuPy is installed), the tool
                          switch (off refuses every run and counts nothing against a tool; one tool set
@@ -2382,7 +2438,9 @@ tests/                   308 tests: nodes, guardian, LLM wire formats and a mock
                          web search (a mock SearXNG through the approved searxng plugin: the question
                          searched, read by a mock Ollama teacher, answered with its sources and kept by
                          memory; questions about you never sent; a person's answer replacing the web's;
-                         reading the results itself without a teacher; its budget), objectives that end short
+                         reading the results itself without a teacher; its budget; a slow SearXNG waited
+                         out, one request at a time, rested after a timeout and tried again; superseded
+                         questions searched; the sandbox's one-at-a-time and back-off), objectives that end short
                          archived (off the list, write-up kept, tried again, removed, older ones archived
                          at start) and it always having an objective to work on, the challenge catalog (a
                          mock Hub and dataset viewer: search, columns guessed and changed, any dataset
