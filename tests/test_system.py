@@ -27,13 +27,14 @@ FAST = {
     "directors": {"consult": False},    # no second opinions unless a test asks (see test_directors)
     "objectives": {"always": False},    # it sets itself no objectives unless a test asks (see test_objectives)
     "imagesets": {"start_with": []},    # it gets no picture books by itself (see test_imagesets)
+    "codechallenges": {"start_with": []},  # nor code challenges (see test_codechallenges)
 }
 
 
 def work_trace(res) -> list[str]:
     """What the tools, nodes and engines did: the trace without the directors' intake and review lines, and
     without the ego's lines around them (ego.py)."""
-    return [t for t in res.trace if not t.startswith(("director-", "reviewed by director", "ego (the outer layer)", "ego: "))]
+    return [t for t in res.trace if not t.startswith(("director-", "reviewed by director", "ego (the outer layer)", "ego: ", "return router: "))]
 
 
 def make_root(tmp: Path, wikipedia: bool = False, kiwix: bool = False, gitea: bool = False, searxng: bool = False) -> Path:

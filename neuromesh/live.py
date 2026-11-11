@@ -231,7 +231,7 @@ def engine_lines(system, g: dict) -> list[Line]:
     if not a.enabled:
         return [("answers -> a director reviews -> user (temperament off)", "dim")]
     lines: list[Line] = [("answers", "title")]
-    engines = [c for c, spec in s.capabilities.items() if spec.internal and spec.kind not in ("agency", "coder", "planner", "ego")]
+    engines = [c for c, spec in s.capabilities.items() if spec.internal and spec.kind not in ("agency", "relay", "coder", "planner", "ego")]
     what = {"affect": "reads the tone", "disposition": "decides"}
     for cap in engines:
         champ = s.registry.champion(cap)

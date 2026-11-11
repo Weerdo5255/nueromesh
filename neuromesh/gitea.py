@@ -333,6 +333,7 @@ class CodeStudy:
         st = json.loads(raw) if raw else {}
         self.stats: Counter = Counter(st.get("stats", {}))
         self.log: deque = deque(st.get("log", []), maxlen=60)
+        self.backlog: dict[str, int] = st.get("backlog", {})  # repositories it has not finished reading: files left
         self.version = ""
         self.reached: str | None = None  # what the last call to the tool said, if it failed
         self._vectors: tuple[int, np.ndarray, list[int]] | None = None
@@ -424,7 +425,8 @@ class CodeStudy:
         return {"output": run.output, **(run.extra or {})}, ""
 
     def save(self) -> None:
-        self.sys.store.set_kv("gitea.state", json.dumps({"stats": dict(self.stats), "log": list(self.log)}))
+        self.sys.store.set_kv("gitea.state", json.dumps({"stats": dict(self.stats), "log": list(self.log),
+                                                         "backlog": self.backlog}))
 
     def _note(self, line: str, **extra) -> None:
         self.log.append({"ts": round(time.time(), 1), "line": line[:300], **extra})
@@ -506,6 +508,9 @@ class CodeStudy:
     def _pick(self, repos: list[dict]) -> dict | None:
         studied = {r[0]: r[1] or 0.0 for r in self.db.execute("SELECT name, studied FROM code_repos").fetchall()}
         stale = time.time() - self.pol.restudy_days * 86400
+        unfinished = [r for r in repos if self.backlog.get(r["full_name"])]
+        if unfinished:  # a repository it has not finished reading comes first
+            return unfinished[0]
         changed = sorted((r for r in repos if r["full_name"] in studied and self._updated(r) > studied[r["full_name"]]),
                          key=lambda r: studied[r["full_name"]])
         if changed:  # something was pushed since it last read it: only the files that changed are read again
@@ -548,10 +553,12 @@ class CodeStudy:
                 exts = tuple(self.pol.extensions)
                 todo = [e for e in tree if e["path"].lower().endswith(exts) and int(e.get("size") or 0) <= self.pol.max_file_kb * 1024
                         and known.get(e["path"]) != e.get("sha") and not re.search(r"(^|/)(node_modules|vendor|dist|build|\.git)/", e["path"])]
+                left = max(0, len(todo) - self.pol.files_per_visit)  # what this visit leaves for the next one
                 todo = todo[: self.pol.files_per_visit]
                 got: list[tuple[dict, object]] = []
-                for i in range(0, len(todo), 20):  # twenty files a call; the tool reads them at once
-                    part = todo[i:i + 20]
+                per_call = max(5, int(self.pol.files_per_call))
+                for i in range(0, len(todo), per_call):  # many files a call; the tool reads them at once
+                    part = todo[i:i + per_call]
                     answer, why = await self.call({"op": "files", "repo": name, "ref": commit, "paths": [e["path"] for e in part]})
                     texts = (answer or {}).get("files") or {}
                     errors = (answer or {}).get("errors") or {}
@@ -584,17 +591,23 @@ class CodeStudy:
             self.db.execute("INSERT OR REPLACE INTO code_repos(name, branch, commit_sha, studied, files, functions, description) "
                             "VALUES (?,?,?,?,?,?,?)", (name, branch, commit, time.time(), nfiles, total, str(target.get("description") or "")[:200]))
             self._trim()
+            if left:
+                self.backlog[name] = left
+            else:
+                self.backlog.pop(name, None)
             self.stats["visits"] += 1
             self.stats["files read"] += sum(1 for _, t in got if not isinstance(t, Exception))
             self.stats["functions"] += functions
             line = (f"studied {name} ({branch}): read {len(todo)} changed file(s) of {len(tree)}, took apart {functions} "
                     f"function(s)" + (f" ({', '.join(f'{n} {k}' for k, n in kinds.most_common(4))})" if kinds else "")
-                    + (f"; its coder nodes learned {learned} new wording(s)" if learned else ""))
+                    + (f"; its coder nodes learned {learned} new wording(s)" if learned else "")
+                    + (f"; {left} more file(s) to read on its next visit" if left else ""))
             self._note(line, repo=name)
             self.save()
             s.bus.publish("gitea.studied", repo=name, files=len(todo), functions=functions, learned=learned, by=by,
                           kinds=dict(kinds))
-            return {"ok": True, "repo": name, "files": len(todo), "functions": functions, "learned": learned, "line": line}
+            return {"ok": True, "repo": name, "files": len(todo), "functions": functions, "learned": learned, "line": line,
+                    "left": left}
         finally:
             self.busy = False
 
@@ -657,7 +670,7 @@ class CodeStudy:
         return {"enabled": self.enabled, "url": self.url, "state": self.state, "detail": self.detail,
                 "version": self.version, "examples": self.count(), "kinds": kinds, "languages": langs,
                 "repos": self.repos()[:30], "log": list(self.log)[-12:][::-1], "stats": dict(self.stats),
-                "every": self.pol.study_every_seconds, "busy": self.busy,
+                "every": self.pol.study_every_seconds, "busy": self.busy, "backlog": dict(self.backlog),
                 "node": {"id": node.id, "accuracy": node.metrics.get("holdout_acc")} if node is not None else None}
 
     def lines(self) -> list[str]:
@@ -688,7 +701,8 @@ class Apprentice(Agent):
 
     @property
     def interval(self) -> float:
-        return max(0.5, min(5.0, self.sys.directives.gitea.study_every_seconds / 6))
+        pol = self.sys.directives.gitea
+        return max(0.5, min(5.0, pol.study_every_seconds / 6, max(0.5, pol.catch_up_seconds)))
 
     async def step(self) -> None:
         s = self.sys
@@ -700,6 +714,10 @@ class Apprentice(Agent):
             self.last_visit = now
             res = await s.code_study.visit()
             self.stats["visits" if res.get("ok") else "skipped"] += 1
+            if res.get("ok") and (res.get("files") or res.get("left")):
+                # catching up: while a visit still finds files to read, the next one follows almost at once
+                self.last_visit = now - pol.study_every_seconds + pol.catch_up_seconds
+                self.stats["catching up"] += 1
             return
         if pol.practice and s.scratch.enabled and now - self.last_practice >= pol.practice_every_seconds and s.code_study.count():
             self.last_practice = now

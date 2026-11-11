@@ -53,6 +53,8 @@ HELP = """Type an order (e.g. "what is 12 * 7", "sentiment: the hotel was lovely
   /budgets                        node budgets and what is in use     /budget <name> <number>     /budget reset <name>|all
   /works                          earlier work it goes back to, and its long-term projects     /works now
   /works start <owner/repo>       /works work [project]     /works pause|resume|remove <project>
+  /codechallenges                 code challenges from the Hugging Face Hub (mbpp, humaneval): downloaded, attempted, solved
+  /codechallenges get <suite> [n]   /codechallenges try [id]   /codechallenges again <id>     /relay   the return router
   /workbench                      programs it built by itself from the code it studied     /workbench try [example id]
   /gitea                          what its coder nodes learned from Gitea     /gitea study [owner/repo]   study now
   /gitea examples [words]         functions it studied                        /gitea url <url>   point the gitea tool at a Gitea
@@ -1001,6 +1003,28 @@ async def execute(system, line: str) -> Output:
                 out = [f"  {rec['line']}"] if rec else ["  nothing to go back to right now"]
             else:
                 out = w.lines()
+        elif cmd == "codechallenges":
+            verb, _, arg = rest.strip().partition(" ")
+            cc, by = system.codechallenges, os.environ.get("USER", "console")
+            if verb == "get" and arg:
+                suite, _, n = arg.strip().partition(" ")
+                try:
+                    out = [f"  {(await cc.fetch(suite, int(n) if n.strip().isdigit() else 0, by))['line']}"]
+                except Exception as exc:
+                    out = [f"  {exc}"]
+            elif verb in ("try", "attempt", "again"):
+                rec = await cc.attempt(arg.strip(), by=by, again=verb == "again")
+                out = [f"  {rec['line']}"] if rec else ["  nothing to attempt: it never repeats a challenge it has attempted (/codechallenges again <id> "
+                                                        "to make it), or it has none (/codechallenges get mbpp)"]
+            else:
+                out = cc.lines()
+        elif cmd == "relay":
+            st = system.relay.status()
+            out = [f"Return router{'' if st['enabled'] else ' (off)'}: every finished piece of work comes back to it; it decides whether that is an "
+                   f"answer or which node gets it next (at most {st['max_hops']} hops). "
+                   + (f"Node {st['node']}" + (f", held-out {st['holdout']:.0%}" if st["holdout"] is not None else "") if st["node"] else "Its policy decides while its node learns") + ".",
+                   "  " + ", ".join(f"{k} {v}" for k, v in sorted(st["counts"].items())) if st["counts"] else "  nothing has come back yet"]
+            out += [f"  {r['order']}: {r['text'][:60]} -> {r['route']}" + (f" (via {', '.join(r['via'])})" if r["via"] else "") for r in st["recent"][:8]]
         elif cmd == "workbench":
             verb, _, arg = rest.strip().partition(" ")
             if verb in ("try", "experiment", "build", "chain"):

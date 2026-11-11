@@ -41,7 +41,7 @@ class BudgetTests(unittest.IsolatedAsyncioTestCase):
     async def test_node_budgets_are_set_by_a_person_and_hold(self):
         tmp = tempfile.TemporaryDirectory()
         root = make_root(Path(tmp.name))
-        s = System(root, overrides=FAST, seed=2)
+        s = System(root, overrides={**FAST, "works": {"always_one": False}}, seed=2)
         await s.start()
         try:
             was = s.directives.nodes.max_nodes
@@ -80,6 +80,33 @@ class WorksTests(wb_tests.WorkbenchTests):
     test_with_no_teacher_a_program_it_built_comes_before_a_copied_example = None
     test_gitea_is_read_more_often_and_what_changed_comes_first = None
     test_the_web_page_and_the_api = None
+    test_a_big_repository_is_finished_over_visits_that_follow_at_once = None
+    test_it_never_practises_the_same_challenge_twice = None
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.system.directives.works.always_one = False  # (always one project: its own test, below)
+
+    async def test_it_is_always_on_a_project_from_what_it_studied(self):
+        s = self.system
+        w = s.works
+        s.scratch.set_mode("auto_run", "harmless", "tester")
+        s.directives.works.always_one = True
+        self.assertIsNone(w.working_on())
+        w.tend()                                                                       # a repository with code it has not tried
+        on = w.working_on()
+        self.assertIsNotNone(on)
+        self.assertIn(on["repo"], ("ann/numkit", "ann/textkit"))
+        self.assertEqual(w.status()["working_on"], on["id"])
+        w.tend()
+        self.assertEqual(len(w.projects), 1)                                           # one with something to do is enough
+        rec = await w.session(by="tester")
+        self.assertIsNotNone(rec)
+        self.assertIn(on["id"], rec["line"])
+        w.set_status(on["id"], "paused", "tester")                                     # paused: it starts another
+        w.tend()
+        self.assertEqual(sum(p["status"] == "active" for p in w.projects.values()), 1)
+        self.assertNotEqual(w.working_on()["id"], on["id"])
 
     async def test_the_director_can_call_on_its_optical_coder_thinking_and_ego_nodes(self):
         s = self.system

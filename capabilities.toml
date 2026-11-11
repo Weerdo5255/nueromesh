@@ -170,6 +170,21 @@ code = "have its coder nodes build a whole program on its workbench from code it
 reflect = "have its thinking nodes put what its memory holds now into thoughts of its own"
 revisit = "go back to earlier work - a program, code, a tool, an objective, a long-term project of its own - and improve it"
 
+[relay]
+answer = "I would send that to: {label} ({description})."
+description = "The return router: every finished piece of work comes back here. Given where it came from, whether it worked, whether there is an output, how sure it is, whether it is a question or an ethical question, and where the order has been already, decide whether an answer has been created or it goes on to another node."
+labels = ["answer", "director", "ego", "person"]
+open_labels = false
+internal = true
+kind = "relay"
+teachers = ["human", "relay"]      # people, and the return policy
+
+[relay.label_descriptions]
+answer = "an answer has been created: on to the director's review and the person"
+director = "not answered: a director tries other ways"
+ego = "to its ego: nothing knew what to do with it, or it is a question of right and wrong"
+person = "nothing more it can do: reported as it is"
+
 [ego]
 answer = "In that situation my ego would choose: {label} ({description})."
 description = "The ego, the nodes wrapped around all the others, and the ultimate arbitrator when instances of the same kind of node disagree. Given its mood, the tone of the message, how the answer went, what it makes of the topic, whether it dreamt about it, whether it has a view of it and whether it spoke a moment ago, decide whether to say something of its own after the answer, and what kind of thing. The words are built from what is so, and always labelled as its ego's (P18)."

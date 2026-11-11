@@ -20,7 +20,7 @@ import time
 
 import numpy as np
 
-STATION = {"agency": "directors", "ego": "ego", "toolgate": "tools", "reward": "answers", "vision": "images",
+STATION = {"agency": "directors", "relay": "answers", "ego": "ego", "toolgate": "tools", "reward": "answers", "vision": "images",
            "codekind": "code", "planner": "code", "coder": "code", "realm": "memory", "keep": "memory"}
 STATION_BY_NAME = {"affect": "answers", "disposition": "answers", "sight": "images", "glyphs": "images"}
 WHAT = {"orders": "orders come in", "directors": "a director takes each order, and reviews its answer",

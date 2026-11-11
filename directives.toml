@@ -634,16 +634,21 @@ llm_code = true                         # an LLM teacher may write a tool no rec
 # is a change to its project ([projects] below) that you approved. A repository that changed since it last read it
 # (Gitea says when) is visited first, and only the files that changed are read again. A Python file's imports and
 # constants are kept too, so its workbench ([workbench] below) can build whole programs from what it studied.
+# It looks every study_every_seconds when idle. A visit reads up to files_per_visit files (files_per_call at a time);
+# a big repository is finished over the next visits, which follow catch_up_seconds apart instead of waiting, and
+# an unfinished repository comes before any other.
 #   python -m neuromesh run --gitea http://localhost:3000      /gitea   /gitea study [owner/repo]
 enabled = true
 extensions = [".py", ".js", ".mjs", ".ts", ".go", ".rs", ".sh", ".rb", ".java", ".c", ".cpp"]
 max_file_kb = 256
-files_per_visit = 60
-study_every_seconds = 120
-restudy_days = 1
+files_per_visit = 400
+files_per_call = 40
+study_every_seconds = 30
+catch_up_seconds = 2                    # the next visit, while a repository has files left or more are unread
+restudy_days = 0.25                     # an unchanged repository is looked at again after this long
 max_examples = 20000
 practice = true                         # write code for a function's purpose without looking at it, and compare
-practice_every_seconds = 300
+practice_every_seconds = 120            # each function is practised once: it never repeats one it has done
 practice_teacher = false                # practise on its own (recipes, its workbench's programs, the closest example),
                                         # not with an LLM teacher writing
 
@@ -746,6 +751,38 @@ teacher = false                         # an LLM teacher may write when it draft
 own_projects = true                     # it starts projects of its own from repositories it studied
 max_projects = 3
 min_parts = 2                           # parts that ran before a repository becomes a project, and before a version
+always_one = true                       # it is always on at least one long programming project: when none has anything
+#                                         to do it starts one (a repository with code it has not tried, or a library of
+#                                         its solutions to code challenges), over max_projects if need be
+session_every_seconds = 180             # its journeyman works a session on it this often when idle, director or not
+
+[codechallenges]
+# Code challenges from the Hugging Face Hub (codechallenges.py): it downloads programming problems through the
+# dataset viewer ([challenges] api_url / token_env), and solves them by itself in its scratch pad - a recipe, its
+# workbench's programs, the closest code it studied - with the challenge's own tests deciding. Its solution runs only
+# as auto-run allows (P20: on "ask" it waits for you). It never attempts a challenge twice; it goes back to one it
+# failed only after it has studied more code ([works]). After a practice challenge it studies the reference
+# solution; exam challenges are never studied. Suites: mbpp (google-research-datasets/mbpp), humaneval
+# (openai/openai_humaneval).     /codechallenges   /codechallenges get <suite> [n]   /codechallenges try [id]
+enabled = true
+start_with = ["mbpp", "humaneval"]      # downloaded by itself when it has none ([] to download only when you say)
+fetch_limit = 200                       # challenges a download
+every_seconds = 90                      # an attempt this often when idle
+idle_seconds = 60
+teacher = false                         # an LLM teacher may write its solutions (false: on its own)
+study_solutions = true                  # study the reference solution of a practice challenge after attempting it
+max_in_pad = 6                          # solutions kept waiting in the scratch pad
+retry_get_hours = 6
+
+[relay]
+# The return router (relay.py): whatever a node finishes goes back to this router node before anyone sees it. It
+# decides whether an answer has been created, or sends the work on to another node: a director (another way), its
+# ego, or a person. Its node learns the decision from the relay teacher (capabilities.toml [relay]); the policy
+# decides until the node is trusted. What the first router cannot route, and what looks like an ethical question
+# or dilemma, goes to its ego nodes (ethics_to_ego).     /relay
+enabled = true
+max_hops = 3                            # times one order may be sent on
+ethics_to_ego = true
 
 [imagesets]
 # Picture books (imagesets.py): image datasets from the Hugging Face Hub teach its optical nodes - what things look

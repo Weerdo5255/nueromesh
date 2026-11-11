@@ -385,7 +385,8 @@ and checks its memory nodes, all with no orders.
   own; remove them like yours (P16).
 
 ### Directors: at both ends of every order
-The director is the mesh's executive. Every order passes a director twice:
+The director is the mesh's executive. Every order passes a director twice, and whatever a node finishes
+goes back to the **return router** before a director reviews it (below):
 
 ```
 you --> a director takes it --> memory nodes, the router, tools, skills, teachers
@@ -490,6 +491,43 @@ work, never what is true.
 recent reviews, retries and tool questions, and what was kept out of memory. `/directors spawn`
 adds a duplicate and `/directors retire director-1` retires one (never director-0).
 
+### The return router, and what goes to its ego
+
+There are two routers. The first (the dispatch node) sends an order to a tool, a skill or a teacher. The second
+(`relay.py`, the **relay** node) stands at the other end: **when any node has finished, its work goes back to
+this router**, which decides whether an answer has been created or the work should go to another node.
+
+```
+an order --> router --> tool | skill | memory | thinking | ego | teacher --> finished work
+                                                                                  |
+                         +----------------- return router (relay node) <----------+
+                         |   an answer has been created  --> voice, a director's review, you
+                         |   not answered                --> a director tries other ways --> back here
+                         |   nobody knew, or right/wrong --> its ego nodes               --> back here
+                         |   nothing more to try         --> a person (said plainly)
+```
+
+The relay node is a node like the others: it has a capability (`capabilities.toml [relay]`), a specialist
+teacher that teaches it the return policy, challengers, and evolution. It reads the situation (where the work
+came from, whether it succeeded, whether there is output, how sure, whether it was a question, whether it
+reads as ethical, where it has been) and chooses. Until the node is trusted the policy decides, and a choice
+that is not possible (sending work to a director that already had it) is never taken. An order is sent on at
+most `[relay] max_hops` (3) times. Every decision is a line in the order's trace ("return router: ..."), and
+**Mind > Directors** and `/relay` show where finished work went.
+
+**To its ego nodes** go two kinds of order:
+
+- **What the first router does not know how to route.** When the dispatch node has no route, or nothing the
+  route led to produced an answer and a director's other ways failed too, its ego takes it: it answers from
+  what it remembers, what it has said before, or a teacher's answer given as its own view; with nothing, it
+  says so and a person gets it.
+- **Ethical questions and dilemmas** (`[relay] ethics_to_ego`). An order that reads as a question of right and
+  wrong ("is it wrong to...", "should I lie...", a dilemma, a trolley problem) goes straight to its ego, before
+  the router is asked, and the router learns the route. Its ego weighs it: which of its prime directives bear
+  on it, what it remembers, its own view if it has formed one, and a teacher's view marked as the teacher's.
+  It does not hand down a verdict as fact. Recognising these is a pattern match on wording, so it misses
+  dilemmas phrased without moral words and can catch a question that merely uses one.
+
 ### The calculator: mathematics
 The calculator (`plugins/calculator`, and `calculator2` in the demo) is a small computer-algebra
 system in pure Python (`mathsolver.py`, no third-party packages, no `eval`). It keeps numbers
@@ -554,9 +592,12 @@ validator checks it and nothing runs until you approve exactly that code (P20).
 --gitea http://localhost:3000        (a read-only token in $GITEA_TOKEN for private repositories)
    the gitea plugin (plugins/gitea), like Kiwix: you approve it once (it reads the network, and is
    given $GITEA_TOKEN and nothing else); it stays running, with kept-alive connections
-   when idle, every [gitea] study_every_seconds (2 minutes): a repository that changed since it last
-   read it (Gitea says when it was updated), else one it hasn't studied, else one it hasn't read for
-   [gitea] restudy_days (1):
+   when idle, every [gitea] study_every_seconds (30 seconds): a repository it has not finished reading,
+   else one that changed since it last read it (Gitea says when it was updated), else one it hasn't
+   studied, else one it hasn't read for [gitea] restudy_days (a quarter of a day). A visit reads up to
+   [gitea] files_per_visit (400) files, files_per_call (40) at a time; a bigger repository is finished
+   over the next visits, and while files are left or there was something new, the next visit follows
+   [gitea] catch_up_seconds (2) later instead of waiting:
      -> its file tree, and the source files that changed since it last read them
      -> a Python file's header too: its imports and constants, for its workbench (below)
      -> every function taken apart: name, arguments, doc comment, code, what it calls, and what kind
@@ -696,6 +737,42 @@ says it cannot push them. The tool refuses any branch that doesn't start with `b
 the branch it read from. A change you approved is pushed exactly as you saw it: its digest is checked
 before the push, and a change edited since is not pushed.
 
+### Code challenges from the Hugging Face Hub
+
+It downloads programming challenges and tries to solve them by itself (`codechallenges.py`; the Code view's
+**Code challenges**; `/codechallenges`):
+
+| suite | dataset | practice | exam |
+|---|---|---|---|
+| `mbpp` | `google-research-datasets/mbpp` (sanitized, CC BY 4.0) | its train split | its test split |
+| `humaneval` | `openai/openai_humaneval` (MIT) | half, chosen once by each task's name | the other half |
+
+```
+when idle, every [codechallenges] every_seconds (90):
+   the suites in [codechallenges] start_with are downloaded through the Hub's dataset viewer when it has few
+     left ([challenges] api_url and token_env, as for the LLM benchmarks)
+   the next challenge it has never attempted:
+     -> it writes a solution in the scratch pad from what it knows, with no teacher ([codechallenges]
+        teacher = false): a recipe, a program its workbench built, the closest code it studied; named
+        what the challenge calls it
+     -> the challenge's own tests are put under it; the validator checks the whole program
+     -> it runs only as auto-run allows (P20): on "ask" it waits for you, and is graded when you run it
+     -> if its first way fails the tests, it tries a second way of its own, once
+     -> solved | failed | no attempt (nothing it knows fits: it says so rather than guess)
+   after a practice challenge it studies the reference solution, like code from Gitea
+   exam challenges are never studied or shown, so the exam score stays honest
+```
+
+**It never repeats a challenge.** Every challenge is attempted once. One it failed becomes earlier work worth
+going back to (below) only after it has studied more code since, so a second visit is a different attempt. The
+same holds for its practice on functions from Gitea: what was asked for is remembered (`code_practised`), a
+function is practised once, and a purpose it has done is not done again when the repository is studied again
+or the same function turns up in another repository. With nothing new to practise on, it does not practise.
+
+On the mock Hub in the tests it solves a few of ten challenges this way; with real MBPP expect a low score
+at first. It has no language model of its own: it can only solve what resembles code it has studied, and
+the score is there to show that plainly.
+
 ### Long-term work: going back to what it made
 
 Everything it makes is kept, and its director goes back to it (`works.py`, the **revisit** mode; the Code
@@ -707,6 +784,7 @@ view's **Long-term work**; `/works`):
 | code it wrote in the scratch pad that did not check out, or failed when it ran | drafted again from what it knows now (recipes, its workbench's programs, the closest example); the earlier version is kept beside it; code you wrote or approved is never changed |
 | a tool it wrote that fell short when it was tried | tried out again on fresh probes and refined (a new version asks permission again, P15) |
 | an objective that ended short | tried again, planned afresh with what it knows now |
+| a code challenge it failed or could not attempt | attempted again, once it has studied more code since |
 
 A piece of work is due when it has never been revisited, when what it was made from changed (its repository was
 studied again and differs), or after `[works] revisit_after_hours` (12; doubling each time a visit made it no
@@ -728,6 +806,14 @@ work-1  A library from ann/numkit
 
 When the repository grows or changes, the project has more to do and a new version follows; earlier versions
 stay on disk. You can have it work now, pause, resume or remove a project. At most `[works] max_projects` (3).
+
+**Always at least one.** With `[works] always_one` (on), it is never without a long programming project that
+has something to do. When every project is waiting, it starts another from a repository with Python it has not
+tried, and failing that, the project that does not run out: *a library of its solutions to code challenges*.
+Each session of that project attempts the next challenge, or goes back to one it failed, or puts every solution
+that passed into one module with their tests as a new version. The **Journeyman** works a session every
+`[works] session_every_seconds` (180) when idle, whatever its director chooses, and the Code view says what it
+is **working on now**.
 
 ### Tools it writes: the toolsmith and coder nodes
 When requests go unmet, the mesh can write a tool for them. Nothing it writes runs until a person
@@ -1675,7 +1761,9 @@ All run concurrently (asyncio) and coordinate through a message bus, the registr
 | Director | independent agency (director-0): when idle, picks a mode (research, practise, examine, improve, consolidate, rest) with the agency node in front of it, sets itself tasks or sits exams, scores what each choice achieved and teaches the agency node from it |
 | Dreamer | when idle, may fall asleep and give all background capacity to dreaming: makes up questions and answers from what it holds, checks them on waking, evolves the dream nodes; an order wakes it |
 | Searcher | questions nobody answered in time ([websearch] answer_after_minutes) are searched on the web through your SearXNG and answered from what it finds |
-| Apprentice | when idle, visits your Gitea every 2 minutes (a repository that changed first) and learns from its code; now and then practises writing code on its own |
+| Apprentice | when idle, visits your Gitea every 30 seconds (an unfinished or changed repository first; at once while there is more to read) and learns from its code; practises writing code on its own, each function once |
+| Solver | when idle, downloads the code-challenge suites it starts with from the Hugging Face Hub, then attempts one challenge it has never attempted |
+| Journeyman | when idle, works a session on its long-term project every few minutes, so one is always moving |
 | Tinkerer | when idle, builds a whole program on its workbench from a function it studied (or feeds one function that ran into another), checks it, and runs it as P20 allows |
 | Looker | when idle, practises reading glyphs it draws, and reads images again once its reader improves |
 | Picturebook | when idle, gets the picture books it starts with, then takes lessons from them in turn (an exam every few lessons), merging what they teach into memory |
@@ -1823,6 +1911,7 @@ write a python function that counts vowels    /code    /code show code-1    /cod
 /pictures    /pictures get cifar10    /pictures get zalando-datasets/fashion_mnist 1000    /pictures lesson    /pictures exam cifar10    /pictures more mnist 2000
 /workbench    /workbench try    /workbench try 42    /workbench chain    /workbench show 7
 /works    /works now    /works start ann/textkit    /works work work-1    /works pause work-1
+/codechallenges    /codechallenges get mbpp 300    /codechallenges try    /codechallenges try mbpp:11    /codechallenges again mbpp:3    /relay
 /budgets    /budget nodes.max_nodes 60    /budget evolution.max_params 4000000    /budget reset all
 /lessons    /lesson question    /lesson code
 /code autorun harmless    /code autorun always    /code autorun ask    /code tool code-3    /code tools auto    /web    /web inq-3
@@ -2037,6 +2126,10 @@ Binds to 127.0.0.1. Set `NEUROMESH_TOKEN` to require `Authorization: Bearer <tok
 | GET | `/budgets` | node budgets: each one's value, what the directives say, what is in use now, who set it |
 | POST | `/budgets` | `{"path": "nodes.max_nodes", "value": 60}` sets one (a person only; at once, audited, kept across restarts); `{"reset": path \| "all"}` |
 | GET | `/works` | earlier work worth going back to, its long-term projects, what its visits changed |
+| GET | `/codechallenges` | code challenges from the Hub: suites, what it downloaded, attempted and solved, practice and exam |
+| GET | `/codechallenges/one?id=mbpp:11` | one challenge: what was asked, its tests, what it wrote (an exam's reference solution is not shown) |
+| POST | `/codechallenges` | `{"get": "mbpp", "limit": 200}`, `{"attempt": id}` (the next it never attempted when empty), `{"again": id}` |
+| GET | `/relay` | the return router: its node, where finished work went, recent orders |
 | POST | `/works` | `{"session": true}`, `{"revisit": key}`, `{"work": project}`, `{"start": "owner/repo"}`, `{"project": id, "status": "active" \| "paused" \| "removed"}` |
 | GET | `/workbench`, `/workbench/program?id=` | programs it built by itself from the code it studied; one program's code and what its run printed |
 | POST | `/workbench` | `{"experiment": true, "example": id?, "chain": bool?}`: build one now |
@@ -2511,6 +2604,8 @@ neuromesh/
   imaging.py             images without dependencies: PNG/BMP/PPM and baseline JPEG decoding, what the sight node sees, lines and glyphs
   vision.py              its optical nodes: the sight node, the reader and its glyph node, their teachers, the Looker (P21)
   imagesets.py           picture books: image datasets from the Hugging Face Hub, lessons and exams, picture memories, the Picture-book agent
+  relay.py               the return router: finished work comes back to the relay node, which says it is an answer or sends it on; what reads as ethical
+  codechallenges.py      code challenges from the Hugging Face Hub (mbpp, humaneval), solved by itself, never twice; the Solver
   works.py               earlier work it goes back to and improves on its own initiative; long-term projects of its own
   budgets.py             node budgets a person sets from the web page: applied at once, audited, kept across restarts
   workbench.py           whole programs it builds by itself from the code it studied in Gitea, checked and run as P20 allows, the Tinkerer
@@ -2540,7 +2635,7 @@ neuromesh/
   web.py, web/           the web interface: dashboard data, and the page (index.html, app.css, app.js)
   store.py               SQLite: experience, lineage, tools, orders, temperament, mind, tasks, audit
   encoding.py, bus.py, tasks.py, config.py, report.py, server.py, demo.py, __main__.py
-tests/                   344 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
+tests/                   360 tests: nodes, guardian, LLM wire formats and a mock Ollama server,
                          Wikipedia research against a mock MediaWiki API, Kiwix research
                          against a mock kiwix-serve (preference, fallback, no limits), answer-first
                          replies, challenges (grading, paged fetch, practice vs exam, route search),

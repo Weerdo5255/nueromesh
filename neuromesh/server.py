@@ -170,6 +170,15 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
             return 200, system.budgets.status()
         if path == "/works":  # earlier work it goes back to, and its long-term projects
             return 200, system.works.status()
+        if path == "/codechallenges":  # code challenges from the Hugging Face Hub: what it downloaded, attempted, solved
+            return 200, system.codechallenges.status()
+        if path == "/codechallenges/one":  # ?id=mbpp:11: one challenge: what was asked, its tests, what it wrote
+            got = system.codechallenges.get(str(query.get("id", "")))
+            if got and got["split"] == "exam":
+                got = {**got, "solution": ""}  # exam answers are never shown or studied
+            return (200, got) if got else (404, {"error": "no such code challenge"})
+        if path == "/relay":  # the return router: where finished work went
+            return 200, system.relay.status()
         if path == "/workbench/program":  # ?id=: one program: its code and what its run printed
             got = system.workbench.get(int(query.get("id", 0) or 0))
             return (200, got) if got else (404, {"error": "no such program"})
@@ -194,7 +203,7 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
         if path == "/code":  # Gitea study, the scratch pad and its practice
             return 200, {"gitea": system.code_study.status(), "scratch": system.scratch.status(),
                          "tools": system.codetools.status(), "workbench": system.workbench.status(),
-                         "works": system.works.status()}
+                         "works": system.works.status(), "challenges": system.codechallenges.status()}
         if path == "/websearch":  # questions nobody answered in time, searched with your SearXNG
             return 200, system.websearch.status()
         if path == "/code/item":  # ?id=code-3
@@ -511,6 +520,19 @@ async def _route(system, method: str, path: str, query: dict, body: dict):
                 rec = await w.session(by=by)
             return (200 if rec else 400), ({"ok": True, "message": rec["line"], **rec} if rec else
                                            {"ok": False, "message": "nothing to go back to right now"})
+        if path == "/codechallenges":  # {"get": "mbpp", "limit": n?} | {"attempt": id?} | {"again": id}
+            cc, by = system.codechallenges, str(body.get("by") or "web")
+            if body.get("get"):
+                try:
+                    rec = await cc.fetch(str(body["get"]), int(body.get("limit") or 0), by)
+                except Exception as exc:
+                    return 400, {"ok": False, "message": str(exc)}
+                return 200, {"ok": True, "message": rec["line"], **rec}
+            rec = await (cc.attempt(str(body["again"]), by=by, again=True) if body.get("again")
+                         else cc.attempt(str(body.get("attempt") or ""), by=by))
+            return (200 if rec else 400), ({"ok": True, "message": rec["line"], **{k: v for k, v in rec.items() if k != "code"}} if rec else
+                                           {"ok": False, "message": "nothing to attempt: it has attempted every challenge it downloaded "
+                                                                    "(it never repeats one), or an attempt is under way"})
         if path == "/workbench":  # {"experiment": true, "example": id?, "chain": bool?}
             res = await system.workbench.experiment(int(body["example"]) if body.get("example") else None,
                                                     bool(body["chain"]) if "chain" in body else None,

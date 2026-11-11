@@ -502,6 +502,43 @@ IMAGE_DATASETS = {
                            "rows": [("image", WORDS[i % len(WORDS)], i) for i in range(40)], "make": lambda ans, i: word_image(ans, i)},
 }
 
+def _mbpp(task, prompt, code, tests):
+    return {"source_file": "mock", "task_id": task, "prompt": prompt, "code": code, "test_imports": [], "test_list": tests}
+
+
+_SEQ = {"_type": "Sequence", "feature": _value()}
+_MBPP_F = {"source_file": _value(), "task_id": _value("int32"), "prompt": _value(), "code": _value(), "test_imports": _SEQ, "test_list": _SEQ}
+DATASETS["google-research-datasets/mbpp"] = {"sanitized": {
+    "train": {"features": _MBPP_F, "rows": [
+        _mbpp(1, "Write a python function to count the vowels in a given string.",
+              'def count_vowels(text):\n    return sum(1 for ch in text.lower() if ch in "aeiou")\n',
+              ['assert count_vowels("banana") == 3', 'assert count_vowels("xyz") == 0']),
+        _mbpp(2, "Write a function to find the largest number in a list of numbers.",
+              "def largest_number(numbers):\n    best = numbers[0]\n    for n in numbers:\n        if n > best:\n            best = n\n    return best\n",
+              ["assert largest_number([3, 9, 2]) == 9", "assert largest_number([-5, -2]) == -2"]),
+        _mbpp(3, "Write a function to check whether a given word is a palindrome.",
+              "def is_palindrome(word):\n    return word == word[::-1]\n",
+              ['assert is_palindrome("level") == True', 'assert is_palindrome("apple") == False']),
+    ]},
+    "test": {"features": _MBPP_F, "rows": [
+        _mbpp(11, "Write a python function to count vowels in a string.", 'def vowel_count(s):\n    return len([c for c in s if c in "aeiouAEIOU"])\n',
+              ['assert vowel_count("banana") == 3', 'assert vowel_count("sky") == 0']),
+        _mbpp(12, "Write a function to find the largest number in a given list.", "def find_largest(xs):\n    return max(xs)\n",
+              ["assert find_largest([3, 9, 2]) == 9", "assert find_largest([1]) == 1"]),
+        _mbpp(13, "Write a function to compute the nth tribonacci number modulo a prime.", "def trib(n):\n    return 0\n",
+              ["assert trib(4) == 2"]),
+    ]}}}
+DATASETS["openai/openai_humaneval"] = {"openai_humaneval": {"test": {
+    "features": {k: _value() for k in ("task_id", "prompt", "canonical_solution", "test", "entry_point")},
+    "rows": [{"task_id": f"HumanEval/{i}", "entry_point": name,
+              "prompt": f'def {name}({arg}):\n    """ {doc}\n    >>> {name}({ex})\n    {want}\n    """\n',
+              "canonical_solution": body, "test": f"def check(candidate):\n    assert candidate({ex}) == {want}\n"}
+             for i, (name, arg, doc, ex, want, body) in enumerate([
+                 ("double_it", "n", "Return twice the number n.", "4", "8", "    return n * 2\n"),
+                 ("shout_it", "text", "Return the text in upper case.", "'ab'", "'AB'", "    return text.upper()\n"),
+                 ("first_item", "items", "Return the first item of the list items.", "[7, 8]", "7", "    return items[0]\n"),
+                 ("word_total", "text", "Count the words in a text.", "'a b c'", "3", "    return len(text.split())\n")])]}}}
+
 HUB = [{"id": "acme/emotion-tiny", "downloads": 52000, "likes": 40,
         "tags": ["task_categories:text-classification", "license:mit", "language:en"]},
        {"id": "acme/trivia-qa", "downloads": 9100, "likes": 12, "tags": ["task_categories:question-answering", "license:cc-by-4.0"]},

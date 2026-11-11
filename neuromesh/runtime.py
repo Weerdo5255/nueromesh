@@ -24,7 +24,9 @@ from .toolgate import ToolGateTeacher, ToolSwitch
 from .gitea import Apprentice, CodeStudy, CodeTeacher
 from .scratchpad import ScratchPad
 from .budgets import Budgets
-from .works import Works
+from .relay import Relay, RelayTeacher
+from .works import Journeyman, Works
+from .codechallenges import CodeChallenges, Solver
 from .workbench import Tinkerer, Workbench
 from .imagesets import TEACHER as TEACHER_BOOKS, ImageSets, ImageSetTeacher, Picturebook
 from .vision import GlyphTeacher, Looker, SightTeacher, VisionBank, VisionTeacher
@@ -115,6 +117,7 @@ class System:
         teachers["temperament"] = TemperamentTeacher(seed)  # specialist: teaches only the disposition engine
         teachers["challenge"] = ChallengeTeacher(seed)  # benchmark suites: gold answers for practice items
         teachers["agency"] = AgencyTeacher(seed)        # specialist: the drive policy for the agency node
+        teachers["relay"] = RelayTeacher(seed)          # specialist: the return policy for the relay node
         teachers["coder"] = CoderTeacher(seed)          # specialist: the code library's cues, for the coder node
         teachers["planner"] = PlannerTeacher(seed)      # specialist: the strategies' cues, for the planner node
         teachers["ego"] = EgoTeacher(seed)              # specialist: the ego policy, for the ego node
@@ -163,6 +166,8 @@ class System:
                                  if getattr(m, "api_key_env", "")} | {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "NEUROMESH_TOKEN"}
         self.scratch = ScratchPad(self)       # code it writes; checked; it runs only once a person approves it (P20)
         self.workbench = Workbench(self)      # programs it builds by itself from the code it studied (workbench.py)
+        self.relay = Relay(self)              # the return router: an answer, or on to another node (relay.py)
+        self.codechallenges = CodeChallenges(self)  # programming problems from the Hub it attempts (codechallenges.py)
         self.works = Works(self)              # earlier work it goes back to, and long-term projects of its own (works.py)
         self.tutor = Tutor(self)              # when idle, its Ollama teachers set it orders and mark them (P22)
         self.rewards = Rewards(self)          # people reward and punish what it does, and steer it (P23)
@@ -178,6 +183,7 @@ class System:
         self.bus.listen(self.scratch.on_event)
         self.bus.listen(self.workbench.on_event)
         self.bus.listen(self.works.on_event)
+        self.bus.listen(self.codechallenges.on_event)
         self.bus.listen(self.journal.on_event)
         for cap in self.capabilities:  # what people taught, exactly as they put it, stands (P1)
             for ex in self.store.examples(cap):
@@ -203,7 +209,7 @@ class System:
         self.dreamer = Dreamer(self)    # idle: the coin flip (an objective, or sleep), and dreaming
         self.agents = [self.directors, self.orchestrator, Architect(self), Trainer(self), Evaluator(self), Curator(self),
                        Explorer(self), self.researcher, self.investigator, TaskRunner(self), Compressor(self),
-                       self.director, self.dreamer, Ruminator(self), Thinker(self), Reader(self), Apprentice(self), Looker(self), Picturebook(self), Tinkerer(self), Schoolroom(self), Foreman(self), Searcher(self), Sentinel(self),
+                       self.director, self.dreamer, Ruminator(self), Thinker(self), Reader(self), Apprentice(self), Looker(self), Picturebook(self), Tinkerer(self), Solver(self), Journeyman(self), Schoolroom(self), Foreman(self), Searcher(self), Sentinel(self),
                        Keeper(self)]
 
     # ------------------------------------------------------------- lifecycle
@@ -817,6 +823,7 @@ class System:
             "evolution": self.evolution.status(),
             "memory": self.memory.status(),
             "agency": self.director.status(),
+            "relay": self.relay.status(),
             "directors": self.directors.status(),
             "toolsmith": self.toolsmith.status(),
             "objectives": self.objectives.status(),

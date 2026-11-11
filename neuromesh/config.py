@@ -155,7 +155,7 @@ class TeacherPolicy:
     order: tuple = ("human", "challenge", "ollama", "llm", "heuristic")
     weights: dict = field(default_factory=lambda: {
         "human": 3.0, "challenge": 2.5, "tool-manifest": 2.0, "outcome": 2.0, "llm": 1.5, "ollama": 1.2,
-        "heuristic": 1.0, "temperament": 1.0, "agency": 1.0, "director": 1.8,
+        "heuristic": 1.0, "temperament": 1.0, "agency": 1.0, "relay": 1.0, "director": 1.8,
         "coder": 1.0, "experiment": 2.0, "approved": 2.5, "planner": 1.0, "ego": 1.0, "toolgate": 1.0,
         "gitea": 1.0, "vision": 1.3, "sight": 1.0, "glyphs": 1.0, "tesseract": 1.5, "tutor": 1.2, "imagesets": 2.0})
     models: dict = field(default_factory=dict)  # teacher name -> LLMConfig, from [teachers.<name>]
@@ -579,13 +579,16 @@ class GiteaPolicy:
     url: str = ""                       # (earlier versions: now [tools.config.gitea] url; still read if set)
     extensions: tuple = (".py", ".js", ".mjs", ".ts", ".go", ".rs", ".sh", ".rb", ".java", ".c", ".cpp")
     max_file_kb: int = 256              # larger files are skipped
-    files_per_visit: int = 60           # files it reads per visit to a repository
-    study_every_seconds: float = 120.0  # how often it visits a repository (when idle); one that changed since it last
-                                        # read it (Gitea says when) comes first, then one it never read
-    restudy_days: float = 1.0           # a repository it studied is visited again after this long, changed or not
+    files_per_visit: int = 400          # files it reads per visit to a repository (what is left comes first next time)
+    files_per_call: int = 40            # files it asks the gitea tool for at once
+    study_every_seconds: float = 30.0   # how often it visits a repository (when idle); one it has not finished comes
+                                        # first, then one that changed (Gitea says when), then one it never read
+    catch_up_seconds: float = 2.0       # while a visit still finds files to read, the next follows this soon
+    restudy_days: float = 0.25          # a repository it studied is visited again after this long, changed or not
     max_examples: int = 20000           # functions it keeps as examples (the oldest go first)
     practice: bool = True               # when idle, it practises: writes code for an example's purpose without
-    practice_every_seconds: float = 300.0  # looking at it, checks it, and compares it with what a person wrote
+    practice_every_seconds: float = 120.0  # looking at it, checks it, and compares it with what a person wrote; a
+                                        # purpose it has practised is never practised again
     practice_teacher: bool = False      # practice with an LLM teacher writing (False: on its own - recipes, the
                                         # programs its workbench built, the closest example)
 
@@ -607,11 +610,37 @@ class WorkbenchPolicy:
 
 
 @dataclass
+class CodeChallengePolicy:
+    """Code challenges (codechallenges.py): programming problems from the Hugging Face Hub (through [challenges]
+    api_url) that it attempts on its own. A challenge is attempted once; its solution runs only as [code] auto_run allows."""
+    enabled: bool = True
+    start_with: tuple = ("mbpp", "humaneval")  # suites it gets by itself when idle
+    fetch_limit: int = 200              # challenges it downloads of a suite at a time (more when few are left)
+    every_seconds: float = 90.0         # an attempt this often, when idle
+    idle_seconds: float = 60.0
+    teacher: bool = False               # an LLM teacher may write the solution (False: on its own)
+    study_solutions: bool = True        # after attempting a practice challenge, study its reference solution
+    max_in_pad: int = 6                 # solutions waiting in the scratch pad to be run (the oldest make room)
+    retry_get_hours: float = 6.0
+
+
+@dataclass
+class RelayPolicy:
+    """The return router (relay.py): every finished piece of work returns to the relay node, which decides whether
+    an answer has been created or the order goes on to a director (other ways) or to its ego."""
+    enabled: bool = True
+    max_hops: int = 3                   # times one order may be sent on
+    ethics_to_ego: bool = True          # ethical questions and dilemmas go to its ego before the router is asked
+
+
+@dataclass
 class WorksPolicy:
     """Its works (works.py): earlier work it goes back to and improves on its own initiative (the director's
     "revisit" mode), and long-term projects of its own that it keeps building."""
     enabled: bool = True
     revisit_after_hours: float = 12.0   # a piece of work it went back to rests this long (longer each time it got no better)
+    always_one: bool = True             # it always has at least one long-term project with something to do
+    session_every_seconds: float = 180.0  # when idle, a session on a project this often (besides its director's choice)
     teacher: bool = False               # an LLM teacher may write when it drafts code again (False: on its own)
     own_projects: bool = True           # it starts projects of its own from repositories it studied
     max_projects: int = 3
@@ -790,6 +819,8 @@ class Directives:
     code: CodePolicy = field(default_factory=CodePolicy)
     workbench: WorkbenchPolicy = field(default_factory=WorkbenchPolicy)
     works: WorksPolicy = field(default_factory=WorksPolicy)
+    relay: RelayPolicy = field(default_factory=RelayPolicy)
+    codechallenges: CodeChallengePolicy = field(default_factory=CodeChallengePolicy)
     vision: VisionPolicy = field(default_factory=VisionPolicy)
     imagesets: ImageSetPolicy = field(default_factory=ImageSetPolicy)
     tutor: TutorPolicy = field(default_factory=TutorPolicy)
@@ -834,6 +865,8 @@ class Directives:
             code=build(CodePolicy, d.get("code")),
             workbench=build(WorkbenchPolicy, d.get("workbench")),
             works=build(WorksPolicy, d.get("works")),
+            relay=build(RelayPolicy, d.get("relay")),
+            codechallenges=build(CodeChallengePolicy, d.get("codechallenges")),
             vision=build(VisionPolicy, d.get("vision")),
             imagesets=build(ImageSetPolicy, d.get("imagesets")),
             tutor=build(TutorPolicy, d.get("tutor")),

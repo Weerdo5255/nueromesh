@@ -38,8 +38,10 @@ import json
 import logging
 import re
 import time
+import textwrap
 from collections import Counter, deque
-from pathlib import Path
+
+from .agents import Agent
 
 log = logging.getLogger("neuromesh.works")
 
@@ -135,6 +137,11 @@ class Works:
                 if not o.retried_as and not getattr(o, "retry_of", ""):
                     done, total = o.progress()
                     add(f"objective:{o.id}", "objective", f"{o.id}: {o.text[:70]}", f"ended short ({done} of {total} found)")
+        cc = s.codechallenges
+        if cc.enabled:
+            for ch in cc.retry_candidates():
+                add(f"challenge:{ch['id']}", "challenge", f"{ch['id']}: {ch['prompt'][:60]}",
+                    "it could not attempt it" if ch["status"] == "no attempt" else f"it failed ({ch['note'][:60]})", cc.basis())
         return sorted(out, key=lambda c: (-c["score"], c["last"] or 0))
 
     # ------------------------------------------------------------------ going back to one
@@ -203,6 +210,13 @@ class Works:
                     return self._visited(c, False, str(was), str(was), f"went back to {c['title']}: could not try it out now", by)
                 better = was is None or rep["score"] > float(was) + 1e-9 or bool(rep.get("refined"))
                 return self._visited(c, better, f"{was}", f"{rep['score']:.2f}", f"went back to {c['title']}: {rep['line']}", by)
+            if kind == "challenge":
+                before = (s.codechallenges.get(ref) or {}).get("status", "")
+                rec = await s.codechallenges.attempt(ref, by=by, again=True)
+                if rec is None:
+                    return None
+                return self._visited(c, rec["status"] in ("solved", "waiting"), before, rec["status"],
+                                     f"went back to {rec['line']}", by)
             if kind == "objective":
                 ok, msg = await s.objectives.retry(ref, by)
                 return self._visited(c, ok, "ended short", "being tried again" if ok else "ended short",
@@ -262,8 +276,39 @@ class Works:
         self._log(proj, f"{status} by {by}")
         return True, f"{pid} is {status}"
 
+    def start_solutions(self, by: str = BY) -> tuple[bool, str]:
+        """Start the project that never runs out: a library of its own solutions to code challenges."""
+        if any(p.get("kind") == "solutions" for p in self.projects.values()):
+            return False, "it already has a project of its solutions"
+        n = 1 + max([int(k.split("-")[-1]) for k in self.projects] or [0])
+        pid = f"work-{n}"
+        self.projects[pid] = {"id": pid, "kind": "solutions", "repo": "hub:code challenges", "module": "solutions_library",
+                              "title": "A library of its solutions to code challenges",
+                              "goal": "solve code challenges from the Hugging Face Hub one by one, and gather every solution "
+                                      "that passes its tests into one module with those tests",
+                              "created": round(time.time(), 1), "by": by, "status": "active", "version": 0, "parts": [],
+                              "digest": "", "sessions": 0, "last": None, "item": "", "result": None,
+                              "next": "solve its first challenges", "journal": []}
+        self._log(self.projects[pid], f"started by {by}: {self.projects[pid]['goal']}")
+        self.sys.guardian.audit(by, "works.project", pid, repo="hub:code challenges")
+        return True, f"{pid}: {self.projects[pid]['title']}"
+
+    def _plan_solutions(self, proj: dict) -> tuple[str, object, str]:
+        cc = self.sys.codechallenges
+        ids = [c["id"] for c in cc.solved()]
+        digest = hashlib.sha256(json.dumps(ids).encode()).hexdigest()[:12]
+        fresh = cc.next_new() if cc.enabled else None
+        ready = len(ids) >= self.pol.min_parts and digest != proj.get("digest")
+        if ready and (fresh is None or proj["sessions"] % 4 == 3):
+            return "assemble", digest, f"put its {len(ids)} solutions together as version {proj['version'] + 1}"
+        if fresh is not None:
+            return "solve", fresh, "attempt a code challenge it has not tried"
+        return "wait", None, "wait for more code challenges to be downloaded"
+
     def _plan(self, proj: dict) -> tuple[str, object, str]:
         """The next step of a project, and what it means to do: (step, what, why)."""
+        if proj.get("kind") == "solutions":
+            return self._plan_solutions(proj)
         repo = proj["repo"]
         progs = self._latest_programs(repo)
         good = sorted(p["name"] for p in progs if p["status"] in RAN)
@@ -299,6 +344,12 @@ class Works:
                 rec = await self.revisit(f"program:{what['example']}", by)
                 did = rec["line"] if rec else f"could not go back to {what['name']} now"
                 improved = bool(rec and rec["improved"])
+            elif step == "solve":
+                rec = await s.codechallenges.attempt(str(what), by=by)
+                did = rec["line"] if rec else "could not attempt a challenge now (it is busy)"
+                improved = bool(rec and rec["status"] == "solved")
+            elif step == "assemble" and proj.get("kind") == "solutions":
+                did, improved = await self._assemble_solutions(proj, what, by)
             elif step == "assemble":
                 did, improved = await self._assemble(proj, what, by)
             else:
@@ -316,6 +367,34 @@ class Works:
         s.bus.publish("works.session", id=proj["id"], step=step, line=did[:300], version=proj["version"], by=by)
         return rec
 
+    async def _assemble_solutions(self, proj: dict, digest: str, by: str) -> tuple[str, bool]:
+        """Its solutions in one module: each solution once, and each challenge's own tests."""
+        from .workbench import RUNNER
+        s = self.sys
+        body, main, names, parts = [], [], set(), []
+        for ch in s.codechallenges.solved():
+            try:
+                defs = {n.name for n in __import__("ast").parse(ch["code"]).body if hasattr(n, "name")}
+            except SyntaxError:
+                continue
+            if defs & names:  # two solutions with a function of the same name: the first stays
+                continue
+            names |= defs | {ch["entry"]}
+            tag = re.sub(r"\W+", "_", ch["id"])
+            body += [f"# {ch['id']}: {ch['prompt'][:100]}", ch["code"].rstrip(), ""]
+            if ch["setup"] == "check":
+                body += [f"def _test_{tag}():", textwrap.indent(ch["tests"][0].strip(), "    "), f"    check({ch['entry']})", ""]
+            else:
+                if ch["setup"]:
+                    body.insert(0, ch["setup"])
+                body += [f"def _test_{tag}():"] + [f"    {t.strip()}" for t in ch["tests"]] + [""]
+            main.append(f'_report("TEST", {ch["id"]!r}, _test_{tag})')
+            parts.append(ch["id"])
+        code = (f'"""{proj["module"]}: {proj["title"]}, version {proj["version"] + 1}\n\n{len(parts)} solutions of its own, each with '
+                f'the tests of its challenge (from the Hugging Face Hub)."""\n' + "\n".join(body) + RUNNER
+                + '\nif __name__ == "__main__":\n' + "\n".join(f"    {m}" for m in main) + "\n")
+        return await self._version(proj, digest, by, code, parts, len(parts))
+
     async def _assemble(self, proj: dict, digest: str, by: str) -> tuple[str, bool]:
         s = self.sys
         good = [p for p in self._latest_programs(proj["repo"]) if p["status"] in RAN]
@@ -325,6 +404,12 @@ class Works:
         if not lib.get("ok"):
             proj["digest"] = digest
             return f"could not put its parts together: {lib.get('why', '')}", False
+        return await self._version(proj, digest, by, lib["code"], lib["parts"], lib["checks"])
+
+    async def _version(self, proj: dict, digest: str, by: str, code: str, parts: list, checks: int) -> tuple[str, bool]:
+        """A new version of a project's module: checked, kept on disk and in the scratch pad, run as P20 allows."""
+        s = self.sys
+        lib = {"code": code, "parts": parts, "checks": checks}
         check = s.scratch.validator.check(lib["code"], "python")
         if not check["ok"]:
             proj["digest"] = digest
@@ -375,15 +460,29 @@ class Works:
                 self._log(proj, f"version {proj['version']} was run by {ev.data.get('by', 'a person')}: {self._result(proj, item['runs'][-1])}")
 
     def tend(self) -> None:
-        """Start projects of its own: a repository with enough parts that ran, and room for another project."""
+        """Start projects of its own: a repository with enough parts that ran, and room for another project. And it
+        always has at least one long-term project with something to do ([works] always_one): when none has, it starts
+        one from a repository it studied, else the library of its solutions to code challenges, which never runs out."""
         if not self.pol.own_projects:
             return
         have = {p["repo"] for p in self.projects.values()}
         for repo, progs in self._repos().items():
-            if len(self.projects) >= self.pol.max_projects:
-                return
+            if len([p for p in self.projects.values() if p.get("kind") != "solutions"]) >= self.pol.max_projects:
+                break
             if repo not in have and sum(p["status"] in RAN for p in progs) >= self.pol.min_parts:
                 self.start(repo)
+        if not self.pol.always_one or any(p["status"] == "active" and self._plan(p)[0] != "wait" for p in self.projects.values()):
+            return
+        have = {p["repo"] for p in self.projects.values()}
+        rows = self.sys.store.db.execute("SELECT repo, COUNT(*) FROM code_examples WHERE lang = 'python' AND repo NOT LIKE 'hub:%' "
+                                         "GROUP BY repo ORDER BY 2 DESC").fetchall()
+        for repo, _ in rows:
+            if repo not in have and self._untried(repo) is not None:
+                if self.start(repo)[0]:
+                    return
+        cc = self.sys.codechallenges
+        if cc.enabled and (cc.count() or cc.pol.start_with):
+            self.start_solutions()
 
     # ------------------------------------------------------------------ for its director
     def due(self) -> dict:
@@ -418,8 +517,14 @@ class Works:
                 "projects": [{**{k: v for k, v in p.items() if k != "journal"}, "journal": p.get("journal", [])[-8:][::-1],
                               "plan": self._plan(p)[2] if p["status"] == "active" else "paused"}
                              for p in sorted(self.projects.values(), key=lambda p: p["id"])],
+                "working_on": (self.working_on() or {}).get("id"), "always_one": bool(self.pol.always_one),
                 "candidates": cands[:20], "waiting": len(cands), "journal": list(self.journal)[-20:][::-1],
                 "revisit_after_hours": self.pol.revisit_after_hours, "max_projects": self.pol.max_projects}
+
+    def working_on(self) -> dict | None:
+        """The long-term project it is on now: the active one with something to do that it touched last."""
+        live = [p for p in self.projects.values() if p["status"] == "active" and self._plan(p)[0] != "wait"]
+        return max(live, key=lambda p: p["last"] or 0) if live else None
 
     def lines(self) -> list[str]:
         st = self.status()
@@ -431,3 +536,29 @@ class Works:
             out.append(f"  due: {c['kind']:<9} {c['title'][:50]:<50} {c['state'][:40]} ({c['why']})")
         out += [f"  - {j['line']}" for j in st["journal"][:5]]
         return out
+
+
+class Journeyman(Agent):
+    """When idle: a session of long-term work every [works] session_every_seconds - the next step of a project of its
+    own, or a visit to earlier work - so a project is always moving, whatever its director chooses."""
+    name = "journeyman"
+
+    def __init__(self, system):
+        super().__init__(system)
+        self.last = time.time() - system.directives.works.session_every_seconds + 50
+
+    @property
+    def interval(self) -> float:
+        return 5.0
+
+    async def step(self) -> None:
+        s = self.sys
+        w = s.works
+        if not w.enabled or not s.guardian.background_allowed() or s.inflight:
+            return
+        if time.time() - (s.last_order_at or s.started_at) < 60 or time.time() - self.last < w.pol.session_every_seconds:
+            return
+        self.last = time.time()
+        await s.background_slot()
+        rec = await w.session(by="its own initiative")
+        self.stats[(rec.get("step") or rec["kind"]) if rec else "nothing to do"] += 1

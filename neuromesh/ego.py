@@ -335,6 +335,55 @@ class Ego:
         self.stats["memory reads"] += 1
         return out
 
+    async def respond(self, order, why: str, ethical: bool) -> dict:
+        """An order that came to its ego (relay.py): one nothing in the mesh knew what to do with, or a question of
+        right and wrong. It answers as itself - what its memory holds, its own view, the principles it is bound by,
+        a teacher's view if it has one (named as a language model's) - and never passes a view off as fact (P18)."""
+        s = self.sys
+        text = " ".join(order.text.split())
+        got = self.consult(text)
+        name, area = self.topic_of(text)
+        view = self.view(name) if name else None
+        parts, sources, substance = [], [], False
+        if ethical:
+            words = {w for w in re.findall(r"[a-z]{4,}", text.lower())}
+            bound = [p for p in s.directives.prime if len(words & set(re.findall(r"[a-z]{4,}", p.text.lower()))) >= 2][:2]
+            parts.append("That is a question of right and wrong, so it comes to my ego rather than to a tool or a skill node. "
+                         "I can weigh it with you; I can't settle it for you.")
+            if got["fact"]:
+                parts.append(f"What I hold about it: {got['fact']['answer']}")
+                sources.append(f"memory node {got['fact']['node']}")
+            if view and view.get("stance") not in (None, "", "neutral"):
+                parts.append(f"My own view of {name}: {view['stance']}" + (f" ({'; '.join((view.get('for') or view.get('against') or [])[:2])})" if view.get("for") or view.get("against") else "") + ".")
+            if bound:
+                parts.append("What I am bound by myself: " + " ".join(f"{p.id}: {p.text.split('. ')[0].rstrip('.')}." for p in bound))
+            parts.append("How I weigh questions like this: who is affected and how badly, whether it can be undone, what "
+                         "you would think if everyone did the same, and whether you could say openly what you did.")
+            substance = True
+        else:
+            if got["fact"]:
+                parts.append(got["fact"]["answer"])
+                sources.append(f"memory node {got['fact']['node']}")
+                substance = True
+            elif got["said"]:
+                parts.append(f"I said this about it before: {got['said']['text']}")
+                substance = True
+        reply = None
+        try:
+            if ethical or not substance:
+                reply = await s.teachers.answer(text)
+        except Exception:
+            reply = None
+        if reply:
+            parts.append(f"A teacher's view ({reply[1]}, a language model; a view, not a fact): {reply[0]}" if ethical else reply[0])
+            sources.append(f"the {reply[1]} teacher (a language model; not checked against a source)")
+            substance = True
+        if substance and not ethical and view and view.get("stance") not in (None, "", "neutral"):
+            parts.append(f"(My own view of {name}: {view['stance']}.)")
+        self.stats["orders it took"] += 1
+        return {"text": " ".join(parts), "substance": substance, "sources": sources, "mood": self.mood().get("mood", ""),
+                "kind": "ethical" if ethical else "unrouted", "why": why}
+
     def remember(self, kind: str, text: str, about: str = "", mood: str = "", source: str = "",
                  realm: str = "") -> dict | None:
         """What its ego said, kept in memory (untested: memory.py's own statements)."""

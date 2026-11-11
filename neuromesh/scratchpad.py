@@ -689,17 +689,35 @@ class ScratchPad:
         return rec
 
     # ------------------------------------------------------------------ practice
+    @staticmethod
+    def challenge_key(lang: str, purpose: str) -> str:
+        """What a practice challenge asks for, whatever repository it came from."""
+        return hashlib.sha256(f"{lang}:{' '.join(str(purpose).lower().split())}".encode()).hexdigest()[:20]
+
+    def practised_count(self) -> int:
+        try:
+            return self.sys.store.db.execute("SELECT COUNT(*) FROM code_practised").fetchone()[0]
+        except Exception:
+            return 0
+
     async def practice(self) -> dict | None:
         """Write code for the purpose of a function people wrote, without looking at it; check it; compare."""
         s = self.sys
-        row = s.store.db.execute("SELECT id FROM code_examples WHERE lines BETWEEN 3 AND 60 AND doc != '' "
-                                 "ORDER BY practised, CASE lang WHEN 'python' THEN 0 ELSE 1 END, RANDOM() LIMIT 1").fetchone()
-        if row is None:
-            row = s.store.db.execute("SELECT id FROM code_examples ORDER BY practised, RANDOM() LIMIT 1").fetchone()
-        if row is None:
+        db = s.store.db  # never the same challenge twice: what it practised is remembered by what was asked for
+        db.execute("CREATE TABLE IF NOT EXISTS code_practised(key TEXT PRIMARY KEY, ts REAL, ok INTEGER)")
+        done = {r[0] for r in db.execute("SELECT key FROM code_practised").fetchall()}
+        rows = db.execute("SELECT id, lang, purpose FROM code_examples WHERE practised = 0 ORDER BY (lines BETWEEN 3 AND 60 "
+                          "AND doc != '') DESC, CASE lang WHEN 'python' THEN 0 ELSE 1 END, RANDOM() LIMIT 400").fetchall()
+        pick = next(((i, self.challenge_key(lang, purpose)) for i, lang, purpose in rows
+                     if self.challenge_key(lang, purpose) not in done), None)
+        for i, lang, purpose in rows:  # (the same purpose studied again, or in another repository: done already)
+            if self.challenge_key(lang, purpose) in done:
+                db.execute("UPDATE code_examples SET practised = 1 WHERE id = ?", (i,))
+        if pick is None:
             return None
-        ex = s.code_study.example(row[0])
-        s.store.db.execute("UPDATE code_examples SET practised = practised + 1 WHERE id = ?", (ex["id"],))
+        ex = s.code_study.example(pick[0])
+        db.execute("UPDATE code_examples SET practised = practised + 1 WHERE id = ?", (ex["id"],))
+        db.execute("INSERT OR REPLACE INTO code_practised(key, ts, ok) VALUES (?,?,0)", (pick[1], time.time()))
         with s.activity.track("practice", "coder", f"practising: {ex['purpose'][:70]}"):
             code, origin = await self.draft(ex["purpose"], ex["lang"], exclude=ex["id"],
                                             teacher=s.directives.gitea.practice_teacher)

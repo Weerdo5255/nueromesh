@@ -2279,7 +2279,7 @@ it decides whether to say something of its own after an answer, and what`))
       thinking: () => thinkingPanel(d(S.extra.thinking), st.thinking),
       curiosity: () => curiosityPanel(d(S.extra.curiosity), st.curiosity),
       objectives: () => objectivesPanel(d(st.objectives)),
-      directors: () => directorsPanel(d(st.directors)),
+      directors: () => h("div", {}, directorsPanel(d(st.directors)), relayPanel(st.relay)),
       initiative: () => initiative(d(st.agency)) || offPanel("Initiative", "Its initiative is not available in this NeuroMesh."),
       tools: () => toolsmithPanel(d(st.toolsmith)) || offPanel("Tools it writes", "The toolsmith is off. Turn it on with [toolsmith] enabled = true in directives.toml."),
       dreams: () => dreamsPanel(d(st.dreams)) || offPanel("Dreams", "Dreams are off. Turn them on with [dreams] enabled = true in directives.toml."),
@@ -2803,6 +2803,7 @@ it decides whether to say something of its own after an answer, and what`))
         h("p", { class: "lede" }, `It writes code here: from a recipe in its code library, with a teacher following the closest code it studied in your Gitea, or by adapting that code. A validator checks every piece (${Object.entries(sp.checkers || {}).map(([l, c]) => `${l}: ${c}`).join("; ")}). Runs here: ${sp.runnable.join(", ") || "nothing"}.`),
         write,
         h("div", { class: "code-cols" }, h("div", {}, list), sel ? codeItem(sel, sp) : h("div", {}))),
+      challengesPanel(d.challenges),
       workbenchPanel(d.workbench),
       worksPanel(d.works, d.gitea),
       h("div", { class: "cols" },
@@ -2811,6 +2812,8 @@ it decides whether to say something of its own after an answer, and what`))
             (g.enabled ? "It visits a repository it hasn't studied (or not for a while) when it is idle, reads the files that changed, and takes every function apart: what it is for, and what kind of code it is. Its code-kind node learns from that, and its coder node learns new wordings of its recipes."
               : "Point it at your Gitea with --gitea http://localhost:3000 or [tools.config.gitea] url (a read-only token in $GITEA_TOKEN for private repositories), and approve the gitea tool.")),
           g.enabled ? h("div", { class: "row" }, study, h("span", { class: "dim small" }, `${num(g.examples)} functions kept as examples` + (g.node ? `; code-kind node ${g.node.id} ${pct(g.node.accuracy)}` : ""))) : null,
+          g.enabled ? h("p", { class: "small", id: "gitea-pace" }, `It looks every ${span(g.every)} when idle, and goes straight back while a repository has files left to read. ` +
+            (Object.keys(g.backlog || {}).length ? `Still reading: ${Object.entries(g.backlog).map(([r, n]) => `${r} (${num(n)} files left)`).join(", ")}.` : "Nothing is waiting to be read.")) : null,
           kinds.length ? h("p", { class: "small" }, kinds.map(([k, n]) => h("span", { class: "kind-chip code-kind" }, `${k} ${n}`))) : null,
           (g.repos || []).length ? h("div", { class: "scroll-x" }, h("table", { class: "tbl" },
             h("thead", {}, h("tr", {}, ["Repository", "Files", "Functions", "Studied"].map((t, i) => h("th", { class: i && i < 3 ? "n" : null }, t)))),
@@ -2823,6 +2826,50 @@ it decides whether to say something of its own after an answer, and what`))
           (sp.practice || []).length ? h("ul", { class: "rows" }, sp.practice.slice(0, 8).map(r => h("li", { class: "ask" },
             h("p", {}, h("span", { class: r.ok ? "ok" : r.ok === false ? "no" : "dim" }, r.ok ? "Checks out" : r.ok === false ? "Does not check out" : "Nothing written"), `: ${r.name} from ${r.repo}`),
             h("p", { class: "why" }, `“${cut(r.purpose, 110)}”` + (r.same_kind === null || r.same_kind === undefined ? "" : `; ${r.same_kind ? "same" : "different"} kind (${r.my_kind || "?"} vs ${r.kind}); shares ${pct(r.shared)} of the names`))))) : null)));
+  }
+
+  // ------------------------------------------------------------------ code challenges from the Hub (codechallenges.py)
+  const CH_STATE = { solved: "ok", failed: "no", waiting: "hit", "no attempt": "dim" };
+  function challengesPanel(C) {
+    if (!C) return null;
+    const go = (e, body) => act(e.target, () => api("/codechallenges", { ...body, by: "web" }), r => r.message);
+    return h("div", { class: "section", id: "challenges" }, h("h2", {}, "Code challenges"),
+      h("p", { class: "lede" }, "It downloads programming challenges from the Hugging Face Hub and tries to solve each one by itself" + (C.teacher ? ", with a teacher's help" : ", with no teacher") +
+        ": it writes a solution in its scratch pad from what it knows, and the challenge's own tests decide. It never attempts the same challenge twice, unless it goes back to one it failed after learning more. " +
+        "After a practice challenge it studies the reference solution; exam challenges are never studied, so their score is honest. " +
+        `${num(C.stats.attempts || 0)} attempts, ${num(C.stats.solved || 0)} solved.` +
+        (C.auto_run === "ask" ? " Its solutions wait in the scratch pad for you to run them: auto-run is on ask (Running its code, above)." : "")),
+      h("div", { class: "row" },
+        h("button", { type: "button", class: "small", disabled: !C.enabled || C.busy, onclick: e => go(e, { attempt: "" }) }, C.busy ? "Solving…" : "Try the next one now")),
+      h("div", { class: "scroll-x" }, h("table", { class: "tbl" },
+        h("thead", {}, h("tr", {}, ["Suite", "Downloaded", "Not tried", "Practice solved", "Exam solved", "Exam score", ""].map((t, i) => h("th", { class: i && i < 6 ? "n" : null }, t)))),
+        h("tbody", {}, C.suites.map(s => h("tr", {},
+          h("td", {}, h("b", {}, s.name), h("div", { class: "dim small" }, `${s.dataset}, ${s.license}`)),
+          h("td", { class: "n" }, num(s.have)), h("td", { class: "n" }, num(s.new)),
+          h("td", { class: "n" }, `${num(s.practice.solved)} of ${num(s.practice.attempted)}`),
+          h("td", { class: "n" }, `${num(s.exam.solved)} of ${num(s.exam.attempted)}`),
+          h("td", { class: "n" }, s.exam.score === null ? "" : pct(s.exam.score)),
+          h("td", {}, h("button", { type: "button", class: "small quiet", disabled: !C.enabled || s.getting, onclick: e => go(e, { get: s.name }) }, s.getting ? "Getting…" : s.have ? "Get more" : "Download"))))))),
+      (C.recent || []).length ? h("ul", { class: "rows" }, C.recent.slice(0, 8).map(r => h("li", { class: "ask" },
+        h("p", {}, h("span", { class: `kind-chip bench-${CH_STATE[r.status] || "dim"}` }, r.status === "waiting" ? "waiting to be run" : r.status), " ", h("b", {}, r.id),
+          h("span", { class: "dim small" }, ` ${r.split}${r.how ? `, written from ${r.how}` : ""}${r.passed || r.failed ? `; ${r.passed} passed, ${r.failed} failed` : ""}`),
+          r.item ? h("a", { href: "#code", class: "chip", style: "margin-left:8px", onclick: e => { e.preventDefault(); S.codeSel = r.item; renderCode(true); document.querySelector(".code-cols")?.scrollIntoView({ block: "start" }); } }, r.item) : null),
+        h("p", { class: "why" }, cut(r.prompt, 150)))))
+        : h("p", { class: "dim" }, C.suites.some(s => s.have) ? "No attempts yet." : "Nothing downloaded yet: it gets its first suites by itself when [codechallenges] start_with names them, or download one above."));
+  }
+
+  // ------------------------------------------------------------------ the return router (relay.py)
+  function relayPanel(R) {
+    if (!R) return null;
+    const WHERE = { answer: "an answer", director: "to a director", ego: "to its ego", person: "to a person" };
+    const counts = Object.entries(R.counts || {}).sort((a, b) => b[1] - a[1]);
+    return h("div", { class: "section", id: "relay" }, h("h2", {}, "Return router"),
+      h("p", { class: "lede" }, "Whatever a node finishes comes back here before anyone sees it. This router decides whether an answer has been created, or whether the work goes on to another node: a director to try another way, its ego for what nobody could route and for ethical questions, or a person. " +
+        (R.enabled ? (R.node ? `The relay node ${R.node}${R.holdout !== null && R.holdout !== undefined ? ` (held-out ${pct(R.holdout)})` : ""} decides` : "Its policy decides while its node learns") + `, at most ${R.max_hops} hops an order.` : "It is off ([relay] enabled).")),
+      counts.length ? h("p", { class: "small" }, counts.map(([k, n]) => h("span", { class: "kind-chip" }, `${WHERE[k] || k} ${num(n)}`))) : null,
+      (R.recent || []).length ? h("ul", { class: "rows small" }, R.recent.slice(0, 8).map(r => h("li", { style: "padding:4px 0" },
+        h("b", {}, r.order), ` ${cut(r.text, 70)} `, h("span", { class: r.ok ? "ok" : "dim" }, r.hops ? `sent on ${r.hops}× (${r.via.join(", ")}), ${r.ok ? `answered by ${r.route}` : "and nothing could answer it: left for a person"}` : r.ok ? `an answer from ${r.route}` : "not answered: left for a person"))))
+        : h("p", { class: "dim" }, "Nothing has come back yet."));
   }
 
   // ------------------------------------------------------------------ the workbench (workbench.py)
@@ -2875,6 +2922,8 @@ it decides whether to say something of its own after an answer, and what`))
       h("p", { class: "lede" }, "It goes back to what it made before and improves it on its own initiative (its director's revisit mode): programs that were incomplete or failed, code that did not check out, tools that fall short, objectives that ended short. " +
         "And it keeps long-term projects of its own: from a repository it studied, a library of every function it can build into a whole program, one step a session, a new version when its parts change. " +
         `${num(W.stats.revisits || 0)} visits so far, ${num(W.stats.improved || 0)} made something better; ${num(W.stats.versions || 0)} versions put together.`),
+      h("p", { class: "small", id: "working-on" }, h("b", {}, "Working on now: "), W.working_on ? (p => p ? `${p.title} (${p.id}, version ${p.version}). Next: ${p.plan}` : W.working_on)(W.projects.find(p => p.id === W.working_on))
+        : W.always_one ? "nothing yet: it starts a project as soon as it has studied code or solved challenges to build one from." : "no project ([works] always_one is off)."),
       h("div", { class: "row" },
         h("button", { type: "button", class: "small", disabled: !W.enabled || W.busy, onclick: e => go(e, { session: true }) }, W.busy ? "Working…" : "Go back to something now"),
         pick ? h("span", { class: "row small" }, "Start a project from", pick,

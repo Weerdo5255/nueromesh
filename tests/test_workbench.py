@@ -167,8 +167,8 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
         import tomllib
         from neuromesh.config import GiteaPolicy
         d = tomllib.loads((Path(__file__).resolve().parent.parent / "directives.toml").read_text())["gitea"]
-        self.assertEqual((d["study_every_seconds"], d["restudy_days"], d["practice_teacher"]), (120, 1, False))
-        self.assertEqual((GiteaPolicy().study_every_seconds, GiteaPolicy().restudy_days), (120.0, 1.0))
+        self.assertEqual((d["study_every_seconds"], d["restudy_days"], d["practice_teacher"]), (30, 0.25, False))
+        self.assertEqual((GiteaPolicy().study_every_seconds, GiteaPolicy().restudy_days), (30.0, 0.25))
         self.assertTrue((await s.code_study.visit())["ok"])                          # the one it had not read: ann/webtools
         res = await s.code_study.visit()
         self.assertFalse(res["ok"])                                                  # nothing new, nothing changed
@@ -178,6 +178,48 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(res["ok"], res)
         self.assertEqual((res["repo"], res["files"]), ("ann/numkit", 1))            # only what changed is read again
         self.assertTrue(any(e["name"] == "double" for e in s.code_study.examples(200)))
+
+    async def test_a_big_repository_is_finished_over_visits_that_follow_at_once(self):
+        s = self.system
+        from neuromesh.gitea import Apprentice
+        s.directives.gitea.files_per_visit, s.directives.gitea.files_per_call = 2, 1
+        self.gitea.repos["ann/big"] = {f"big/m{i}.py": f'def part_{i}(n):\n    """Add {i} to n."""\n    return n + {i}\n' for i in range(5)}
+        res = await s.code_study.visit(repo="ann/big")
+        self.assertTrue(res["ok"], res)
+        self.assertEqual((res["files"], res["left"]), (2, 3))
+        self.assertEqual(s.code_study.status()["backlog"], {"ann/big": 3})
+        res = await s.code_study.visit()                                             # the unfinished one comes first
+        self.assertEqual((res["repo"], res["files"], res["left"]), ("ann/big", 2, 1))
+        res = await s.code_study.visit()
+        self.assertEqual((res["repo"], res["files"], res["left"]), ("ann/big", 1, 0))
+        self.assertEqual(s.code_study.status()["backlog"], {})
+        self.assertEqual(sum(e["name"].startswith("part_") for e in s.code_study.examples(200)), 5)
+        self.assertLess(s.directives.gitea.catch_up_seconds, s.directives.gitea.study_every_seconds)
+        self.assertTrue(any(isinstance(a, Apprentice) for a in s.agents))
+
+    async def test_it_never_practises_the_same_challenge_twice(self):
+        s = self.system
+        n = s.store.db.execute("SELECT COUNT(DISTINCT lang || purpose) FROM code_examples").fetchone()[0]
+        seen = []
+        for _ in range(n + 5):
+            rec = await s.scratch.practice()
+            if rec is None:
+                break
+            seen.append(rec["example"])
+        self.assertEqual(len(seen), len(set(seen)))                                  # each function once
+        self.assertGreaterEqual(len(seen), 5)
+        self.assertLessEqual(len(seen), n)
+        self.assertIsNone(await s.scratch.practice())                                # nothing new: it does not start over
+        self.assertEqual(s.scratch.practised_count(), len(seen))
+        for repo in ("ann/numkit", "ann/textkit"):                                   # studied again: still done
+            s.store.db.execute("UPDATE code_examples SET practised = 0")
+        self.assertIsNone(await s.scratch.practice())
+        self.gitea.repos["ann/numkit"]["numkit/extra.py"] = 'def triple(n):\n    """Three times n."""\n    return n * 3\n'
+        self.gitea.updated["ann/numkit"] = "2099-01-01T00:00:00Z"
+        self.assertTrue((await s.code_study.visit(repo="ann/numkit"))["ok"])
+        rec = await s.scratch.practice()                                             # something new to practise on
+        self.assertEqual(rec["name"], "triple")
+        self.assertIsNone(await s.scratch.practice())
 
     async def test_the_web_page_and_the_api(self):
         from neuromesh.commands import execute

@@ -169,7 +169,8 @@ class Orchestrator(Agent):
         reviews it. The reply leads with the result in the mesh's own words (voice.py)."""
         plan = await self.sys.directors.intake(order)
         res = await self._fulfil(order)
-        res = await self.sys.directors.persist(order, res)  # not answered? it tries other ways, up to max_attempts
+        # everything returns to the return router (relay.py): an answer, or on to a director (other ways) or its ego
+        res = await self.sys.relay.settle(order, res)
         res.trace.insert(0, plan.line)
         voice.finish(res)
         if review:
@@ -225,6 +226,15 @@ class Orchestrator(Agent):
             res.route, res.output, res.confidence, res.served_by = "ego", mine[0], 1.0, "explicit"
             res.trace.append(f"answered by its ego ({mine[2]}): {mine[1]}")
             return res
+        from .relay import is_ethical  # (relay.py builds on this module)
+        if s.directives.relay.ethics_to_ego and s.ego.enabled and not order.background and is_ethical(order.text) \
+                and parse_order(order.text, s.capabilities)[0] is None:
+            # a question of right and wrong goes to its ego, and the router learns the route (P18)
+            res.trace.append("it reads as an ethical question: routed to its ego")
+            if order.learn:
+                s.ensure_label(DISPATCH, "ego", "its ego: ethical questions, and what nothing else knows what to do with")
+                s.learn(DISPATCH, order.text, "ego", "ego")
+            return await self.to_ego(order, res, "it reads as a question of right and wrong")
         real = s.realm.answer(order.text)  # "is Gandalf real?": fact or fiction, said plainly (P24)
         if real is not None:
             res.route, res.output, res.confidence, res.served_by = "realm", real[0], 0.9, "nodes"
@@ -261,6 +271,10 @@ class Orchestrator(Agent):
             kinds.append(inf.kind)
             conf = inf.confidence
             route = inf.label or DIRECT
+            if inf.label is None:
+                res.trace.append("the router does not know where this goes: memory, knowledge and teachers are asked, then its ego")
+            if route == "ego":  # the router learned this route from ethical questions
+                return await self.to_ego(order, res, "the router sent it to its ego")
             if route == DIRECT and not is_question(order.text) and s.conversations.told(order, res):
                 return res  # a plain statement, in conversation: something you told it (conversation.py)
             if route.startswith("skill:"):
@@ -269,6 +283,28 @@ class Orchestrator(Agent):
             res.trace.append(f"explicit route {route}")
             return await self._serve(order, res, route, payload, kinds, conf, explicit=True)
         return await self._serve(order, res, route, payload, kinds, conf)
+
+    async def to_ego(self, order, res: Result, why: str) -> Result:
+        """Hand an order to its ego (relay.py): what nothing in the mesh knew what to do with, or an ethical question.
+        Its ego answers as itself; when it has nothing of substance, the result stays as it was."""
+        s = self.sys
+        from .relay import is_ethical
+        if not s.ego.enabled:
+            res.trace.append("its ego is switched off, so it stays as it is")
+            return res
+        ethical = is_ethical(order.text)
+        with s.activity.track("ego", "ego", f"taking {' '.join(order.text.split())[:70]}"):
+            got = await s.ego.respond(order, why, ethical)
+        s.bus.publish("ego.took", order=order.id, text=" ".join(order.text.split())[:120], kind=got["kind"], answered=got["substance"], why=why)
+        if not got["substance"]:
+            res.trace.append(f"its ego took it ({why}) and had nothing of its own to add")
+            return res
+        new = Result(order.id, order.text, "ego", got["text"], 0.55 if ethical else 0.5)
+        new.answer, new.served_by, new.sources = got["text"], "ego", list(got["sources"])
+        new.steps, new.trace = list(res.steps), res.trace + [
+            f"its ego answered ({why}): {'its own weighing, labelled as a view' if ethical else 'from what it holds'}"]
+        new.attempts = res.attempts
+        return new
 
     def gate_tool(self, res: Result, tool, payload: str, explicit: bool) -> str | None:
         """The tool switch (toolgate.py): None to run the tool; "off" when it is switched off; otherwise why
